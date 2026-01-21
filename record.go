@@ -69,6 +69,9 @@ type CollectionStats struct {
 
 	// DistanceType is the distance metric used.
 	DistanceType string
+
+	// IndexType is the index type (none, hnsw).
+	IndexType string
 }
 
 // DatabaseStats contains statistics about the database.

@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/abdul-hamid-achik/veclite/internal/floats"
+	"github.com/abdul-hamid-achik/veclite/internal/hnsw"
 )
 
 // Storage is the interface for database persistence.
@@ -56,6 +57,15 @@ type CollectionSnapshot struct {
 
 	// UpdatedAt is when the collection was last modified.
 	UpdatedAt time.Time
+
+	// IndexType is the type of index (none, hnsw).
+	IndexType IndexType
+
+	// HNSWConfig holds the HNSW configuration (if IndexType is hnsw).
+	HNSWConfig *HNSWConfig
+
+	// HNSWSnapshot holds the HNSW index state (if IndexType is hnsw).
+	HNSWSnapshot *hnsw.Snapshot
 }
 
 // RecordSnapshot is the serializable state of a record.

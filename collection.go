@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/abdul-hamid-achik/veclite/internal/floats"
+	"github.com/abdul-hamid-achik/veclite/internal/hnsw"
 )
 
 // Collection represents a collection of vectors with the same dimension.
@@ -15,6 +16,9 @@ type Collection struct {
 	distanceType floats.DistanceType
 	distanceFunc floats.DistanceFunc
 	higherBetter bool
+	indexType    IndexType
+	hnswConfig   *HNSWConfig
+	index        Index
 
 	mu      sync.RWMutex
 	records map[uint64]*Record
@@ -25,16 +29,30 @@ type Collection struct {
 
 // newCollection creates a new collection.
 func newCollection(name string, config *collectionConfig, db *DB) *Collection {
-	return &Collection{
+	c := &Collection{
 		name:         name,
 		dimension:    config.dimension,
 		distanceType: config.distanceType,
 		distanceFunc: floats.GetDistanceFunc(config.distanceType),
 		higherBetter: floats.IsHigherBetter(config.distanceType),
+		indexType:    config.indexType,
+		hnswConfig:   config.hnswConfig,
 		records:      make(map[uint64]*Record),
 		nextID:       1,
 		db:           db,
 	}
+
+	// Initialize index if HNSW is configured
+	if config.indexType == IndexTypeHNSW && config.hnswConfig != nil {
+		c.index = NewHNSWIndex(
+			config.dimension,
+			config.distanceType,
+			config.hnswConfig.M,
+			config.hnswConfig.EfConstruction,
+		)
+	}
+
+	return c
 }
 
 // Name returns the collection name.
@@ -75,6 +93,15 @@ func (c *Collection) Insert(vector []float32, payload map[string]any) (uint64, e
 	// Check/set dimension
 	if c.dimension == 0 {
 		c.dimension = len(vector)
+		// Initialize HNSW index now that we know the dimension
+		if c.indexType == IndexTypeHNSW && c.hnswConfig != nil && c.index == nil {
+			c.index = NewHNSWIndex(
+				c.dimension,
+				c.distanceType,
+				c.hnswConfig.M,
+				c.hnswConfig.EfConstruction,
+			)
+		}
 	} else if len(vector) != c.dimension {
 		return 0, &DimensionError{Expected: c.dimension, Got: len(vector)}
 	}
@@ -94,6 +121,16 @@ func (c *Collection) Insert(vector []float32, payload map[string]any) (uint64, e
 	copy(record.Vector, vector)
 
 	c.records[id] = record
+
+	// Insert into index if enabled
+	if c.index != nil {
+		if err := c.index.Insert(id, vector); err != nil {
+			// Rollback record insertion on index failure
+			delete(c.records, id)
+			c.nextID--
+			return 0, err
+		}
+	}
 
 	return id, nil
 }
@@ -122,6 +159,15 @@ func (c *Collection) InsertBatch(vectors [][]float32, payloads []map[string]any)
 	// Check/set dimension
 	if c.dimension == 0 {
 		c.dimension = len(vectors[0])
+		// Initialize HNSW index now that we know the dimension
+		if c.indexType == IndexTypeHNSW && c.hnswConfig != nil && c.index == nil {
+			c.index = NewHNSWIndex(
+				c.dimension,
+				c.distanceType,
+				c.hnswConfig.M,
+				c.hnswConfig.EfConstruction,
+			)
+		}
 	} else if len(vectors[0]) != c.dimension {
 		return nil, &DimensionError{Expected: c.dimension, Got: len(vectors[0])}
 	}
@@ -150,6 +196,21 @@ func (c *Collection) InsertBatch(vectors [][]float32, payloads []map[string]any)
 
 		c.records[id] = record
 		ids[i] = id
+
+		// Insert into index if enabled
+		if c.index != nil {
+			if err := c.index.Insert(id, vector); err != nil {
+				// On failure, rollback this and all previous insertions
+				for j := 0; j <= i; j++ {
+					delete(c.records, ids[j])
+					if c.index != nil {
+						_ = c.index.Delete(ids[j])
+					}
+				}
+				c.nextID -= uint64(i + 1)
+				return nil, err
+			}
+		}
 	}
 
 	return ids, nil
@@ -192,6 +253,11 @@ func (c *Collection) Delete(id uint64) error {
 		return &NotFoundError{Type: "record", ID: string(rune(id))}
 	}
 
+	// Delete from index first (soft delete)
+	if c.index != nil {
+		_ = c.index.Delete(id)
+	}
+
 	delete(c.records, id)
 	return nil
 }
@@ -216,6 +282,10 @@ func (c *Collection) DeleteWhere(filters ...Filter) (int, error) {
 			}
 		}
 		if match {
+			// Delete from index first
+			if c.index != nil {
+				_ = c.index.Delete(id)
+			}
 			delete(c.records, id)
 			deleted++
 		}
@@ -258,6 +328,54 @@ func (c *Collection) Search(query []float32, opts ...SearchOption) ([]Result, er
 		opt.apply(config)
 	}
 
+	// Use HNSW index if available and no filters
+	if c.index != nil && len(config.filters) == 0 && config.threshold == nil {
+		return c.searchWithIndex(query, config)
+	}
+
+	// Fall back to brute force search
+	return c.searchBruteForce(query, config)
+}
+
+// searchWithIndex performs search using the HNSW index.
+func (c *Collection) searchWithIndex(query []float32, config *searchConfig) ([]Result, error) {
+	// Determine ef parameter
+	ef := config.efSearch
+	if ef == 0 && c.hnswConfig != nil {
+		ef = c.hnswConfig.EfSearch
+	}
+
+	var indexResults []IndexResult
+	var err error
+
+	if ef > 0 {
+		indexResults, err = c.index.SearchWithEf(query, config.topK, ef)
+	} else {
+		indexResults, err = c.index.Search(query, config.topK)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert index results to full results with records
+	results := make([]Result, 0, len(indexResults))
+	for _, ir := range indexResults {
+		record, ok := c.records[ir.ID]
+		if !ok {
+			continue // Record was deleted
+		}
+		results = append(results, Result{
+			Record: record.Clone(),
+			Score:  ir.Distance,
+		})
+	}
+
+	return results, nil
+}
+
+// searchBruteForce performs brute-force search.
+func (c *Collection) searchBruteForce(query []float32, config *searchConfig) ([]Result, error) {
 	// Collect matching results
 	results := make([]Result, 0)
 	for _, record := range c.records {
@@ -356,7 +474,18 @@ func (c *Collection) Stats() CollectionStats {
 		Count:        len(c.records),
 		Dimension:    c.dimension,
 		DistanceType: string(c.distanceType),
+		IndexType:    string(c.indexType),
 	}
+}
+
+// IndexType returns the index type for this collection.
+func (c *Collection) IndexType() IndexType {
+	return c.indexType
+}
+
+// HasIndex returns true if this collection has an index.
+func (c *Collection) HasIndex() bool {
+	return c.index != nil
 }
 
 // snapshot creates a serializable snapshot of the collection.
@@ -372,6 +501,8 @@ func (c *Collection) snapshot() *CollectionSnapshot {
 		Records:      make([]*RecordSnapshot, 0, len(c.records)),
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
+		IndexType:    c.indexType,
+		HNSWConfig:   c.hnswConfig,
 	}
 
 	for _, record := range c.records {
@@ -382,6 +513,13 @@ func (c *Collection) snapshot() *CollectionSnapshot {
 			CreatedAt: record.CreatedAt,
 			UpdatedAt: record.UpdatedAt,
 		})
+	}
+
+	// Snapshot HNSW index if present
+	if c.index != nil && c.indexType == IndexTypeHNSW {
+		if hnswIdx, ok := c.index.(*HNSWIndex); ok {
+			snapshot.HNSWSnapshot = hnswIdx.Internal().Snapshot()
+		}
 	}
 
 	return snapshot
@@ -397,6 +535,8 @@ func (c *Collection) loadFromSnapshot(snapshot *CollectionSnapshot) {
 	c.distanceFunc = floats.GetDistanceFunc(snapshot.DistanceType)
 	c.higherBetter = floats.IsHigherBetter(snapshot.DistanceType)
 	c.nextID = snapshot.NextID
+	c.indexType = snapshot.IndexType
+	c.hnswConfig = snapshot.HNSWConfig
 	c.records = make(map[uint64]*Record, len(snapshot.Records))
 
 	for _, rs := range snapshot.Records {
@@ -407,6 +547,12 @@ func (c *Collection) loadFromSnapshot(snapshot *CollectionSnapshot) {
 			CreatedAt: rs.CreatedAt,
 			UpdatedAt: rs.UpdatedAt,
 		}
+	}
+
+	// Restore HNSW index if present
+	if snapshot.IndexType == IndexTypeHNSW && snapshot.HNSWSnapshot != nil {
+		idx := hnsw.LoadFromSnapshot(snapshot.HNSWSnapshot, snapshot.DistanceType)
+		c.index = &HNSWIndex{idx: idx}
 	}
 }
 

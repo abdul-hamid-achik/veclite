@@ -10,13 +10,15 @@ type searchConfig struct {
 	topK      int
 	threshold *float32
 	filters   []Filter
+	efSearch  int
 }
 
 // defaultSearchConfig returns the default search configuration.
 func defaultSearchConfig() *searchConfig {
 	return &searchConfig{
-		topK:    10,
-		filters: nil,
+		topK:     10,
+		filters:  nil,
+		efSearch: 0, // 0 means use index default
 	}
 }
 
@@ -70,4 +72,15 @@ func (c *searchConfig) matchesFilters(r *Record) bool {
 		}
 	}
 	return true
+}
+
+// WithEfSearch sets the efSearch parameter for HNSW search.
+// Higher values improve recall at the cost of speed.
+// Has no effect on collections without HNSW index.
+func WithEfSearch(ef int) SearchOption {
+	return searchOptionFunc(func(c *searchConfig) {
+		if ef > 0 {
+			c.efSearch = ef
+		}
+	})
 }

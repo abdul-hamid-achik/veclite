@@ -4,6 +4,18 @@ import (
 	"github.com/abdul-hamid-achik/veclite/internal/floats"
 )
 
+// Re-export distance types for external use.
+type DistanceType = floats.DistanceType
+
+const (
+	// DistanceCosine uses cosine similarity (higher = more similar).
+	DistanceCosine = floats.DistanceCosine
+	// DistanceDot uses dot product (higher = more similar).
+	DistanceDot = floats.DistanceDot
+	// DistanceEuclidean uses Euclidean distance (lower = more similar).
+	DistanceEuclidean = floats.DistanceEuclidean
+)
+
 // Option configures the database.
 type Option interface {
 	apply(*dbConfig)
@@ -13,6 +25,16 @@ type Option interface {
 type dbConfig struct {
 	syncOnWrite bool
 	readOnly    bool
+}
+
+// HNSWConfig holds HNSW index configuration.
+type HNSWConfig struct {
+	// M is the maximum number of connections per node.
+	M int
+	// EfConstruction is the size of the candidate list during index construction.
+	EfConstruction int
+	// EfSearch is the default size of the candidate list during search.
+	EfSearch int
 }
 
 // defaultDBConfig returns the default database configuration.
@@ -55,6 +77,8 @@ type CollectionOption interface {
 type collectionConfig struct {
 	dimension    int
 	distanceType floats.DistanceType
+	indexType    IndexType
+	hnswConfig   *HNSWConfig
 }
 
 // defaultCollectionConfig returns the default collection configuration.
@@ -62,6 +86,8 @@ func defaultCollectionConfig() *collectionConfig {
 	return &collectionConfig{
 		dimension:    0, // 0 means auto-detect on first insert
 		distanceType: floats.DistanceCosine,
+		indexType:    IndexTypeNone,
+		hnswConfig:   nil,
 	}
 }
 
@@ -88,5 +114,33 @@ func WithDimension(dim int) CollectionOption {
 func WithDistanceType(t floats.DistanceType) CollectionOption {
 	return collectionOptionFunc(func(c *collectionConfig) {
 		c.distanceType = t
+	})
+}
+
+// WithHNSW enables HNSW indexing for the collection.
+// m is the maximum number of connections per node (default: 16, recommended: 12-48).
+// efConstruction is the candidate list size during construction (default: 200).
+func WithHNSW(m, efConstruction int) CollectionOption {
+	return collectionOptionFunc(func(c *collectionConfig) {
+		if m < 2 {
+			m = 16
+		}
+		if efConstruction < m {
+			efConstruction = 200
+		}
+		c.indexType = IndexTypeHNSW
+		c.hnswConfig = &HNSWConfig{
+			M:              m,
+			EfConstruction: efConstruction,
+			EfSearch:       100,
+		}
+	})
+}
+
+// WithHNSWConfig enables HNSW indexing with custom configuration.
+func WithHNSWConfig(config HNSWConfig) CollectionOption {
+	return collectionOptionFunc(func(c *collectionConfig) {
+		c.indexType = IndexTypeHNSW
+		c.hnswConfig = &config
 	})
 }

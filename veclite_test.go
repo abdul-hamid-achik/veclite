@@ -667,3 +667,264 @@ func BenchmarkSearch10K(b *testing.B) {
 		_, _ = coll.Search(query, TopK(10))
 	}
 }
+
+// HNSW Integration Tests
+
+func TestHNSWCollection(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, err := db.CreateCollection("test", WithDimension(4), WithHNSW(16, 200))
+	if err != nil {
+		t.Fatalf("CreateCollection failed: %v", err)
+	}
+
+	if coll.IndexType() != IndexTypeHNSW {
+		t.Errorf("IndexType() = %v, want hnsw", coll.IndexType())
+	}
+
+	// Insert vectors
+	vectors := [][]float32{
+		{1, 0, 0, 0},
+		{0, 1, 0, 0},
+		{0, 0, 1, 0},
+		{0, 0, 0, 1},
+	}
+
+	for i, vec := range vectors {
+		_, err := coll.Insert(vec, map[string]any{"idx": i})
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+	}
+
+	// Search
+	results, err := coll.Search([]float32{1, 0, 0, 0}, TopK(2))
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Errorf("Search returned %d results, want 2", len(results))
+	}
+
+	// First result should be exact match
+	if results[0].Record.Payload["idx"] != 0 {
+		t.Errorf("First result idx = %v, want 0", results[0].Record.Payload["idx"])
+	}
+}
+
+func TestHNSWSearchWithEf(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(32), WithHNSW(16, 200))
+
+	// Insert 100 random vectors
+	for i := 0; i < 100; i++ {
+		vec := make([]float32, 32)
+		for j := range vec {
+			vec[j] = float32(i*32+j) / 3200
+		}
+		floats.Normalize(vec)
+		_, _ = coll.Insert(vec, nil)
+	}
+
+	query := make([]float32, 32)
+	for i := range query {
+		query[i] = 0.5
+	}
+	floats.Normalize(query)
+
+	// Search with different ef values
+	results1, _ := coll.Search(query, TopK(10))
+	results2, _ := coll.Search(query, TopK(10), WithEfSearch(200))
+
+	if len(results1) != 10 || len(results2) != 10 {
+		t.Error("Search did not return expected number of results")
+	}
+}
+
+func TestHNSWExplain(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(4), WithHNSW(16, 200))
+
+	for i := 0; i < 50; i++ {
+		vec := []float32{float32(i), float32(i + 1), float32(i + 2), float32(i + 3)}
+		floats.Normalize(vec)
+		_, _ = coll.Insert(vec, nil)
+	}
+
+	query := []float32{25, 26, 27, 28}
+	floats.Normalize(query)
+
+	explanation, err := coll.SearchExplain(query, TopK(5))
+	if err != nil {
+		t.Fatalf("SearchExplain failed: %v", err)
+	}
+
+	if explanation.IndexType != "hnsw" {
+		t.Errorf("IndexType = %v, want hnsw", explanation.IndexType)
+	}
+
+	if explanation.BruteForce {
+		t.Error("BruteForce should be false for HNSW search")
+	}
+
+	if explanation.NodesVisited == 0 {
+		t.Error("NodesVisited should be > 0")
+	}
+
+	if len(explanation.Results) != 5 {
+		t.Errorf("Results count = %d, want 5", len(explanation.Results))
+	}
+}
+
+func TestHNSWPersistence(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := tmpDir + "/hnsw_test.veclite"
+
+	// Create with HNSW
+	db, _ := Open(path)
+	coll, _ := db.CreateCollection("embeddings", WithDimension(8), WithHNSW(16, 200))
+
+	for i := 0; i < 100; i++ {
+		vec := make([]float32, 8)
+		for j := range vec {
+			vec[j] = float32(i*8 + j)
+		}
+		floats.Normalize(vec)
+		_, _ = coll.Insert(vec, map[string]any{"idx": i})
+	}
+
+	// Get reference search results before closing
+	query := make([]float32, 8)
+	for i := range query {
+		query[i] = float32(i * 10)
+	}
+	floats.Normalize(query)
+
+	refResults, _ := coll.Search(query, TopK(5))
+	refIDs := make([]uint64, len(refResults))
+	for i, r := range refResults {
+		refIDs[i] = r.Record.ID
+	}
+
+	db.Close()
+
+	// Reopen
+	db2, err := Open(path)
+	if err != nil {
+		t.Fatalf("Reopen failed: %v", err)
+	}
+	defer db2.Close()
+
+	coll2, _ := db2.GetCollection("embeddings")
+
+	if coll2.IndexType() != IndexTypeHNSW {
+		t.Errorf("IndexType after reopen = %v, want hnsw", coll2.IndexType())
+	}
+
+	if !coll2.HasIndex() {
+		t.Error("HasIndex() should be true after reopen")
+	}
+
+	// Search should return same results
+	results, _ := coll2.Search(query, TopK(5))
+
+	if len(results) != len(refResults) {
+		t.Errorf("Results count = %d, want %d", len(results), len(refResults))
+	}
+
+	// Verify IDs match
+	for i, r := range results {
+		if r.Record.ID != refIDs[i] {
+			t.Errorf("Result %d ID = %d, want %d", i, r.Record.ID, refIDs[i])
+		}
+	}
+}
+
+func TestHNSWFallbackToFilteredSearch(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(4), WithHNSW(16, 200))
+
+	_, _ = coll.Insert([]float32{1, 0, 0, 0}, map[string]any{"lang": "go"})
+	_, _ = coll.Insert([]float32{0, 1, 0, 0}, map[string]any{"lang": "python"})
+	_, _ = coll.Insert([]float32{0, 0, 1, 0}, map[string]any{"lang": "go"})
+
+	// Search with filter should fall back to brute force
+	results, err := coll.Search([]float32{1, 0, 0, 0}, TopK(10), WithFilter(Equal("lang", "go")))
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Errorf("Search returned %d results, want 2", len(results))
+	}
+
+	for _, r := range results {
+		if r.Record.Payload["lang"] != "go" {
+			t.Errorf("Result has lang=%v, want go", r.Record.Payload["lang"])
+		}
+	}
+}
+
+func BenchmarkHNSWSearch10K(b *testing.B) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(128), WithHNSW(16, 200))
+
+	// Insert 10K vectors
+	for i := 0; i < 10000; i++ {
+		vector := make([]float32, 128)
+		for j := range vector {
+			vector[j] = float32(i*128+j) / (10000 * 128)
+		}
+		floats.Normalize(vector)
+		_, _ = coll.Insert(vector, nil)
+	}
+
+	query := make([]float32, 128)
+	for i := range query {
+		query[i] = 0.5
+	}
+	floats.Normalize(query)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = coll.Search(query, TopK(10))
+	}
+}
+
+func BenchmarkBruteForceSearch10K(b *testing.B) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll := db.Collection("test") // No HNSW
+
+	// Insert 10K vectors
+	for i := 0; i < 10000; i++ {
+		vector := make([]float32, 128)
+		for j := range vector {
+			vector[j] = float32(i*128+j) / (10000 * 128)
+		}
+		floats.Normalize(vector)
+		_, _ = coll.Insert(vector, nil)
+	}
+
+	query := make([]float32, 128)
+	for i := range query {
+		query[i] = 0.5
+	}
+	floats.Normalize(query)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = coll.Search(query, TopK(10))
+	}
+}
