@@ -534,7 +534,7 @@ func (s *Server) searchVectors(w http.ResponseWriter, r *http.Request, collName 
 		return
 	}
 
-	if req.Query == nil || len(req.Query) == 0 {
+	if len(req.Query) == 0 {
 		writeError(w, http.StatusBadRequest, "Query vector is required", "MISSING_QUERY")
 		return
 	}
