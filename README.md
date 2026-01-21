@@ -4,6 +4,18 @@ Embeddable vector database for Go with zero external dependencies.
 
 Store vectors with metadata in a single file. Search with HNSW for fast approximate nearest neighbors.
 
+## Table of Contents
+
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [CLI Usage](#cli-usage)
+- [HTTP Server Mode](#http-server-mode)
+- [Library API](#library-api)
+- [Performance](#performance)
+- [Contributing](#contributing)
+
 ## Features
 
 - **Zero dependencies** - Standard library only, no CGO
@@ -40,10 +52,15 @@ func main() {
     // Search for similar vectors
     results, _ := coll.Search(queryVector, veclite.TopK(10))
     for _, r := range results {
-        fmt.Printf("ID: %d, Score: %.4f\n", r.ID, r.Distance)
+        fmt.Printf("ID: %d, Score: %.4f\n", r.Record.ID, r.Score)
     }
 }
 ```
+
+## Prerequisites
+
+- Go 1.21 or later
+- No external dependencies required
 
 ## Installation
 
@@ -61,13 +78,15 @@ Or download from [Releases](https://github.com/abdul-hamid-achik/veclite/release
 
 ## CLI Usage
 
-The `veclite` CLI inspects and manages VecLite database files.
+The `veclite` CLI provides full read/write access to VecLite database files.
 
 ```bash
 veclite <command> [arguments]
 ```
 
 ### Commands
+
+#### Read Commands
 
 | Command | Description |
 |---------|-------------|
@@ -76,6 +95,36 @@ veclite <command> [arguments]
 | `collections <file>` | List all collections |
 | `stats <file>` | Show detailed statistics |
 | `dump <file>` | Export database as JSON |
+| `get <file> <collection>` | Get a vector by ID |
+
+#### Write Commands
+
+| Command | Description |
+|---------|-------------|
+| `create-collection <file> <name>` | Create a new collection |
+| `drop-collection <file> <name>` | Drop a collection |
+| `insert <file> <collection>` | Insert a vector |
+| `batch-insert <file> <collection>` | Insert vectors from JSON file |
+| `delete <file> <collection>` | Delete a vector by ID |
+| `search <file> <collection>` | Search for similar vectors |
+
+#### Server Mode
+
+| Command | Description |
+|---------|-------------|
+| `serve <file>` | Start HTTP server for multi-client access |
+
+#### Maintenance Commands
+
+| Command | Description |
+|---------|-------------|
+| `compact <file>` | Compact database and reclaim space |
+| `validate <file>` | Validate database integrity |
+| `benchmark <file>` | Run search performance benchmark |
+
+### Global Flags
+
+All commands support `--json` flag for JSON output (useful for scripting).
 
 ### Examples
 
@@ -85,18 +134,59 @@ veclite version
 
 # View database info
 veclite info data.veclite
+veclite info --json data.veclite
 
-# List collections with record counts
-veclite collections data.veclite
+# Create a collection with HNSW index
+veclite create-collection data.veclite embeddings --dimension=384 --distance=cosine --hnsw
 
-# Get detailed stats (JSON output)
-veclite stats --json data.veclite
+# Insert a vector
+veclite insert data.veclite embeddings --vector='[0.1,0.2,0.3,...]' --payload='{"file":"main.go"}'
 
-# Export specific collection
-veclite dump --collection embeddings data.veclite
+# Batch insert from JSON file
+veclite batch-insert data.veclite embeddings --input=vectors.json
 
-# Export with record limit
-veclite dump --limit 100 data.veclite
+# Search for similar vectors
+veclite search data.veclite embeddings --query='[0.1,0.2,0.3,...]' --top-k=10
+veclite search data.veclite embeddings --query='[0.1,0.2,0.3,...]' --filter='type=code'
+
+# Get a specific vector
+veclite get data.veclite embeddings --id=42
+
+# Delete a vector
+veclite delete data.veclite embeddings --id=42
+
+# Drop a collection
+veclite drop-collection data.veclite embeddings
+
+# Start HTTP server
+veclite serve data.veclite --port=8080
+
+# Validate database integrity
+veclite validate data.veclite
+
+# Compact database
+veclite compact data.veclite
+
+# Run benchmark
+veclite benchmark data.veclite --collection=embeddings --queries=1000
+```
+
+### Batch Insert File Format
+
+The `batch-insert` command supports two input formats:
+
+**JSON Array:**
+```json
+[
+  {"vector": [0.1, 0.2, 0.3], "payload": {"file": "a.go"}},
+  {"vector": [0.4, 0.5, 0.6], "payload": {"file": "b.go"}}
+]
+```
+
+**JSONL (one object per line):**
+```json
+{"vector": [0.1, 0.2, 0.3], "payload": {"file": "a.go"}}
+{"vector": [0.4, 0.5, 0.6], "payload": {"file": "b.go"}}
 ```
 
 ### Output Examples
@@ -110,8 +200,16 @@ Total Records: 15000
 
 **collections command:**
 ```
-embeddings: 10000 records, dimension=384, distance=cosine
-images: 5000 records, dimension=512, distance=euclidean
+embeddings: 10000 records, dimension=384, distance=cosine, index=hnsw
+images: 5000 records, dimension=512, distance=euclidean, index=none
+```
+
+**search command (JSON):**
+```json
+[
+  {"id": 42, "score": 0.9821, "payload": {"file": "main.go"}},
+  {"id": 17, "score": 0.9654, "payload": {"file": "util.go"}}
+]
 ```
 
 **stats command (JSON):**
@@ -130,6 +228,112 @@ images: 5000 records, dimension=512, distance=euclidean
     }
   ]
 }
+```
+
+## HTTP Server Mode
+
+VecLite can run as an HTTP server for multi-language client access.
+
+```bash
+veclite serve data.veclite --port=8080 --cors
+```
+
+### REST API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Health check |
+| GET | `/info` | Database info |
+| GET | `/collections` | List collections |
+| POST | `/collections` | Create collection |
+| GET | `/collections/{name}` | Collection info |
+| DELETE | `/collections/{name}` | Drop collection |
+| POST | `/collections/{name}/vectors` | Insert vector(s) |
+| GET | `/collections/{name}/vectors/{id}` | Get vector by ID |
+| DELETE | `/collections/{name}/vectors/{id}` | Delete vector |
+| POST | `/collections/{name}/search` | Search vectors |
+| POST | `/sync` | Force sync to disk |
+
+### API Examples
+
+**Create Collection:**
+```bash
+curl -X POST http://localhost:8080/collections \
+  -H "Content-Type: application/json" \
+  -d '{"name": "embeddings", "dimension": 384, "distance": "cosine", "hnsw": true}'
+```
+
+**Insert Vector:**
+```bash
+curl -X POST http://localhost:8080/collections/embeddings/vectors \
+  -H "Content-Type: application/json" \
+  -d '{"vector": [0.1, 0.2, 0.3], "payload": {"file": "main.go"}}'
+```
+
+**Batch Insert:**
+```bash
+curl -X POST http://localhost:8080/collections/embeddings/vectors \
+  -H "Content-Type: application/json" \
+  -d '{"vectors": [[0.1,0.2,0.3], [0.4,0.5,0.6]], "payloads": [{"file":"a.go"}, {"file":"b.go"}]}'
+```
+
+**Search:**
+```bash
+curl -X POST http://localhost:8080/collections/embeddings/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": [0.1, 0.2, 0.3], "top_k": 10}'
+```
+
+**Search with Filters:**
+```bash
+curl -X POST http://localhost:8080/collections/embeddings/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": [0.1, 0.2, 0.3],
+    "top_k": 10,
+    "filters": [{"key": "type", "op": "eq", "value": "code"}]
+  }'
+```
+
+### Filter Operators
+
+| Operator | Description |
+|----------|-------------|
+| `eq` or `=` | Equal |
+| `neq` or `!=` | Not equal |
+| `glob` | Glob pattern match |
+| `prefix` | String prefix |
+| `suffix` | String suffix |
+| `contains` | String contains |
+| `exists` | Key exists |
+
+### Python Client Example
+
+```python
+import requests
+
+base_url = "http://localhost:8080"
+
+# Create collection
+requests.post(f"{base_url}/collections", json={
+    "name": "embeddings",
+    "dimension": 384,
+    "hnsw": True
+})
+
+# Insert vector
+response = requests.post(f"{base_url}/collections/embeddings/vectors", json={
+    "vector": [0.1] * 384,
+    "payload": {"file": "main.py"}
+})
+print(response.json())  # {"status": "inserted", "id": 1}
+
+# Search
+response = requests.post(f"{base_url}/collections/embeddings/search", json={
+    "query": [0.1] * 384,
+    "top_k": 5
+})
+print(response.json())  # {"results": [...], "count": 5}
 ```
 
 ## Library API
@@ -192,9 +396,6 @@ id, err := coll.Insert(vector, map[string]any{
     "type": "code",
 })
 
-// Insert with specific ID
-err := coll.InsertWithID(42, vector, payload)
-
 // Batch insert
 vectors := [][]float32{v1, v2, v3}
 payloads := []map[string]any{p1, p2, p3}
@@ -221,8 +422,8 @@ results, err := coll.Search(queryVector,
 
 // Access results
 for _, r := range results {
-    fmt.Printf("ID: %d, Distance: %.4f, Payload: %v\n",
-        r.ID, r.Distance, r.Payload)
+    fmt.Printf("ID: %d, Score: %.4f, Payload: %v\n",
+        r.Record.ID, r.Score, r.Record.Payload)
 }
 ```
 
@@ -242,7 +443,7 @@ results, _ := coll.Search(query,
     veclite.TopK(10),
     veclite.WithFilters(
         veclite.Equal("language", "go"),
-        veclite.GreaterThan("score", 0.5),
+        veclite.Prefix("file", "src/"),
     ),
 )
 ```
@@ -252,16 +453,14 @@ results, _ := coll.Search(query,
 - `NotEqual(key, value)` - Not equal
 - `In(key, values...)` - Value in list
 - `NotIn(key, values...)` - Value not in list
-- `GreaterThan(key, value)` - Numeric comparison
-- `GreaterThanOrEqual(key, value)`
-- `LessThan(key, value)`
-- `LessThanOrEqual(key, value)`
+- `Glob(key, pattern)` - Glob pattern match
+- `Prefix(key, prefix)` - String prefix
+- `Suffix(key, suffix)` - String suffix
 - `Contains(key, substr)` - String contains
-- `HasPrefix(key, prefix)` - String prefix
-- `HasSuffix(key, suffix)` - String suffix
 - `Exists(key)` - Key exists in payload
-- `NotExists(key)` - Key does not exist
-- `MatchGlob(key, pattern)` - Glob pattern match
+- `And(filters...)` - Combine filters with AND
+- `Or(filters...)` - Combine filters with OR
+- `Not(filter)` - Negate a filter
 
 ### HNSW Configuration
 

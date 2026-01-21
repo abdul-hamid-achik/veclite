@@ -22,7 +22,7 @@ veclite/
 ├── collection.go       # Collection struct, Insert/Delete/Search
 ├── search.go           # Search options and configuration
 ├── record.go           # Record struct with ID, Vector, Metadata
-├── filter.go           # Metadata filtering (Equal, GreaterThan, etc.)
+├── filter.go           # Metadata filtering (Equal, In, Glob, Prefix, etc.)
 ├── options.go          # Functional options (WithHNSW, WithDimension, etc.)
 ├── index.go            # Index interface definition
 ├── index_hnsw.go       # HNSW wrapper implementing Index interface
@@ -43,6 +43,9 @@ veclite/
 │       ├── serialize.go # Snapshot/restore
 │       └── errors.go   # HNSW-specific errors
 └── cmd/veclite/        # CLI application
+    ├── main.go         # CLI entry point, read/write commands
+    ├── server.go       # HTTP server mode (serve command)
+    └── maintenance.go  # compact, validate, benchmark commands
 ```
 
 ## Key Concepts
@@ -144,6 +147,25 @@ go build -o bin/veclite ./cmd/veclite
 2. Add field to `collectionConfig` struct
 3. Apply in `newCollection` or relevant method
 4. Update snapshot if persistence needed
+
+### Adding CLI Commands
+1. Add command case to `switch` in `cmd/veclite/main.go`
+2. Implement `cmd<CommandName>` function in appropriate file:
+   - Read/write commands → `main.go`
+   - Server-related → `server.go`
+   - Maintenance (compact, validate, benchmark) → `maintenance.go`
+3. Add flag parsing with `flag.NewFlagSet`
+4. Support `--json` flag for JSON output (use `outputJSON()` helper)
+5. Update `printUsage()` with new command
+6. Add documentation to README.md
+
+### Extending HTTP API
+1. Add handler method to `Server` struct in `cmd/veclite/server.go`
+2. Add route in `cmdServe()` function's mux setup
+3. Use `writeJSON()` for success responses and `writeError()` for errors
+4. Follow RESTful conventions (GET for reads, POST for creates, DELETE for removes)
+5. Parse request body with `json.NewDecoder(r.Body).Decode()`
+6. Update README.md API documentation
 
 ## CI Pipeline
 
