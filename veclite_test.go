@@ -350,8 +350,8 @@ func TestSearchWithThreshold(t *testing.T) {
 
 	coll := db.Collection("test")
 
-	coll.Insert([]float32{1, 0, 0}, nil)
-	coll.Insert([]float32{0, 1, 0}, nil) // orthogonal, score = 0
+	_, _ = coll.Insert([]float32{1, 0, 0}, nil)
+	_, _ = coll.Insert([]float32{0, 1, 0}, nil) // orthogonal, score = 0
 
 	results, err := coll.Search([]float32{1, 0, 0}, TopK(10), Threshold(0.5))
 	if err != nil {
@@ -368,9 +368,9 @@ func TestFind(t *testing.T) {
 	defer db.Close()
 
 	coll := db.Collection("test")
-	coll.Insert([]float32{1, 2, 3}, map[string]any{"type": "function", "file": "main.go"})
-	coll.Insert([]float32{4, 5, 6}, map[string]any{"type": "class", "file": "main.go"})
-	coll.Insert([]float32{7, 8, 9}, map[string]any{"type": "function", "file": "util.go"})
+	_, _ = coll.Insert([]float32{1, 2, 3}, map[string]any{"type": "function", "file": "main.go"})
+	_, _ = coll.Insert([]float32{4, 5, 6}, map[string]any{"type": "class", "file": "main.go"})
+	_, _ = coll.Insert([]float32{7, 8, 9}, map[string]any{"type": "function", "file": "util.go"})
 
 	// Find all functions
 	results, err := coll.Find(Equal("type", "function"))
@@ -388,8 +388,8 @@ func TestFindOne(t *testing.T) {
 	defer db.Close()
 
 	coll := db.Collection("test")
-	coll.Insert([]float32{1, 2, 3}, map[string]any{"file": "main.go"})
-	coll.Insert([]float32{4, 5, 6}, map[string]any{"file": "util.go"})
+	_, _ = coll.Insert([]float32{1, 2, 3}, map[string]any{"file": "main.go"})
+	_, _ = coll.Insert([]float32{4, 5, 6}, map[string]any{"file": "util.go"})
 
 	record, err := coll.FindOne(Equal("file", "main.go"))
 	if err != nil {
@@ -423,8 +423,8 @@ func TestDistanceTypes(t *testing.T) {
 			defer db.Close()
 
 			coll, _ := db.CreateCollection("test", WithDistanceType(tt.distanceType))
-			coll.Insert([]float32{1, 0, 0}, nil)
-			coll.Insert([]float32{0.5, 0.5, 0}, nil)
+			_, _ = coll.Insert([]float32{1, 0, 0}, nil)
+			_, _ = coll.Insert([]float32{0.5, 0.5, 0}, nil)
 
 			results, err := coll.Search([]float32{1, 0, 0}, TopK(2))
 			if err != nil {
@@ -446,7 +446,7 @@ func TestConcurrentAccess(t *testing.T) {
 
 	// Insert initial data
 	for i := 0; i < 100; i++ {
-		coll.Insert([]float32{float32(i), float32(i + 1), float32(i + 2)}, nil)
+		_, _ = coll.Insert([]float32{float32(i), float32(i + 1), float32(i + 2)}, nil)
 	}
 
 	var wg sync.WaitGroup
@@ -498,7 +498,7 @@ func TestPersistenceRoundTrip(t *testing.T) {
 
 	const numRecords = 1000
 	for i := 0; i < numRecords; i++ {
-		coll.Insert(
+		_, _ = coll.Insert(
 			[]float32{float32(i), float32(i + 1), float32(i + 2)},
 			map[string]any{"index": i},
 		)
@@ -566,8 +566,8 @@ func TestCollectionClear(t *testing.T) {
 	defer db.Close()
 
 	coll := db.Collection("test")
-	coll.Insert([]float32{1, 2, 3}, nil)
-	coll.Insert([]float32{4, 5, 6}, nil)
+	_, _ = coll.Insert([]float32{1, 2, 3}, nil)
+	_, _ = coll.Insert([]float32{4, 5, 6}, nil)
 
 	coll.Clear()
 
@@ -618,7 +618,7 @@ func BenchmarkInsert(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		coll.Insert(vector, nil)
+		_, _ = coll.Insert(vector, nil)
 	}
 }
 
