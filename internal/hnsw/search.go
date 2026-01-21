@@ -54,10 +54,7 @@ func (idx *Index) SearchWithEf(query []float32, k int, ef int) ([]SearchResult, 
 
 	output := make([]SearchResult, len(results))
 	for i, item := range results {
-		output[i] = SearchResult{
-			ID:       item.ID,
-			Distance: item.Distance,
-		}
+		output[i] = SearchResult(item)
 	}
 
 	return output, nil
@@ -118,10 +115,7 @@ func (idx *Index) SearchWithStats(query []float32, k int, ef int) ([]SearchResul
 
 	output := make([]SearchResult, len(results))
 	for i, item := range results {
-		output[i] = SearchResult{
-			ID:       item.ID,
-			Distance: item.Distance,
-		}
+		output[i] = SearchResult(item)
 	}
 
 	return output, stats, nil

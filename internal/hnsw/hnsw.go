@@ -80,18 +80,6 @@ func (idx *Index) distance(id1, id2 uint64) float32 {
 	return idx.distFunc(v1, v2)
 }
 
-// distanceToVector computes distance from a node to a query vector.
-func (idx *Index) distanceToVector(id uint64, query []float32) float32 {
-	v, ok := idx.vectors[id]
-	if !ok {
-		if idx.higherBetter {
-			return float32(math.Inf(-1))
-		}
-		return float32(math.Inf(1))
-	}
-	return idx.distFunc(v, query)
-}
-
 // Insert adds a vector to the index with the given ID.
 func (idx *Index) Insert(id uint64, vector []float32) error {
 	if len(vector) == 0 {
