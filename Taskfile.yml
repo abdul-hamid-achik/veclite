@@ -1,0 +1,62 @@
+version: '3'
+
+tasks:
+  default:
+    desc: Show available tasks
+    cmds:
+      - task --list
+
+  build:
+    desc: Build the veclite CLI
+    cmds:
+      - go build -o bin/veclite ./cmd/veclite
+
+  fmt:
+    desc: Format code
+    cmds:
+      - go fmt ./...
+
+  lint:
+    desc: Run linter
+    cmds:
+      - go vet ./...
+
+  test:
+    desc: Run tests
+    cmds:
+      - go test -v ./...
+
+  test-race:
+    desc: Run tests with race detection
+    cmds:
+      - go test -race -v ./...
+
+  test-cover:
+    desc: Run tests with coverage
+    cmds:
+      - go test -coverprofile=coverage.out ./...
+      - go tool cover -html=coverage.out -o coverage.html
+      - echo "Coverage report generated: coverage.html"
+
+  bench:
+    desc: Run benchmarks
+    cmds:
+      - go test -bench=. -benchmem ./...
+
+  check:
+    desc: Run all checks (fmt, lint, test)
+    cmds:
+      - task: fmt
+      - task: lint
+      - task: test
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf bin/ dist/ coverage.out coverage.html
+      - rm -f *.veclite *.veclite.tmp *.veclite.bak
+
+  install:
+    desc: Install veclite CLI
+    cmds:
+      - go install ./cmd/veclite
