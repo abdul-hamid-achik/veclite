@@ -1,11 +1,15 @@
-// Command veclite provides a CLI for inspecting VecLite databases.
+// Command veclite provides a CLI for interacting with VecLite databases.
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/abdul-hamid-achik/veclite"
 )
@@ -33,6 +37,28 @@ func main() {
 		cmdStats(os.Args[2:])
 	case "dump":
 		cmdDump(os.Args[2:])
+	case "create-collection":
+		cmdCreateCollection(os.Args[2:])
+	case "drop-collection":
+		cmdDropCollection(os.Args[2:])
+	case "insert":
+		cmdInsert(os.Args[2:])
+	case "batch-insert":
+		cmdBatchInsert(os.Args[2:])
+	case "search":
+		cmdSearch(os.Args[2:])
+	case "delete":
+		cmdDelete(os.Args[2:])
+	case "get":
+		cmdGet(os.Args[2:])
+	case "serve":
+		cmdServe(os.Args[2:])
+	case "compact":
+		cmdCompact(os.Args[2:])
+	case "validate":
+		cmdValidate(os.Args[2:])
+	case "benchmark":
+		cmdBenchmark(os.Args[2:])
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -48,20 +74,43 @@ func printUsage() {
 Usage:
   veclite <command> [arguments]
 
-Commands:
-  version              Show version information
-  info <file>          Show database information
-  collections <file>   List all collections
-  stats <file>         Show detailed statistics
-  dump <file>          Dump database contents as JSON
-  help                 Show this help message
+Read Commands:
+  version                  Show version information
+  info <file>              Show database information
+  collections <file>       List all collections
+  stats <file>             Show detailed statistics
+  dump <file>              Dump database contents as JSON
+  get <file> <collection>  Get a vector by ID
+
+Write Commands:
+  create-collection <file> <name>  Create a new collection
+  drop-collection <file> <name>    Drop a collection
+  insert <file> <collection>       Insert a vector
+  batch-insert <file> <collection> Insert vectors from JSON file
+  delete <file> <collection>       Delete a vector by ID
+  search <file> <collection>       Search for similar vectors
+
+Server Mode:
+  serve <file>             Start HTTP server for multi-client access
+
+Maintenance Commands:
+  compact <file>           Compact database and reclaim space
+  validate <file>          Validate database integrity
+  benchmark <file>         Run search performance benchmark
+
+Other:
+  help                     Show this help message
+
+Global Flags:
+  --json                   Output results as JSON (supported by most commands)
 
 Examples:
   veclite version
   veclite info data.veclite
-  veclite stats data.veclite
-  veclite collections data.veclite
-  veclite dump data.veclite`)
+  veclite create-collection data.veclite embeddings --dimension=384 --distance=cosine
+  veclite insert data.veclite embeddings --vector='[0.1,0.2,0.3]' --payload='{"file":"main.go"}'
+  veclite search data.veclite embeddings --query='[0.1,0.2,0.3]' --top-k=5
+  veclite serve data.veclite --port=8080`)
 }
 
 func cmdVersion() {
@@ -73,9 +122,12 @@ func cmdVersion() {
 
 func cmdInfo(args []string) {
 	fs := flag.NewFlagSet("info", flag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
 	fs.Usage = func() {
-		fmt.Println("Usage: veclite info <file>")
+		fmt.Println("Usage: veclite info [options] <file>")
 		fmt.Println("\nShow database information.")
+		fmt.Println("\nOptions:")
+		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
 
@@ -93,6 +145,19 @@ func cmdInfo(args []string) {
 	defer db.Close()
 
 	stats := db.Stats()
+
+	if *jsonOutput {
+		info := map[string]any{
+			"path":          path,
+			"collections":   stats.Collections,
+			"total_records": stats.TotalRecords,
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(info)
+		return
+	}
+
 	fmt.Printf("Database: %s\n", path)
 	fmt.Printf("Collections: %d\n", stats.Collections)
 	fmt.Printf("Total Records: %d\n", stats.TotalRecords)
@@ -100,9 +165,12 @@ func cmdInfo(args []string) {
 
 func cmdCollections(args []string) {
 	fs := flag.NewFlagSet("collections", flag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
 	fs.Usage = func() {
-		fmt.Println("Usage: veclite collections <file>")
+		fmt.Println("Usage: veclite collections [options] <file>")
 		fmt.Println("\nList all collections in the database.")
+		fmt.Println("\nOptions:")
+		fs.PrintDefaults()
 	}
 	_ = fs.Parse(args)
 
@@ -120,6 +188,33 @@ func cmdCollections(args []string) {
 	defer db.Close()
 
 	collections := db.Collections()
+
+	if *jsonOutput {
+		type collInfo struct {
+			Name      string `json:"name"`
+			Count     int    `json:"count"`
+			Dimension int    `json:"dimension"`
+			Distance  string `json:"distance"`
+			IndexType string `json:"index_type"`
+		}
+		result := make([]collInfo, 0, len(collections))
+		for _, name := range collections {
+			coll, _ := db.GetCollection(name)
+			stats := coll.Stats()
+			result = append(result, collInfo{
+				Name:      name,
+				Count:     stats.Count,
+				Dimension: stats.Dimension,
+				Distance:  stats.DistanceType,
+				IndexType: stats.IndexType,
+			})
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return
+	}
+
 	if len(collections) == 0 {
 		fmt.Println("No collections")
 		return
@@ -128,8 +223,8 @@ func cmdCollections(args []string) {
 	for _, name := range collections {
 		coll, _ := db.GetCollection(name)
 		stats := coll.Stats()
-		fmt.Printf("%s: %d records, dimension=%d, distance=%s\n",
-			name, stats.Count, stats.Dimension, stats.DistanceType)
+		fmt.Printf("%s: %d records, dimension=%d, distance=%s, index=%s\n",
+			name, stats.Count, stats.Dimension, stats.DistanceType, stats.IndexType)
 	}
 }
 
@@ -178,6 +273,7 @@ func cmdStats(args []string) {
 			fmt.Printf("    Records: %d\n", cs.Count)
 			fmt.Printf("    Dimension: %d\n", cs.Dimension)
 			fmt.Printf("    Distance: %s\n", cs.DistanceType)
+			fmt.Printf("    Index: %s\n", cs.IndexType)
 		}
 	}
 }
@@ -217,6 +313,7 @@ func cmdDump(args []string) {
 		Name      string       `json:"name"`
 		Dimension int          `json:"dimension"`
 		Distance  string       `json:"distance"`
+		IndexType string       `json:"index_type"`
 		Count     int          `json:"count"`
 		Records   []recordDump `json:"records"`
 	}
@@ -245,6 +342,7 @@ func cmdDump(args []string) {
 			Name:      name,
 			Dimension: stats.Dimension,
 			Distance:  stats.DistanceType,
+			IndexType: stats.IndexType,
 			Count:     stats.Count,
 			Records:   make([]recordDump, 0),
 		}
@@ -266,4 +364,633 @@ func cmdDump(args []string) {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	_ = enc.Encode(dump)
+}
+
+func cmdCreateCollection(args []string) {
+	fs := flag.NewFlagSet("create-collection", flag.ExitOnError)
+	dimension := fs.Int("dimension", 0, "Vector dimension (0 = auto-detect on first insert)")
+	distance := fs.String("distance", "cosine", "Distance metric: cosine, dot, euclidean")
+	hnsw := fs.Bool("hnsw", false, "Enable HNSW indexing")
+	hnswM := fs.Int("hnsw-m", 16, "HNSW M parameter (max connections per node)")
+	hnswEf := fs.Int("hnsw-ef", 200, "HNSW efConstruction parameter")
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Println("Usage: veclite create-collection [options] <file> <name>")
+		fmt.Println("\nCreate a new collection.")
+		fmt.Println("\nOptions:")
+		fs.PrintDefaults()
+	}
+	_ = fs.Parse(args)
+
+	if fs.NArg() < 2 {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	path := fs.Arg(0)
+	name := fs.Arg(1)
+
+	// Parse distance type
+	var distType veclite.DistanceType
+	switch strings.ToLower(*distance) {
+	case "cosine":
+		distType = veclite.DistanceCosine
+	case "dot":
+		distType = veclite.DistanceDot
+	case "euclidean":
+		distType = veclite.DistanceEuclidean
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown distance type: %s\n", *distance)
+		os.Exit(1)
+	}
+
+	db, err := veclite.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	// Build collection options
+	opts := []veclite.CollectionOption{
+		veclite.WithDistanceType(distType),
+	}
+	if *dimension > 0 {
+		opts = append(opts, veclite.WithDimension(*dimension))
+	}
+	if *hnsw {
+		opts = append(opts, veclite.WithHNSW(*hnswM, *hnswEf))
+	}
+
+	_, err = db.CreateCollection(name, opts...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating collection: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := db.Sync(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error syncing database: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *jsonOutput {
+		result := map[string]any{
+			"status":     "created",
+			"collection": name,
+			"dimension":  *dimension,
+			"distance":   *distance,
+			"hnsw":       *hnsw,
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return
+	}
+
+	fmt.Printf("Created collection: %s\n", name)
+}
+
+func cmdDropCollection(args []string) {
+	fs := flag.NewFlagSet("drop-collection", flag.ExitOnError)
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Println("Usage: veclite drop-collection [options] <file> <name>")
+		fmt.Println("\nDrop a collection and all its data.")
+		fmt.Println("\nOptions:")
+		fs.PrintDefaults()
+	}
+	_ = fs.Parse(args)
+
+	if fs.NArg() < 2 {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	path := fs.Arg(0)
+	name := fs.Arg(1)
+
+	db, err := veclite.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	err = db.DropCollection(name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error dropping collection: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := db.Sync(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error syncing database: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *jsonOutput {
+		result := map[string]any{
+			"status":     "dropped",
+			"collection": name,
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return
+	}
+
+	fmt.Printf("Dropped collection: %s\n", name)
+}
+
+func cmdInsert(args []string) {
+	fs := flag.NewFlagSet("insert", flag.ExitOnError)
+	vectorStr := fs.String("vector", "", "Vector as JSON array, e.g., '[0.1,0.2,0.3]'")
+	payloadStr := fs.String("payload", "", "Payload as JSON object, e.g., '{\"file\":\"main.go\"}'")
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Println("Usage: veclite insert [options] <file> <collection>")
+		fmt.Println("\nInsert a vector into a collection.")
+		fmt.Println("\nOptions:")
+		fs.PrintDefaults()
+		fmt.Println("\nExamples:")
+		fmt.Println("  veclite insert data.veclite embeddings --vector='[0.1,0.2,0.3]'")
+		fmt.Println("  veclite insert data.veclite embeddings --vector='[0.1,0.2,0.3]' --payload='{\"file\":\"main.go\"}'")
+	}
+	_ = fs.Parse(args)
+
+	if fs.NArg() < 2 {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	if *vectorStr == "" {
+		fmt.Fprintln(os.Stderr, "Error: --vector is required")
+		os.Exit(1)
+	}
+
+	path := fs.Arg(0)
+	collName := fs.Arg(1)
+
+	// Parse vector
+	var vector []float32
+	if err := json.Unmarshal([]byte(*vectorStr), &vector); err != nil {
+		// Try parsing as float64 array
+		var vector64 []float64
+		if err2 := json.Unmarshal([]byte(*vectorStr), &vector64); err2 != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing vector: %v\n", err)
+			os.Exit(1)
+		}
+		vector = make([]float32, len(vector64))
+		for i, v := range vector64 {
+			vector[i] = float32(v)
+		}
+	}
+
+	// Parse payload
+	var payload map[string]any
+	if *payloadStr != "" {
+		if err := json.Unmarshal([]byte(*payloadStr), &payload); err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing payload: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	db, err := veclite.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	coll := db.Collection(collName)
+	id, err := coll.Insert(vector, payload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error inserting vector: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := db.Sync(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error syncing database: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *jsonOutput {
+		result := map[string]any{
+			"status":     "inserted",
+			"id":         id,
+			"collection": collName,
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return
+	}
+
+	fmt.Printf("Inserted vector with ID: %d\n", id)
+}
+
+func cmdBatchInsert(args []string) {
+	fs := flag.NewFlagSet("batch-insert", flag.ExitOnError)
+	inputFile := fs.String("input", "", "Input file (JSON array or JSONL format)")
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Println("Usage: veclite batch-insert [options] <file> <collection>")
+		fmt.Println("\nInsert multiple vectors from a JSON file.")
+		fmt.Println("\nInput formats supported:")
+		fmt.Println("  JSON array: [{\"vector\": [...], \"payload\": {...}}, ...]")
+		fmt.Println("  JSONL: one JSON object per line")
+		fmt.Println("\nOptions:")
+		fs.PrintDefaults()
+		fmt.Println("\nExamples:")
+		fmt.Println("  veclite batch-insert data.veclite embeddings --input=vectors.json")
+	}
+	_ = fs.Parse(args)
+
+	if fs.NArg() < 2 {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	if *inputFile == "" {
+		fmt.Fprintln(os.Stderr, "Error: --input is required")
+		os.Exit(1)
+	}
+
+	path := fs.Arg(0)
+	collName := fs.Arg(1)
+
+	// Read input file
+	file, err := os.Open(*inputFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening input file: %v\n", err)
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	type vectorInput struct {
+		Vector  []float64      `json:"vector"`
+		Payload map[string]any `json:"payload"`
+	}
+
+	var inputs []vectorInput
+
+	// Try to detect format
+	content, err := io.ReadAll(file)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading input file: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Try JSON array first
+	if err := json.Unmarshal(content, &inputs); err != nil {
+		// Try JSONL
+		inputs = nil
+		scanner := bufio.NewScanner(strings.NewReader(string(content)))
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			var input vectorInput
+			if err := json.Unmarshal([]byte(line), &input); err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing line: %v\n", err)
+				os.Exit(1)
+			}
+			inputs = append(inputs, input)
+		}
+		if err := scanner.Err(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading input: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	if len(inputs) == 0 {
+		fmt.Fprintln(os.Stderr, "No vectors found in input file")
+		os.Exit(1)
+	}
+
+	// Convert to float32 and prepare for batch insert
+	vectors := make([][]float32, len(inputs))
+	payloads := make([]map[string]any, len(inputs))
+	for i, input := range inputs {
+		vectors[i] = make([]float32, len(input.Vector))
+		for j, v := range input.Vector {
+			vectors[i][j] = float32(v)
+		}
+		payloads[i] = input.Payload
+	}
+
+	db, err := veclite.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	coll := db.Collection(collName)
+	ids, err := coll.InsertBatch(vectors, payloads)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error inserting vectors: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := db.Sync(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error syncing database: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *jsonOutput {
+		result := map[string]any{
+			"status":     "inserted",
+			"count":      len(ids),
+			"ids":        ids,
+			"collection": collName,
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return
+	}
+
+	fmt.Printf("Inserted %d vectors (IDs: %d-%d)\n", len(ids), ids[0], ids[len(ids)-1])
+}
+
+func cmdSearch(args []string) {
+	fs := flag.NewFlagSet("search", flag.ExitOnError)
+	queryStr := fs.String("query", "", "Query vector as JSON array")
+	topK := fs.Int("top-k", 10, "Number of results to return")
+	threshold := fs.Float64("threshold", 0, "Minimum similarity threshold (0 = disabled)")
+	filterStr := fs.String("filter", "", "Filter expression, e.g., 'type=code' or 'file=*.go'")
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Println("Usage: veclite search [options] <file> <collection>")
+		fmt.Println("\nSearch for similar vectors.")
+		fmt.Println("\nOptions:")
+		fs.PrintDefaults()
+		fmt.Println("\nFilter syntax:")
+		fmt.Println("  key=value       Exact match")
+		fmt.Println("  key=*.ext       Glob pattern match")
+		fmt.Println("\nExamples:")
+		fmt.Println("  veclite search data.veclite embeddings --query='[0.1,0.2,0.3]' --top-k=5")
+		fmt.Println("  veclite search data.veclite embeddings --query='[0.1,0.2,0.3]' --filter='type=code'")
+	}
+	_ = fs.Parse(args)
+
+	if fs.NArg() < 2 {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	if *queryStr == "" {
+		fmt.Fprintln(os.Stderr, "Error: --query is required")
+		os.Exit(1)
+	}
+
+	path := fs.Arg(0)
+	collName := fs.Arg(1)
+
+	// Parse query vector
+	var query []float32
+	if err := json.Unmarshal([]byte(*queryStr), &query); err != nil {
+		var query64 []float64
+		if err2 := json.Unmarshal([]byte(*queryStr), &query64); err2 != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing query: %v\n", err)
+			os.Exit(1)
+		}
+		query = make([]float32, len(query64))
+		for i, v := range query64 {
+			query[i] = float32(v)
+		}
+	}
+
+	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	coll, err := db.GetCollection(collName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting collection: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Build search options
+	searchOpts := []veclite.SearchOption{
+		veclite.TopK(*topK),
+	}
+	if *threshold > 0 {
+		searchOpts = append(searchOpts, veclite.Threshold(float32(*threshold)))
+	}
+
+	// Parse filter
+	if *filterStr != "" {
+		filter := parseFilter(*filterStr)
+		if filter != nil {
+			searchOpts = append(searchOpts, veclite.WithFilter(filter))
+		}
+	}
+
+	results, err := coll.Search(query, searchOpts...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error searching: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *jsonOutput {
+		type resultOutput struct {
+			ID      uint64         `json:"id"`
+			Score   float32        `json:"score"`
+			Payload map[string]any `json:"payload,omitempty"`
+		}
+		output := make([]resultOutput, len(results))
+		for i, r := range results {
+			output[i] = resultOutput{
+				ID:      r.Record.ID,
+				Score:   r.Score,
+				Payload: r.Record.Payload,
+			}
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(output)
+		return
+	}
+
+	if len(results) == 0 {
+		fmt.Println("No results found")
+		return
+	}
+
+	fmt.Printf("Found %d results:\n", len(results))
+	for i, r := range results {
+		fmt.Printf("%d. ID=%d, score=%.4f", i+1, r.Record.ID, r.Score)
+		if r.Record.Payload != nil {
+			payloadJSON, _ := json.Marshal(r.Record.Payload)
+			fmt.Printf(", payload=%s", payloadJSON)
+		}
+		fmt.Println()
+	}
+}
+
+func cmdDelete(args []string) {
+	fs := flag.NewFlagSet("delete", flag.ExitOnError)
+	id := fs.Uint64("id", 0, "ID of vector to delete")
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Println("Usage: veclite delete [options] <file> <collection>")
+		fmt.Println("\nDelete a vector by ID.")
+		fmt.Println("\nOptions:")
+		fs.PrintDefaults()
+		fmt.Println("\nExamples:")
+		fmt.Println("  veclite delete data.veclite embeddings --id=42")
+	}
+	_ = fs.Parse(args)
+
+	if fs.NArg() < 2 {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	if *id == 0 {
+		fmt.Fprintln(os.Stderr, "Error: --id is required")
+		os.Exit(1)
+	}
+
+	path := fs.Arg(0)
+	collName := fs.Arg(1)
+
+	db, err := veclite.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	coll, err := db.GetCollection(collName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting collection: %v\n", err)
+		os.Exit(1)
+	}
+
+	err = coll.Delete(*id)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error deleting vector: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := db.Sync(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error syncing database: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *jsonOutput {
+		result := map[string]any{
+			"status":     "deleted",
+			"id":         *id,
+			"collection": collName,
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return
+	}
+
+	fmt.Printf("Deleted vector with ID: %d\n", *id)
+}
+
+func cmdGet(args []string) {
+	fs := flag.NewFlagSet("get", flag.ExitOnError)
+	id := fs.Uint64("id", 0, "ID of vector to get")
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Println("Usage: veclite get [options] <file> <collection>")
+		fmt.Println("\nGet a vector by ID.")
+		fmt.Println("\nOptions:")
+		fs.PrintDefaults()
+		fmt.Println("\nExamples:")
+		fmt.Println("  veclite get data.veclite embeddings --id=42")
+	}
+	_ = fs.Parse(args)
+
+	if fs.NArg() < 2 {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	if *id == 0 {
+		fmt.Fprintln(os.Stderr, "Error: --id is required")
+		os.Exit(1)
+	}
+
+	path := fs.Arg(0)
+	collName := fs.Arg(1)
+
+	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	coll, err := db.GetCollection(collName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting collection: %v\n", err)
+		os.Exit(1)
+	}
+
+	record, err := coll.Get(*id)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting vector: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *jsonOutput {
+		result := map[string]any{
+			"id":         record.ID,
+			"vector":     record.Vector,
+			"payload":    record.Payload,
+			"created_at": record.CreatedAt,
+			"updated_at": record.UpdatedAt,
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(result)
+		return
+	}
+
+	fmt.Printf("ID: %d\n", record.ID)
+	fmt.Printf("Vector: %v\n", record.Vector)
+	if record.Payload != nil {
+		payloadJSON, _ := json.Marshal(record.Payload)
+		fmt.Printf("Payload: %s\n", payloadJSON)
+	}
+	fmt.Printf("Created: %s\n", record.CreatedAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("Updated: %s\n", record.UpdatedAt.Format("2006-01-02 15:04:05"))
+}
+
+// parseFilter parses a simple filter expression like "key=value" or "key=*.ext"
+func parseFilter(expr string) veclite.Filter {
+	parts := strings.SplitN(expr, "=", 2)
+	if len(parts) != 2 {
+		return nil
+	}
+	key := parts[0]
+	value := parts[1]
+
+	// Check if it's a glob pattern
+	if strings.Contains(value, "*") || strings.Contains(value, "?") {
+		return veclite.Glob(key, value)
+	}
+
+	// Try to parse as number
+	if i, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return veclite.Equal(key, i)
+	}
+	if f, err := strconv.ParseFloat(value, 64); err == nil {
+		return veclite.Equal(key, f)
+	}
+
+	// Treat as string
+	return veclite.Equal(key, value)
 }
