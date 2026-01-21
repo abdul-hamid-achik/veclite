@@ -139,15 +139,22 @@ func TestFileStorageAtomicWrite(t *testing.T) {
 	// First save
 	data1 := NewDatabaseSnapshot()
 	data1.Collections["v1"] = NewCollectionSnapshot("v1", 3, floats.DistanceCosine)
-	storage.Save(data1)
+	if err := storage.Save(data1); err != nil {
+		t.Fatalf("First save failed: %v", err)
+	}
 
 	// Second save (overwrites)
 	data2 := NewDatabaseSnapshot()
 	data2.Collections["v2"] = NewCollectionSnapshot("v2", 3, floats.DistanceCosine)
-	storage.Save(data2)
+	if err := storage.Save(data2); err != nil {
+		t.Fatalf("Second save failed: %v", err)
+	}
 
 	// Load should get v2
-	loaded, _ := storage.Load()
+	loaded, err := storage.Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
 	if _, ok := loaded.Collections["v2"]; !ok {
 		t.Error("Should have v2 collection after overwrite")
 	}
@@ -183,7 +190,9 @@ func TestFileStorageDelete(t *testing.T) {
 	path := filepath.Join(tmpDir, "test.veclite")
 
 	storage := NewFileStorage(path)
-	storage.Save(NewDatabaseSnapshot())
+	if err := storage.Save(NewDatabaseSnapshot()); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
 
 	if !storage.Exists() {
 		t.Fatal("File should exist before delete")
@@ -333,10 +342,12 @@ func BenchmarkFileStorageLoad(b *testing.B) {
 		})
 	}
 	snapshot.Collections["test"] = coll
-	storage.Save(snapshot)
+	if err := storage.Save(snapshot); err != nil {
+		b.Fatalf("Save failed: %v", err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		storage.Load()
+		_, _ = storage.Load()
 	}
 }

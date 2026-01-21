@@ -261,9 +261,15 @@ func TestDeleteWhere(t *testing.T) {
 	defer db.Close()
 
 	coll := db.Collection("test")
-	coll.Insert([]float32{1, 2, 3}, map[string]any{"lang": "go"})
-	coll.Insert([]float32{4, 5, 6}, map[string]any{"lang": "go"})
-	coll.Insert([]float32{7, 8, 9}, map[string]any{"lang": "python"})
+	if _, err := coll.Insert([]float32{1, 2, 3}, map[string]any{"lang": "go"}); err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
+	if _, err := coll.Insert([]float32{4, 5, 6}, map[string]any{"lang": "go"}); err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
+	if _, err := coll.Insert([]float32{7, 8, 9}, map[string]any{"lang": "python"}); err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
 
 	deleted, err := coll.DeleteWhere(Equal("lang", "go"))
 	if err != nil {
@@ -532,11 +538,17 @@ func TestDatabaseStats(t *testing.T) {
 	defer db.Close()
 
 	coll1 := db.Collection("coll1")
-	coll1.Insert([]float32{1, 2, 3}, nil)
-	coll1.Insert([]float32{4, 5, 6}, nil)
+	if _, err := coll1.Insert([]float32{1, 2, 3}, nil); err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
+	if _, err := coll1.Insert([]float32{4, 5, 6}, nil); err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
 
 	coll2 := db.Collection("coll2")
-	coll2.Insert([]float32{1, 2, 3, 4}, nil)
+	if _, err := coll2.Insert([]float32{1, 2, 3, 4}, nil); err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
 
 	stats := db.Stats()
 

@@ -117,7 +117,7 @@ func (f *FileStorage) Save(snapshot *DatabaseSnapshot) error {
 	if err := os.Rename(tmpPath, f.path); err != nil {
 		// Try to restore backup
 		if _, bakErr := os.Stat(bakPath); bakErr == nil {
-			os.Rename(bakPath, f.path)
+			_ = os.Rename(bakPath, f.path)
 		}
 		return &StorageError{Op: "rename", Err: err}
 	}
