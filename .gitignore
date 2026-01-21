@@ -19,6 +19,9 @@ coverage.html
 *.veclite.bak
 .veclite/
 
+# Vecgrep index (semantic search)
+.vecgrep/
+
 # IDE
 .idea/
 .vscode/
