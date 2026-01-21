@@ -323,9 +323,9 @@ func TestSearchWithFilter(t *testing.T) {
 
 	coll := db.Collection("test")
 
-	coll.Insert([]float32{1, 0, 0}, map[string]any{"lang": "go"})
-	coll.Insert([]float32{0.9, 0.1, 0}, map[string]any{"lang": "go"})
-	coll.Insert([]float32{0.95, 0.05, 0}, map[string]any{"lang": "python"})
+	_, _ = coll.Insert([]float32{1, 0, 0}, map[string]any{"lang": "go"})
+	_, _ = coll.Insert([]float32{0.9, 0.1, 0}, map[string]any{"lang": "go"})
+	_, _ = coll.Insert([]float32{0.95, 0.05, 0}, map[string]any{"lang": "python"})
 
 	// Search only Go files
 	results, err := coll.Search([]float32{1, 0, 0}, TopK(10), WithFilter(Equal("lang", "go")))
