@@ -292,10 +292,10 @@ func TestSearch(t *testing.T) {
 	coll := db.Collection("test")
 
 	// Insert vectors
-	coll.Insert([]float32{1, 0, 0}, map[string]any{"name": "x"})
-	coll.Insert([]float32{0, 1, 0}, map[string]any{"name": "y"})
-	coll.Insert([]float32{0, 0, 1}, map[string]any{"name": "z"})
-	coll.Insert([]float32{1, 1, 0}, map[string]any{"name": "xy"})
+	_, _ = coll.Insert([]float32{1, 0, 0}, map[string]any{"name": "x"})
+	_, _ = coll.Insert([]float32{0, 1, 0}, map[string]any{"name": "y"})
+	_, _ = coll.Insert([]float32{0, 0, 1}, map[string]any{"name": "z"})
+	_, _ = coll.Insert([]float32{1, 1, 0}, map[string]any{"name": "xy"})
 
 	// Search for vector similar to x-axis
 	results, err := coll.Search([]float32{1, 0, 0}, TopK(2))
@@ -638,7 +638,7 @@ func BenchmarkInsertBatch(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		coll.InsertBatch(vectors, nil)
+		_, _ = coll.InsertBatch(vectors, nil)
 	}
 }
 
@@ -654,7 +654,7 @@ func BenchmarkSearch10K(b *testing.B) {
 		for j := range vector {
 			vector[j] = float32(i*384+j) / (10000 * 384)
 		}
-		coll.Insert(vector, nil)
+		_, _ = coll.Insert(vector, nil)
 	}
 
 	query := make([]float32, 384)
@@ -664,6 +664,6 @@ func BenchmarkSearch10K(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		coll.Search(query, TopK(10))
+		_, _ = coll.Search(query, TopK(10))
 	}
 }

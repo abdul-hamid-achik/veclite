@@ -77,7 +77,7 @@ func cmdInfo(args []string) {
 		fmt.Println("Usage: veclite info <file>")
 		fmt.Println("\nShow database information.")
 	}
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if fs.NArg() < 1 {
 		fs.Usage()
@@ -104,7 +104,7 @@ func cmdCollections(args []string) {
 		fmt.Println("Usage: veclite collections <file>")
 		fmt.Println("\nList all collections in the database.")
 	}
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if fs.NArg() < 1 {
 		fs.Usage()
@@ -142,7 +142,7 @@ func cmdStats(args []string) {
 		fmt.Println("\nOptions:")
 		fs.PrintDefaults()
 	}
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if fs.NArg() < 1 {
 		fs.Usage()
@@ -162,7 +162,7 @@ func cmdStats(args []string) {
 	if *jsonOutput {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		enc.Encode(stats)
+		_ = enc.Encode(stats)
 		return
 	}
 
@@ -192,7 +192,7 @@ func cmdDump(args []string) {
 		fmt.Println("\nOptions:")
 		fs.PrintDefaults()
 	}
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	if fs.NArg() < 1 {
 		fs.Usage()
@@ -265,5 +265,5 @@ func cmdDump(args []string) {
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	enc.Encode(dump)
+	_ = enc.Encode(dump)
 }
