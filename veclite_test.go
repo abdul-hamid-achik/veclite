@@ -1160,7 +1160,7 @@ func TestUpsertByKeyUpdate(t *testing.T) {
 	coll := db.Collection("test")
 
 	// Insert initial record
-	coll.Insert([]float32{1, 2, 3}, map[string]any{"file": "main.go", "line": 10})
+	_, _ = coll.Insert([]float32{1, 2, 3}, map[string]any{"file": "main.go", "line": 10})
 
 	// UpsertByKey with same key should update
 	id, inserted, err := coll.UpsertByKey("file", "main.go", []float32{4, 5, 6}, map[string]any{
@@ -1202,8 +1202,8 @@ func TestUpsertByKeyWithHNSW(t *testing.T) {
 	coll, _ := db.CreateCollection("test", WithDimension(3), WithHNSW(16, 200))
 
 	// Insert initial records
-	coll.Insert([]float32{1, 0, 0}, map[string]any{"file": "a.go"})
-	coll.Insert([]float32{0, 1, 0}, map[string]any{"file": "b.go"})
+	_, _ = coll.Insert([]float32{1, 0, 0}, map[string]any{"file": "a.go"})
+	_, _ = coll.Insert([]float32{0, 1, 0}, map[string]any{"file": "b.go"})
 
 	// Upsert to update b.go
 	_, _, err := coll.UpsertByKey("file", "b.go", []float32{0, 0, 1}, map[string]any{"file": "b.go"})
