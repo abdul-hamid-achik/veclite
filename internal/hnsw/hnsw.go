@@ -29,15 +29,15 @@ func New(config Config, dimension int, distanceType floats.DistanceType) *Index 
 	}
 
 	return &Index{
-		config:      config,
-		nodes:       make(map[uint64]*Node),
-		vectors:     make(map[uint64][]float32),
-		entryPoint:  0,
-		maxLevel:    -1,
-		dimension:   dimension,
-		distFunc:    floats.GetDistanceFunc(distanceType),
+		config:       config,
+		nodes:        make(map[uint64]*Node),
+		vectors:      make(map[uint64][]float32),
+		entryPoint:   0,
+		maxLevel:     -1,
+		dimension:    dimension,
+		distFunc:     floats.GetDistanceFunc(distanceType),
 		higherBetter: floats.IsHigherBetter(distanceType),
-		rng:         rand.New(rand.NewSource(42)),
+		rng:          rand.New(rand.NewSource(42)),
 	}
 }
 

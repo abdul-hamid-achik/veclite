@@ -407,3 +407,404 @@ func TestNumericComparisons(t *testing.T) {
 		t.Error("Should match float64 42")
 	}
 }
+
+func TestGreaterThanFilter(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		value    float64
+		payload  map[string]any
+		expected bool
+	}{
+		{
+			name:     "int greater than",
+			key:      "score",
+			value:    50,
+			payload:  map[string]any{"score": 75},
+			expected: true,
+		},
+		{
+			name:     "int equal (not greater)",
+			key:      "score",
+			value:    50,
+			payload:  map[string]any{"score": 50},
+			expected: false,
+		},
+		{
+			name:     "int less than",
+			key:      "score",
+			value:    50,
+			payload:  map[string]any{"score": 25},
+			expected: false,
+		},
+		{
+			name:     "float64 greater than",
+			key:      "score",
+			value:    0.5,
+			payload:  map[string]any{"score": 0.75},
+			expected: true,
+		},
+		{
+			name:     "missing key",
+			key:      "missing",
+			value:    50,
+			payload:  map[string]any{"other": 100},
+			expected: false,
+		},
+		{
+			name:     "non-numeric value",
+			key:      "name",
+			value:    50,
+			payload:  map[string]any{"name": "test"},
+			expected: false,
+		},
+		{
+			name:     "nil payload",
+			key:      "score",
+			value:    50,
+			payload:  nil,
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filter := GreaterThan(tt.key, tt.value)
+			record := newTestRecord(1, tt.payload)
+			result := filter.Match(record)
+			if result != tt.expected {
+				t.Errorf("GreaterThan(%q, %v).Match() = %v, want %v", tt.key, tt.value, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGTAlias(t *testing.T) {
+	record := newTestRecord(1, map[string]any{"score": 75})
+	if !GT("score", 50).Match(record) {
+		t.Error("GT should be an alias for GreaterThan")
+	}
+}
+
+func TestGreaterThanOrEqualFilter(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		value    float64
+		payload  map[string]any
+		expected bool
+	}{
+		{
+			name:     "greater than",
+			key:      "score",
+			value:    50,
+			payload:  map[string]any{"score": 75},
+			expected: true,
+		},
+		{
+			name:     "equal",
+			key:      "score",
+			value:    50,
+			payload:  map[string]any{"score": 50},
+			expected: true,
+		},
+		{
+			name:     "less than",
+			key:      "score",
+			value:    50,
+			payload:  map[string]any{"score": 25},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filter := GreaterThanOrEqual(tt.key, tt.value)
+			record := newTestRecord(1, tt.payload)
+			result := filter.Match(record)
+			if result != tt.expected {
+				t.Errorf("GreaterThanOrEqual(%q, %v).Match() = %v, want %v", tt.key, tt.value, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestGTEAlias(t *testing.T) {
+	record := newTestRecord(1, map[string]any{"score": 50})
+	if !GTE("score", 50).Match(record) {
+		t.Error("GTE should be an alias for GreaterThanOrEqual")
+	}
+}
+
+func TestLessThanFilter(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		value    float64
+		payload  map[string]any
+		expected bool
+	}{
+		{
+			name:     "int less than",
+			key:      "score",
+			value:    50,
+			payload:  map[string]any{"score": 25},
+			expected: true,
+		},
+		{
+			name:     "int equal (not less)",
+			key:      "score",
+			value:    50,
+			payload:  map[string]any{"score": 50},
+			expected: false,
+		},
+		{
+			name:     "int greater than",
+			key:      "score",
+			value:    50,
+			payload:  map[string]any{"score": 75},
+			expected: false,
+		},
+		{
+			name:     "float64 less than",
+			key:      "score",
+			value:    0.5,
+			payload:  map[string]any{"score": 0.25},
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filter := LessThan(tt.key, tt.value)
+			record := newTestRecord(1, tt.payload)
+			result := filter.Match(record)
+			if result != tt.expected {
+				t.Errorf("LessThan(%q, %v).Match() = %v, want %v", tt.key, tt.value, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestLTAlias(t *testing.T) {
+	record := newTestRecord(1, map[string]any{"score": 25})
+	if !LT("score", 50).Match(record) {
+		t.Error("LT should be an alias for LessThan")
+	}
+}
+
+func TestLessThanOrEqualFilter(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		value    float64
+		payload  map[string]any
+		expected bool
+	}{
+		{
+			name:     "less than",
+			key:      "score",
+			value:    50,
+			payload:  map[string]any{"score": 25},
+			expected: true,
+		},
+		{
+			name:     "equal",
+			key:      "score",
+			value:    50,
+			payload:  map[string]any{"score": 50},
+			expected: true,
+		},
+		{
+			name:     "greater than",
+			key:      "score",
+			value:    50,
+			payload:  map[string]any{"score": 75},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filter := LessThanOrEqual(tt.key, tt.value)
+			record := newTestRecord(1, tt.payload)
+			result := filter.Match(record)
+			if result != tt.expected {
+				t.Errorf("LessThanOrEqual(%q, %v).Match() = %v, want %v", tt.key, tt.value, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestLTEAlias(t *testing.T) {
+	record := newTestRecord(1, map[string]any{"score": 50})
+	if !LTE("score", 50).Match(record) {
+		t.Error("LTE should be an alias for LessThanOrEqual")
+	}
+}
+
+func TestBetweenFilter(t *testing.T) {
+	tests := []struct {
+		name     string
+		key      string
+		min      float64
+		max      float64
+		payload  map[string]any
+		expected bool
+	}{
+		{
+			name:     "in range",
+			key:      "line",
+			min:      10,
+			max:      50,
+			payload:  map[string]any{"line": 25},
+			expected: true,
+		},
+		{
+			name:     "at min boundary",
+			key:      "line",
+			min:      10,
+			max:      50,
+			payload:  map[string]any{"line": 10},
+			expected: true,
+		},
+		{
+			name:     "at max boundary",
+			key:      "line",
+			min:      10,
+			max:      50,
+			payload:  map[string]any{"line": 50},
+			expected: true,
+		},
+		{
+			name:     "below min",
+			key:      "line",
+			min:      10,
+			max:      50,
+			payload:  map[string]any{"line": 5},
+			expected: false,
+		},
+		{
+			name:     "above max",
+			key:      "line",
+			min:      10,
+			max:      50,
+			payload:  map[string]any{"line": 100},
+			expected: false,
+		},
+		{
+			name:     "float range",
+			key:      "score",
+			min:      0.3,
+			max:      0.7,
+			payload:  map[string]any{"score": 0.5},
+			expected: true,
+		},
+		{
+			name:     "missing key",
+			key:      "missing",
+			min:      10,
+			max:      50,
+			payload:  map[string]any{"other": 25},
+			expected: false,
+		},
+		{
+			name:     "non-numeric value",
+			key:      "name",
+			min:      10,
+			max:      50,
+			payload:  map[string]any{"name": "test"},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filter := Between(tt.key, tt.min, tt.max)
+			record := newTestRecord(1, tt.payload)
+			result := filter.Match(record)
+			if result != tt.expected {
+				t.Errorf("Between(%q, %v, %v).Match() = %v, want %v", tt.key, tt.min, tt.max, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestRangeFiltersWithDifferentNumericTypes(t *testing.T) {
+	// Test that range filters work with various numeric types
+	tests := []struct {
+		name    string
+		payload map[string]any
+	}{
+		{"int", map[string]any{"val": 50}},
+		{"int8", map[string]any{"val": int8(50)}},
+		{"int16", map[string]any{"val": int16(50)}},
+		{"int32", map[string]any{"val": int32(50)}},
+		{"int64", map[string]any{"val": int64(50)}},
+		{"uint", map[string]any{"val": uint(50)}},
+		{"uint8", map[string]any{"val": uint8(50)}},
+		{"uint16", map[string]any{"val": uint16(50)}},
+		{"uint32", map[string]any{"val": uint32(50)}},
+		{"uint64", map[string]any{"val": uint64(50)}},
+		{"float32", map[string]any{"val": float32(50)}},
+		{"float64", map[string]any{"val": float64(50)}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			record := newTestRecord(1, tt.payload)
+
+			if !GT("val", 25).Match(record) {
+				t.Errorf("GT should match %s value 50 > 25", tt.name)
+			}
+			if !GTE("val", 50).Match(record) {
+				t.Errorf("GTE should match %s value 50 >= 50", tt.name)
+			}
+			if !LT("val", 75).Match(record) {
+				t.Errorf("LT should match %s value 50 < 75", tt.name)
+			}
+			if !LTE("val", 50).Match(record) {
+				t.Errorf("LTE should match %s value 50 <= 50", tt.name)
+			}
+			if !Between("val", 25, 75).Match(record) {
+				t.Errorf("Between should match %s value 50 in [25, 75]", tt.name)
+			}
+		})
+	}
+}
+
+func TestRangeFiltersInCombinations(t *testing.T) {
+	// Test combining range filters with other filters
+	record := newTestRecord(1, map[string]any{
+		"file":  "main.go",
+		"line":  150,
+		"score": 0.8,
+	})
+
+	// Go files with line > 100 and score >= 0.5
+	filter := And(
+		Suffix("file", ".go"),
+		GT("line", 100),
+		GTE("score", 0.5),
+	)
+
+	if !filter.Match(record) {
+		t.Error("Combined filter should match")
+	}
+
+	// Test with Or
+	orFilter := Or(
+		LT("line", 50),
+		GT("line", 100),
+	)
+
+	if !orFilter.Match(record) {
+		t.Error("Or filter should match line > 100")
+	}
+
+	// Test with Not
+	notFilter := Not(Between("score", 0.0, 0.5))
+	if !notFilter.Match(record) {
+		t.Error("Not(Between) should match score 0.8")
+	}
+}

@@ -292,6 +292,189 @@ func Not(filter Filter) Filter {
 	return &notFilter{filter: filter}
 }
 
+// greaterThanFilter matches records where payload[key] > value.
+type greaterThanFilter struct {
+	key   string
+	value float64
+}
+
+func (f *greaterThanFilter) Match(r *Record) bool {
+	if r.Payload == nil {
+		return false
+	}
+	v, ok := r.Payload[f.key]
+	if !ok {
+		return false
+	}
+	num, ok := toFloat64(v)
+	if !ok {
+		return false
+	}
+	return num > f.value
+}
+
+// GreaterThan creates a filter that matches records where payload[key] > value.
+func GreaterThan(key string, value float64) Filter {
+	return &greaterThanFilter{key: key, value: value}
+}
+
+// GT is an alias for GreaterThan.
+func GT(key string, value float64) Filter {
+	return GreaterThan(key, value)
+}
+
+// greaterThanOrEqualFilter matches records where payload[key] >= value.
+type greaterThanOrEqualFilter struct {
+	key   string
+	value float64
+}
+
+func (f *greaterThanOrEqualFilter) Match(r *Record) bool {
+	if r.Payload == nil {
+		return false
+	}
+	v, ok := r.Payload[f.key]
+	if !ok {
+		return false
+	}
+	num, ok := toFloat64(v)
+	if !ok {
+		return false
+	}
+	return num >= f.value
+}
+
+// GreaterThanOrEqual creates a filter that matches records where payload[key] >= value.
+func GreaterThanOrEqual(key string, value float64) Filter {
+	return &greaterThanOrEqualFilter{key: key, value: value}
+}
+
+// GTE is an alias for GreaterThanOrEqual.
+func GTE(key string, value float64) Filter {
+	return GreaterThanOrEqual(key, value)
+}
+
+// lessThanFilter matches records where payload[key] < value.
+type lessThanFilter struct {
+	key   string
+	value float64
+}
+
+func (f *lessThanFilter) Match(r *Record) bool {
+	if r.Payload == nil {
+		return false
+	}
+	v, ok := r.Payload[f.key]
+	if !ok {
+		return false
+	}
+	num, ok := toFloat64(v)
+	if !ok {
+		return false
+	}
+	return num < f.value
+}
+
+// LessThan creates a filter that matches records where payload[key] < value.
+func LessThan(key string, value float64) Filter {
+	return &lessThanFilter{key: key, value: value}
+}
+
+// LT is an alias for LessThan.
+func LT(key string, value float64) Filter {
+	return LessThan(key, value)
+}
+
+// lessThanOrEqualFilter matches records where payload[key] <= value.
+type lessThanOrEqualFilter struct {
+	key   string
+	value float64
+}
+
+func (f *lessThanOrEqualFilter) Match(r *Record) bool {
+	if r.Payload == nil {
+		return false
+	}
+	v, ok := r.Payload[f.key]
+	if !ok {
+		return false
+	}
+	num, ok := toFloat64(v)
+	if !ok {
+		return false
+	}
+	return num <= f.value
+}
+
+// LessThanOrEqual creates a filter that matches records where payload[key] <= value.
+func LessThanOrEqual(key string, value float64) Filter {
+	return &lessThanOrEqualFilter{key: key, value: value}
+}
+
+// LTE is an alias for LessThanOrEqual.
+func LTE(key string, value float64) Filter {
+	return LessThanOrEqual(key, value)
+}
+
+// betweenFilter matches records where min <= payload[key] <= max.
+type betweenFilter struct {
+	key string
+	min float64
+	max float64
+}
+
+func (f *betweenFilter) Match(r *Record) bool {
+	if r.Payload == nil {
+		return false
+	}
+	v, ok := r.Payload[f.key]
+	if !ok {
+		return false
+	}
+	num, ok := toFloat64(v)
+	if !ok {
+		return false
+	}
+	return num >= f.min && num <= f.max
+}
+
+// Between creates a filter that matches records where min <= payload[key] <= max.
+func Between(key string, min, max float64) Filter {
+	return &betweenFilter{key: key, min: min, max: max}
+}
+
+// toFloat64 converts a numeric value to float64.
+func toFloat64(v any) (float64, bool) {
+	switch n := v.(type) {
+	case int:
+		return float64(n), true
+	case int8:
+		return float64(n), true
+	case int16:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case uint:
+		return float64(n), true
+	case uint8:
+		return float64(n), true
+	case uint16:
+		return float64(n), true
+	case uint32:
+		return float64(n), true
+	case uint64:
+		return float64(n), true
+	case float32:
+		return float64(n), true
+	case float64:
+		return n, true
+	default:
+		return 0, false
+	}
+}
+
 // compareValues compares two values for equality.
 func compareValues(a, b any) bool {
 	// Handle nil

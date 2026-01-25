@@ -35,6 +35,12 @@ func (h *HNSWIndex) Delete(id uint64) error {
 	return h.idx.Delete(id)
 }
 
+// HardDelete removes a vector completely from the index.
+// This is needed for update operations where we re-insert with the same ID.
+func (h *HNSWIndex) HardDelete(id uint64) error {
+	return h.idx.HardDelete(id)
+}
+
 // Search finds the k nearest neighbors to the query vector.
 func (h *HNSWIndex) Search(query []float32, k int) ([]IndexResult, error) {
 	results, err := h.idx.Search(query, k)

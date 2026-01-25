@@ -301,6 +301,10 @@ curl -X POST http://localhost:8080/collections/embeddings/search \
 |----------|-------------|
 | `eq` or `=` | Equal |
 | `neq` or `!=` | Not equal |
+| `gt` or `>` | Greater than (numeric) |
+| `gte` or `>=` | Greater than or equal (numeric) |
+| `lt` or `<` | Less than (numeric) |
+| `lte` or `<=` | Less than or equal (numeric) |
 | `glob` | Glob pattern match |
 | `prefix` | String prefix |
 | `suffix` | String suffix |
@@ -402,6 +406,27 @@ payloads := []map[string]any{p1, p2, p3}
 ids, err := coll.InsertBatch(vectors, payloads)
 ```
 
+### Upserting (Insert or Update)
+
+```go
+// Upsert by ID (0 = auto-generate new ID)
+id, err := coll.Upsert(0, vector, payload)           // Insert new
+id, err := coll.Upsert(42, vector, payload)          // Update if exists, insert with ID 42 if not
+
+// Upsert by key field (useful for incremental indexing)
+id, wasInsert, err := coll.UpsertByKey("file", "main.go", vector, map[string]any{
+    "file": "main.go",
+    "line": 100,
+})
+// wasInsert is true if new record was created, false if existing was updated
+
+// Update only the vector (keep existing payload)
+err := coll.UpdateVector(id, newVector)
+
+// Update only the payload (keep existing vector)
+err := coll.Update(id, newPayload)
+```
+
 ### Searching
 
 ```go
@@ -461,6 +486,24 @@ results, _ := coll.Search(query,
 - `And(filters...)` - Combine filters with AND
 - `Or(filters...)` - Combine filters with OR
 - `Not(filter)` - Negate a filter
+
+**Range filters (numeric):**
+- `GreaterThan(key, value)` or `GT(key, value)` - Greater than
+- `GreaterThanOrEqual(key, value)` or `GTE(key, value)` - Greater than or equal
+- `LessThan(key, value)` or `LT(key, value)` - Less than
+- `LessThanOrEqual(key, value)` or `LTE(key, value)` - Less than or equal
+- `Between(key, min, max)` - Value in range (inclusive)
+
+```go
+// Range filter examples
+results, _ := coll.Search(query,
+    veclite.TopK(10),
+    veclite.WithFilters(
+        veclite.GT("score", 0.5),          // score > 0.5
+        veclite.Between("line", 100, 500), // 100 <= line <= 500
+    ),
+)
+```
 
 ### HNSW Configuration
 

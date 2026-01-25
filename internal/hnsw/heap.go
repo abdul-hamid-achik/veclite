@@ -61,9 +61,9 @@ func (h MinHeap) Peek() Item {
 // CandidateSet is a set of candidates used during HNSW search.
 // It maintains a heap for traversal and tracks the best results.
 type CandidateSet struct {
-	candidates   MinHeap       // For lowerBetter traversal
-	candidatesHB MaxHeap       // For higherBetter traversal
-	results      []Item        // Best results found
+	candidates   MinHeap // For lowerBetter traversal
+	candidatesHB MaxHeap // For higherBetter traversal
+	results      []Item  // Best results found
 	maxSize      int
 	visited      map[uint64]bool
 	higherBetter bool

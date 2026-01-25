@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -19,8 +19,8 @@ import (
 
 // Server holds the HTTP server state.
 type Server struct {
-	db       *veclite.DB
-	dbPath   string
+	db          *veclite.DB
+	dbPath      string
 	corsEnabled bool
 }
 
@@ -244,12 +244,12 @@ func (s *Server) listCollections(w http.ResponseWriter, r *http.Request) {
 // createCollection handles POST /collections
 func (s *Server) createCollection(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name           string `json:"name"`
-		Dimension      int    `json:"dimension"`
-		Distance       string `json:"distance"`
-		HNSW           bool   `json:"hnsw"`
-		HNSWM          int    `json:"hnsw_m"`
-		HNSWEf         int    `json:"hnsw_ef"`
+		Name      string `json:"name"`
+		Dimension int    `json:"dimension"`
+		Distance  string `json:"distance"`
+		HNSW      bool   `json:"hnsw"`
+		HNSWM     int    `json:"hnsw_m"`
+		HNSWEf    int    `json:"hnsw_ef"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

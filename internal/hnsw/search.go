@@ -62,7 +62,7 @@ func (idx *Index) SearchWithEf(query []float32, k int, ef int) ([]SearchResult, 
 
 // SearchStats holds statistics about a search operation.
 type SearchStats struct {
-	NodesVisited int
+	NodesVisited  int
 	LayersVisited int
 }
 

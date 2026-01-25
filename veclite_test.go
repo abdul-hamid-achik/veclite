@@ -928,3 +928,399 @@ func BenchmarkBruteForceSearch10K(b *testing.B) {
 		_, _ = coll.Search(query, TopK(10))
 	}
 }
+
+// Threshold with HNSW tests
+
+func TestHNSWWithThreshold(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(4), WithHNSW(16, 200))
+
+	// Insert vectors
+	_, _ = coll.Insert([]float32{1, 0, 0, 0}, map[string]any{"name": "x"})      // cosine similarity to query: 1.0
+	_, _ = coll.Insert([]float32{0.7, 0.7, 0, 0}, map[string]any{"name": "xy"}) // cosine similarity ~0.7
+	_, _ = coll.Insert([]float32{0, 1, 0, 0}, map[string]any{"name": "y"})      // cosine similarity to query: 0
+
+	// Search with threshold using HNSW
+	results, err := coll.Search([]float32{1, 0, 0, 0}, TopK(10), Threshold(0.5))
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+
+	// Should only return vectors with cosine similarity >= 0.5
+	if len(results) != 2 {
+		t.Errorf("Search with threshold returned %v results, want 2", len(results))
+	}
+
+	// Verify all results meet threshold
+	for _, r := range results {
+		if r.Score < 0.5 {
+			t.Errorf("Result %v has score %v < 0.5 threshold", r.Record.Payload["name"], r.Score)
+		}
+	}
+}
+
+func TestHNSWWithHighThreshold(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(4), WithHNSW(16, 200))
+
+	// Insert normalized vectors
+	_, _ = coll.Insert([]float32{1, 0, 0, 0}, nil)
+	_, _ = coll.Insert([]float32{0.9, 0.44, 0, 0}, nil) // ~0.9 cosine similarity
+	_, _ = coll.Insert([]float32{0.7, 0.71, 0, 0}, nil) // ~0.7 cosine similarity
+	_, _ = coll.Insert([]float32{0.5, 0.87, 0, 0}, nil) // ~0.5 cosine similarity
+	_, _ = coll.Insert([]float32{0, 1, 0, 0}, nil)      // 0 cosine similarity
+
+	// High threshold should return fewer results
+	results, err := coll.Search([]float32{1, 0, 0, 0}, TopK(10), Threshold(0.95))
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+
+	// Only exact match should pass
+	if len(results) != 1 {
+		t.Errorf("Search with high threshold returned %v results, want 1", len(results))
+	}
+}
+
+// Upsert tests
+
+func TestUpsertNewRecord(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll := db.Collection("test")
+
+	// Upsert with ID 0 should create new record
+	id, err := coll.Upsert(0, []float32{1, 2, 3}, map[string]any{"key": "value"})
+	if err != nil {
+		t.Fatalf("Upsert failed: %v", err)
+	}
+
+	if id != 1 {
+		t.Errorf("First ID = %v, want 1", id)
+	}
+
+	if coll.Count() != 1 {
+		t.Errorf("Count() = %v, want 1", coll.Count())
+	}
+
+	record, _ := coll.Get(id)
+	if record.Payload["key"] != "value" {
+		t.Errorf("Payload[key] = %v, want value", record.Payload["key"])
+	}
+}
+
+func TestUpsertExistingRecord(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll := db.Collection("test")
+
+	// Insert initial record
+	id, _ := coll.Insert([]float32{1, 2, 3}, map[string]any{"key": "original"})
+
+	// Upsert should update existing record
+	returnedID, err := coll.Upsert(id, []float32{4, 5, 6}, map[string]any{"key": "updated"})
+	if err != nil {
+		t.Fatalf("Upsert failed: %v", err)
+	}
+
+	if returnedID != id {
+		t.Errorf("Returned ID = %v, want %v", returnedID, id)
+	}
+
+	if coll.Count() != 1 {
+		t.Errorf("Count() = %v, want 1 (should not create new record)", coll.Count())
+	}
+
+	record, _ := coll.Get(id)
+	if record.Payload["key"] != "updated" {
+		t.Errorf("Payload[key] = %v, want updated", record.Payload["key"])
+	}
+
+	// Verify vector was updated
+	if record.Vector[0] != 4 || record.Vector[1] != 5 || record.Vector[2] != 6 {
+		t.Errorf("Vector = %v, want [4, 5, 6]", record.Vector)
+	}
+}
+
+func TestUpsertWithSpecificID(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll := db.Collection("test")
+
+	// Upsert with specific ID that doesn't exist
+	id, err := coll.Upsert(100, []float32{1, 2, 3}, map[string]any{"key": "value"})
+	if err != nil {
+		t.Fatalf("Upsert failed: %v", err)
+	}
+
+	if id != 100 {
+		t.Errorf("ID = %v, want 100", id)
+	}
+
+	// Next auto-generated ID should be 101
+	nextID, _ := coll.Insert([]float32{4, 5, 6}, nil)
+	if nextID != 101 {
+		t.Errorf("Next ID = %v, want 101", nextID)
+	}
+}
+
+func TestUpsertEmptyVector(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll := db.Collection("test")
+
+	_, err := coll.Upsert(0, []float32{}, nil)
+	if !errors.Is(err, ErrEmptyVector) {
+		t.Errorf("Upsert empty vector = %v, want ErrEmptyVector", err)
+	}
+}
+
+func TestUpsertDimensionMismatch(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll := db.Collection("test")
+
+	// Insert initial record to set dimension
+	id, _ := coll.Insert([]float32{1, 2, 3}, nil)
+
+	// Upsert with different dimension should fail
+	_, err := coll.Upsert(id, []float32{1, 2}, nil)
+	if !errors.Is(err, ErrDimensionMismatch) {
+		t.Errorf("Upsert dimension mismatch = %v, want ErrDimensionMismatch", err)
+	}
+}
+
+func TestUpsertWithHNSW(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(3), WithHNSW(16, 200))
+
+	// Insert initial record
+	id, _ := coll.Insert([]float32{1, 0, 0}, map[string]any{"name": "original"})
+
+	// Upsert to update
+	_, err := coll.Upsert(id, []float32{0, 1, 0}, map[string]any{"name": "updated"})
+	if err != nil {
+		t.Fatalf("Upsert failed: %v", err)
+	}
+
+	// Search should find the updated vector
+	results, _ := coll.Search([]float32{0, 1, 0}, TopK(1))
+	if len(results) != 1 {
+		t.Fatalf("Search returned %v results, want 1", len(results))
+	}
+
+	if results[0].Record.Payload["name"] != "updated" {
+		t.Errorf("Search found %v, want updated", results[0].Record.Payload["name"])
+	}
+}
+
+func TestUpsertByKeyInsert(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll := db.Collection("test")
+
+	// UpsertByKey when no matching record exists should insert
+	id, inserted, err := coll.UpsertByKey("file", "main.go", []float32{1, 2, 3}, map[string]any{
+		"file": "main.go",
+		"line": 42,
+	})
+	if err != nil {
+		t.Fatalf("UpsertByKey failed: %v", err)
+	}
+
+	if !inserted {
+		t.Error("UpsertByKey should report insert for new record")
+	}
+
+	if id != 1 {
+		t.Errorf("ID = %v, want 1", id)
+	}
+
+	if coll.Count() != 1 {
+		t.Errorf("Count() = %v, want 1", coll.Count())
+	}
+}
+
+func TestUpsertByKeyUpdate(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll := db.Collection("test")
+
+	// Insert initial record
+	coll.Insert([]float32{1, 2, 3}, map[string]any{"file": "main.go", "line": 10})
+
+	// UpsertByKey with same key should update
+	id, inserted, err := coll.UpsertByKey("file", "main.go", []float32{4, 5, 6}, map[string]any{
+		"file": "main.go",
+		"line": 50,
+	})
+	if err != nil {
+		t.Fatalf("UpsertByKey failed: %v", err)
+	}
+
+	if inserted {
+		t.Error("UpsertByKey should report update for existing record")
+	}
+
+	if id != 1 {
+		t.Errorf("ID = %v, want 1", id)
+	}
+
+	if coll.Count() != 1 {
+		t.Errorf("Count() = %v, want 1 (should not create new record)", coll.Count())
+	}
+
+	// Verify update
+	record, _ := coll.Get(id)
+	if record.Payload["line"] != 50 {
+		t.Errorf("Payload[line] = %v, want 50", record.Payload["line"])
+	}
+
+	// Verify vector was updated
+	if record.Vector[0] != 4 || record.Vector[1] != 5 || record.Vector[2] != 6 {
+		t.Errorf("Vector = %v, want [4, 5, 6]", record.Vector)
+	}
+}
+
+func TestUpsertByKeyWithHNSW(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(3), WithHNSW(16, 200))
+
+	// Insert initial records
+	coll.Insert([]float32{1, 0, 0}, map[string]any{"file": "a.go"})
+	coll.Insert([]float32{0, 1, 0}, map[string]any{"file": "b.go"})
+
+	// Upsert to update b.go
+	_, _, err := coll.UpsertByKey("file", "b.go", []float32{0, 0, 1}, map[string]any{"file": "b.go"})
+	if err != nil {
+		t.Fatalf("UpsertByKey failed: %v", err)
+	}
+
+	// Search for updated vector
+	results, _ := coll.Search([]float32{0, 0, 1}, TopK(1))
+	if len(results) != 1 {
+		t.Fatalf("Search returned %v results, want 1", len(results))
+	}
+
+	if results[0].Record.Payload["file"] != "b.go" {
+		t.Errorf("Search found %v, want b.go", results[0].Record.Payload["file"])
+	}
+}
+
+func TestUpsertByKeyEmptyVector(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll := db.Collection("test")
+
+	_, _, err := coll.UpsertByKey("file", "main.go", []float32{}, nil)
+	if !errors.Is(err, ErrEmptyVector) {
+		t.Errorf("UpsertByKey empty vector = %v, want ErrEmptyVector", err)
+	}
+}
+
+func TestUpdateVector(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll := db.Collection("test")
+
+	// Insert initial record
+	id, _ := coll.Insert([]float32{1, 2, 3}, map[string]any{"key": "value"})
+
+	// Update vector
+	err := coll.UpdateVector(id, []float32{4, 5, 6})
+	if err != nil {
+		t.Fatalf("UpdateVector failed: %v", err)
+	}
+
+	// Verify vector was updated
+	record, _ := coll.Get(id)
+	if record.Vector[0] != 4 || record.Vector[1] != 5 || record.Vector[2] != 6 {
+		t.Errorf("Vector = %v, want [4, 5, 6]", record.Vector)
+	}
+
+	// Payload should be unchanged
+	if record.Payload["key"] != "value" {
+		t.Errorf("Payload[key] = %v, want value", record.Payload["key"])
+	}
+}
+
+func TestUpdateVectorWithHNSW(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(3), WithHNSW(16, 200))
+
+	// Insert initial record
+	id, _ := coll.Insert([]float32{1, 0, 0}, nil)
+
+	// Update vector
+	err := coll.UpdateVector(id, []float32{0, 1, 0})
+	if err != nil {
+		t.Fatalf("UpdateVector failed: %v", err)
+	}
+
+	// Search should find the updated vector
+	results, _ := coll.Search([]float32{0, 1, 0}, TopK(1))
+	if len(results) != 1 {
+		t.Fatalf("Search returned %v results, want 1", len(results))
+	}
+
+	if results[0].Record.ID != id {
+		t.Errorf("Search found ID %v, want %v", results[0].Record.ID, id)
+	}
+}
+
+func TestUpdateVectorDimensionMismatch(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll := db.Collection("test")
+	id, _ := coll.Insert([]float32{1, 2, 3}, nil)
+
+	err := coll.UpdateVector(id, []float32{1, 2})
+	if !errors.Is(err, ErrDimensionMismatch) {
+		t.Errorf("UpdateVector dimension mismatch = %v, want ErrDimensionMismatch", err)
+	}
+}
+
+func TestUpdateVectorEmptyVector(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll := db.Collection("test")
+	id, _ := coll.Insert([]float32{1, 2, 3}, nil)
+
+	err := coll.UpdateVector(id, []float32{})
+	if !errors.Is(err, ErrEmptyVector) {
+		t.Errorf("UpdateVector empty vector = %v, want ErrEmptyVector", err)
+	}
+}
+
+func TestUpdateVectorNotFound(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll := db.Collection("test")
+
+	err := coll.UpdateVector(999, []float32{1, 2, 3})
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("UpdateVector not found = %v, want ErrNotFound", err)
+	}
+}

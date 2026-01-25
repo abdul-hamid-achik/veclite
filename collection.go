@@ -309,6 +309,241 @@ func (c *Collection) Update(id uint64, payload map[string]any) error {
 	return nil
 }
 
+// UpdateVector updates the vector for a record.
+func (c *Collection) UpdateVector(id uint64, vector []float32) error {
+	if len(vector) == 0 {
+		return ErrEmptyVector
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	record, ok := c.records[id]
+	if !ok {
+		return &NotFoundError{Type: "record", ID: string(rune(id))}
+	}
+
+	if len(vector) != c.dimension {
+		return &DimensionError{Expected: c.dimension, Got: len(vector)}
+	}
+
+	// Update index if present
+	if c.index != nil {
+		// Hard delete old vector from index (needed for re-insertion with same ID)
+		c.hardDeleteFromIndex(id)
+		// Insert new vector
+		if err := c.index.Insert(id, vector); err != nil {
+			// Re-insert old vector on failure
+			_ = c.index.Insert(id, record.Vector)
+			return err
+		}
+	}
+
+	copy(record.Vector, vector)
+	record.UpdatedAt = time.Now()
+	return nil
+}
+
+// hardDeleteFromIndex removes a vector from the index completely.
+// This is needed for update operations where we re-insert with the same ID.
+func (c *Collection) hardDeleteFromIndex(id uint64) {
+	if c.index == nil {
+		return
+	}
+	// Try hard delete for HNSW index
+	if hnswIdx, ok := c.index.(*HNSWIndex); ok {
+		_ = hnswIdx.HardDelete(id)
+		return
+	}
+	// Fall back to regular delete for other index types
+	_ = c.index.Delete(id)
+}
+
+// Upsert inserts a new record or updates an existing one by ID.
+// If the ID is 0, a new record is created with an auto-generated ID.
+// If the ID exists, the vector and payload are updated.
+// If the ID doesn't exist, a new record is created with that ID.
+// Returns the record ID (either the provided one or newly generated).
+func (c *Collection) Upsert(id uint64, vector []float32, payload map[string]any) (uint64, error) {
+	if len(vector) == 0 {
+		return 0, ErrEmptyVector
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// If ID is 0, behave like Insert
+	if id == 0 {
+		return c.insertUnlocked(vector, payload)
+	}
+
+	// Check if record exists
+	record, exists := c.records[id]
+	if exists {
+		// Update existing record
+		if len(vector) != c.dimension {
+			return 0, &DimensionError{Expected: c.dimension, Got: len(vector)}
+		}
+
+		// Update index if present
+		if c.index != nil {
+			c.hardDeleteFromIndex(id)
+			if err := c.index.Insert(id, vector); err != nil {
+				_ = c.index.Insert(id, record.Vector)
+				return 0, err
+			}
+		}
+
+		copy(record.Vector, vector)
+		record.Payload = payload
+		record.UpdatedAt = time.Now()
+		return id, nil
+	}
+
+	// Insert with specified ID
+	return c.insertWithIDUnlocked(id, vector, payload)
+}
+
+// UpsertByKey inserts a new record or updates an existing one based on a key field.
+// If a record with payload[keyField] == keyValue exists, it is updated.
+// Otherwise, a new record is inserted.
+// Returns the record ID and whether it was an insert (true) or update (false).
+func (c *Collection) UpsertByKey(keyField string, keyValue any, vector []float32, payload map[string]any) (uint64, bool, error) {
+	if len(vector) == 0 {
+		return 0, false, ErrEmptyVector
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Find existing record with matching key
+	var existingID uint64
+	var existingRecord *Record
+	for id, record := range c.records {
+		if record.Payload != nil {
+			if v, ok := record.Payload[keyField]; ok && compareValues(v, keyValue) {
+				existingID = id
+				existingRecord = record
+				break
+			}
+		}
+	}
+
+	if existingRecord != nil {
+		// Update existing record
+		if c.dimension > 0 && len(vector) != c.dimension {
+			return 0, false, &DimensionError{Expected: c.dimension, Got: len(vector)}
+		}
+
+		// Update index if present
+		if c.index != nil {
+			c.hardDeleteFromIndex(existingID)
+			if err := c.index.Insert(existingID, vector); err != nil {
+				_ = c.index.Insert(existingID, existingRecord.Vector)
+				return 0, false, err
+			}
+		}
+
+		copy(existingRecord.Vector, vector)
+		existingRecord.Payload = payload
+		existingRecord.UpdatedAt = time.Now()
+		return existingID, false, nil
+	}
+
+	// Insert new record
+	id, err := c.insertUnlocked(vector, payload)
+	return id, true, err
+}
+
+// insertUnlocked inserts a record without acquiring the lock.
+// Caller must hold c.mu.Lock().
+func (c *Collection) insertUnlocked(vector []float32, payload map[string]any) (uint64, error) {
+	// Check/set dimension
+	if c.dimension == 0 {
+		c.dimension = len(vector)
+		if c.indexType == IndexTypeHNSW && c.hnswConfig != nil && c.index == nil {
+			c.index = NewHNSWIndex(
+				c.dimension,
+				c.distanceType,
+				c.hnswConfig.M,
+				c.hnswConfig.EfConstruction,
+			)
+		}
+	} else if len(vector) != c.dimension {
+		return 0, &DimensionError{Expected: c.dimension, Got: len(vector)}
+	}
+
+	now := time.Now()
+	id := c.nextID
+	c.nextID++
+
+	record := &Record{
+		ID:        id,
+		Vector:    make([]float32, len(vector)),
+		Payload:   payload,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	copy(record.Vector, vector)
+
+	c.records[id] = record
+
+	if c.index != nil {
+		if err := c.index.Insert(id, vector); err != nil {
+			delete(c.records, id)
+			c.nextID--
+			return 0, err
+		}
+	}
+
+	return id, nil
+}
+
+// insertWithIDUnlocked inserts a record with a specific ID without acquiring the lock.
+// Caller must hold c.mu.Lock().
+func (c *Collection) insertWithIDUnlocked(id uint64, vector []float32, payload map[string]any) (uint64, error) {
+	// Check/set dimension
+	if c.dimension == 0 {
+		c.dimension = len(vector)
+		if c.indexType == IndexTypeHNSW && c.hnswConfig != nil && c.index == nil {
+			c.index = NewHNSWIndex(
+				c.dimension,
+				c.distanceType,
+				c.hnswConfig.M,
+				c.hnswConfig.EfConstruction,
+			)
+		}
+	} else if len(vector) != c.dimension {
+		return 0, &DimensionError{Expected: c.dimension, Got: len(vector)}
+	}
+
+	now := time.Now()
+	record := &Record{
+		ID:        id,
+		Vector:    make([]float32, len(vector)),
+		Payload:   payload,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	copy(record.Vector, vector)
+
+	c.records[id] = record
+
+	// Update nextID if necessary
+	if id >= c.nextID {
+		c.nextID = id + 1
+	}
+
+	if c.index != nil {
+		if err := c.index.Insert(id, vector); err != nil {
+			delete(c.records, id)
+			return 0, err
+		}
+	}
+
+	return id, nil
+}
+
 // Search finds the most similar vectors to the query vector.
 func (c *Collection) Search(query []float32, opts ...SearchOption) ([]Result, error) {
 	if len(query) == 0 {
@@ -329,7 +564,7 @@ func (c *Collection) Search(query []float32, opts ...SearchOption) ([]Result, er
 	}
 
 	// Use HNSW index if available and no filters
-	if c.index != nil && len(config.filters) == 0 && config.threshold == nil {
+	if c.index != nil && len(config.filters) == 0 {
 		return c.searchWithIndex(query, config)
 	}
 
@@ -345,13 +580,19 @@ func (c *Collection) searchWithIndex(query []float32, config *searchConfig) ([]R
 		ef = c.hnswConfig.EfSearch
 	}
 
+	// Request more candidates when threshold is set, to ensure we get enough after filtering
+	requestK := config.topK
+	if config.threshold != nil {
+		requestK = max(config.topK*2, 100) // Request double to account for threshold filtering
+	}
+
 	var indexResults []IndexResult
 	var err error
 
 	if ef > 0 {
-		indexResults, err = c.index.SearchWithEf(query, config.topK, ef)
+		indexResults, err = c.index.SearchWithEf(query, requestK, ef)
 	} else {
-		indexResults, err = c.index.Search(query, config.topK)
+		indexResults, err = c.index.Search(query, requestK)
 	}
 
 	if err != nil {
@@ -365,10 +606,26 @@ func (c *Collection) searchWithIndex(query []float32, config *searchConfig) ([]R
 		if !ok {
 			continue // Record was deleted
 		}
+
+		// Apply threshold filter
+		if config.threshold != nil {
+			if c.higherBetter && ir.Distance < *config.threshold {
+				continue
+			}
+			if !c.higherBetter && ir.Distance > *config.threshold {
+				continue
+			}
+		}
+
 		results = append(results, Result{
 			Record: record.Clone(),
 			Score:  ir.Distance,
 		})
+
+		// Stop once we have enough results
+		if len(results) >= config.topK {
+			break
+		}
 	}
 
 	return results, nil
