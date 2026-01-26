@@ -4,6 +4,7 @@ import (
 	"math"
 	"math/rand"
 	"sync"
+	"time"
 
 	"github.com/abdul-hamid-achik/veclite/internal/floats"
 )
@@ -60,6 +61,10 @@ func (idx *Index) Config() Config {
 
 // randomLevel generates a random level for a new node using exponential distribution.
 func (idx *Index) randomLevel() int {
+	// Initialize rng if nil (happens after deserialization from gob)
+	if idx.rng == nil {
+		idx.rng = rand.New(rand.NewSource(time.Now().UnixNano()))
+	}
 	level := 0
 	for idx.rng.Float64() < idx.config.ML && level < 32 {
 		level++
