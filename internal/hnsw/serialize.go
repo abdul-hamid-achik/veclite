@@ -1,6 +1,8 @@
 package hnsw
 
 import (
+	"math/rand"
+
 	"github.com/abdul-hamid-achik/veclite/internal/floats"
 )
 
@@ -74,6 +76,7 @@ func LoadFromSnapshot(snap *Snapshot, distanceType floats.DistanceType) *Index {
 		dimension:    snap.Dimension,
 		distFunc:     floats.GetDistanceFunc(distanceType),
 		higherBetter: floats.IsHigherBetter(distanceType),
+		rng:          rand.New(rand.NewSource(42)),
 	}
 
 	// Restore nodes
