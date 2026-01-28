@@ -3,24 +3,31 @@ package hnsw
 import (
 	"math"
 	"math/rand"
+	"sort"
 	"sync"
 	"time"
 
 	"github.com/abdul-hamid-achik/veclite/internal/floats"
 )
 
+// VectorProvider is a function that retrieves a vector by ID.
+// Used to allow the index to reference vectors stored externally,
+// avoiding duplicate storage.
+type VectorProvider func(id uint64) ([]float32, bool)
+
 // Index is the HNSW index structure.
 type Index struct {
-	config       Config
-	nodes        map[uint64]*Node
-	vectors      map[uint64][]float32
-	entryPoint   uint64
-	maxLevel     int
-	dimension    int
-	distFunc     floats.DistanceFunc
-	higherBetter bool
-	mu           sync.RWMutex
-	rng          *rand.Rand
+	config         Config
+	nodes          map[uint64]*Node
+	vectors        map[uint64][]float32
+	vectorProvider VectorProvider // if set, used instead of vectors map
+	entryPoint     uint64
+	maxLevel       int
+	dimension      int
+	distFunc       floats.DistanceFunc
+	higherBetter   bool
+	mu             sync.RWMutex
+	rng            *rand.Rand
 }
 
 // New creates a new HNSW index with the given configuration.
@@ -40,6 +47,34 @@ func New(config Config, dimension int, distanceType floats.DistanceType) *Index 
 		higherBetter: floats.IsHigherBetter(distanceType),
 		rng:          rand.New(rand.NewSource(42)),
 	}
+}
+
+// SetVectorProvider sets an external vector provider.
+// When set, the index will look up vectors through this provider
+// instead of its internal map, avoiding duplicate storage.
+// The provider must be safe for concurrent use.
+func (idx *Index) SetVectorProvider(provider VectorProvider) {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	idx.vectorProvider = provider
+}
+
+// ClearInternalVectors removes all vectors from the internal map.
+// Use this after setting a VectorProvider to free the duplicate memory.
+func (idx *Index) ClearInternalVectors() {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	idx.vectors = make(map[uint64][]float32)
+}
+
+// getVector retrieves a vector by ID, using the provider if set,
+// otherwise falling back to the internal vectors map.
+func (idx *Index) getVector(id uint64) ([]float32, bool) {
+	if idx.vectorProvider != nil {
+		return idx.vectorProvider(id)
+	}
+	v, ok := idx.vectors[id]
+	return v, ok
 }
 
 // Count returns the number of nodes in the index.
@@ -74,8 +109,8 @@ func (idx *Index) randomLevel() int {
 
 // distance computes distance between two nodes.
 func (idx *Index) distance(id1, id2 uint64) float32 {
-	v1, ok1 := idx.vectors[id1]
-	v2, ok2 := idx.vectors[id2]
+	v1, ok1 := idx.getVector(id1)
+	v2, ok2 := idx.getVector(id2)
 	if !ok1 || !ok2 {
 		if idx.higherBetter {
 			return float32(math.Inf(-1))
@@ -113,10 +148,12 @@ func (idx *Index) Insert(id uint64, vector []float32) error {
 	// Create node
 	node := NewNode(id, level)
 
-	// Store vector (copy to avoid external modification)
-	vec := make([]float32, len(vector))
-	copy(vec, vector)
-	idx.vectors[id] = vec
+	// Store vector only if no external provider is set
+	if idx.vectorProvider == nil {
+		vec := make([]float32, len(vector))
+		copy(vec, vector)
+		idx.vectors[id] = vec
+	}
 
 	// First node becomes entry point
 	if len(idx.nodes) == 0 {
@@ -183,7 +220,8 @@ func (idx *Index) searchLayer(query []float32, entryID uint64, ef int, layer int
 	}
 
 	// Initialize with entry point
-	entryDist := idx.distFunc(query, idx.vectors[entryID])
+	entryVec, _ := idx.getVector(entryID)
+	entryDist := idx.distFunc(query, entryVec)
 	candidates := NewCandidateSet(ef, idx.higherBetter)
 	candidates.Add(entryID, entryDist)
 
@@ -221,7 +259,11 @@ func (idx *Index) searchLayer(query []float32, entryID uint64, ef int, layer int
 				continue
 			}
 
-			dist := idx.distFunc(query, idx.vectors[neighborID])
+			neighborVec, vecOk := idx.getVector(neighborID)
+			if !vecOk {
+				continue
+			}
+			dist := idx.distFunc(query, neighborVec)
 
 			// Add if results not full or better than worst
 			if !candidates.ResultsFull() {
@@ -253,18 +295,14 @@ func (idx *Index) selectNeighbors(candidates []Item, m int) []Item {
 	sorted := make([]Item, len(candidates))
 	copy(sorted, candidates)
 
-	for i := 0; i < len(sorted); i++ {
-		for j := i + 1; j < len(sorted); j++ {
-			if idx.higherBetter {
-				if sorted[i].Distance < sorted[j].Distance {
-					sorted[i], sorted[j] = sorted[j], sorted[i]
-				}
-			} else {
-				if sorted[i].Distance > sorted[j].Distance {
-					sorted[i], sorted[j] = sorted[j], sorted[i]
-				}
-			}
-		}
+	if idx.higherBetter {
+		sort.Slice(sorted, func(i, j int) bool {
+			return sorted[i].Distance > sorted[j].Distance
+		})
+	} else {
+		sort.Slice(sorted, func(i, j int) bool {
+			return sorted[i].Distance < sorted[j].Distance
+		})
 	}
 
 	return sorted[:m]
@@ -294,18 +332,14 @@ func (idx *Index) pruneConnections(node *Node, layer int) {
 	}
 
 	// Sort by distance (keep best connections)
-	for i := 0; i < len(dists); i++ {
-		for j := i + 1; j < len(dists); j++ {
-			if idx.higherBetter {
-				if dists[i].dist < dists[j].dist {
-					dists[i], dists[j] = dists[j], dists[i]
-				}
-			} else {
-				if dists[i].dist > dists[j].dist {
-					dists[i], dists[j] = dists[j], dists[i]
-				}
-			}
-		}
+	if idx.higherBetter {
+		sort.Slice(dists, func(i, j int) bool {
+			return dists[i].dist > dists[j].dist
+		})
+	} else {
+		sort.Slice(dists, func(i, j int) bool {
+			return dists[i].dist < dists[j].dist
+		})
 	}
 
 	// Keep only M best
@@ -328,7 +362,7 @@ func (idx *Index) pruneConnections(node *Node, layer int) {
 func (idx *Index) GetVector(id uint64) ([]float32, bool) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-	v, ok := idx.vectors[id]
+	v, ok := idx.getVector(id)
 	if !ok {
 		return nil, false
 	}

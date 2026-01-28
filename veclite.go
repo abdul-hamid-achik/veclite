@@ -47,7 +47,12 @@ func Open(path string, opts ...Option) (*DB, error) {
 	if path == ":memory:" {
 		storage = NewMemoryStorage()
 	} else {
-		storage = NewFileStorage(path)
+		fs := NewFileStorage(path)
+		// Acquire file lock to prevent concurrent access
+		if err := fs.Lock(); err != nil {
+			return nil, err
+		}
+		storage = fs
 	}
 
 	db := &DB{
@@ -62,6 +67,7 @@ func Open(path string, opts ...Option) (*DB, error) {
 	// Load existing data
 	snapshot, err := storage.Load()
 	if err != nil {
+		_ = storage.Close()
 		return nil, err
 	}
 
@@ -97,12 +103,18 @@ func (db *DB) Path() string {
 
 // Collection returns a collection by name, creating it if it doesn't exist.
 // This is the preferred way to get collections for most use cases.
+// In read-only mode, returns nil if the collection doesn't exist (cannot create).
 func (db *DB) Collection(name string) *Collection {
 	db.mu.Lock()
 	defer db.mu.Unlock()
 
 	if coll, ok := db.collections[name]; ok {
 		return coll
+	}
+
+	// In read-only mode, do not create new collections
+	if db.config.readOnly {
+		return nil
 	}
 
 	// Create new collection with defaults
@@ -119,6 +131,10 @@ func (db *DB) CreateCollection(name string, opts ...CollectionOption) (*Collecti
 
 	if db.closed {
 		return nil, ErrDatabaseClosed
+	}
+
+	if db.config.readOnly {
+		return nil, ErrReadOnly
 	}
 
 	if _, ok := db.collections[name]; ok {
@@ -158,6 +174,10 @@ func (db *DB) DropCollection(name string) error {
 
 	if db.closed {
 		return ErrDatabaseClosed
+	}
+
+	if db.config.readOnly {
+		return ErrReadOnly
 	}
 
 	if _, ok := db.collections[name]; !ok {

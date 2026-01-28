@@ -569,7 +569,9 @@ func TestCollectionClear(t *testing.T) {
 	_, _ = coll.Insert([]float32{1, 2, 3}, nil)
 	_, _ = coll.Insert([]float32{4, 5, 6}, nil)
 
-	coll.Clear()
+	if err := coll.Clear(); err != nil {
+		t.Fatalf("Clear() failed: %v", err)
+	}
 
 	if coll.Count() != 0 {
 		t.Errorf("Count() after Clear = %v, want 0", coll.Count())

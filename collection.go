@@ -50,9 +50,59 @@ func newCollection(name string, config *collectionConfig, db *DB) *Collection {
 			config.hnswConfig.M,
 			config.hnswConfig.EfConstruction,
 		)
+		c.setupVectorProvider()
 	}
 
 	return c
+}
+
+// initHNSWIfNeeded initializes the HNSW index when the dimension becomes known.
+// Must be called with the collection lock held.
+func (c *Collection) initHNSWIfNeeded() {
+	if c.indexType == IndexTypeHNSW && c.hnswConfig != nil && c.index == nil && c.dimension > 0 {
+		c.index = NewHNSWIndex(
+			c.dimension,
+			c.distanceType,
+			c.hnswConfig.M,
+			c.hnswConfig.EfConstruction,
+		)
+		c.setupVectorProvider()
+	}
+}
+
+// setupVectorProvider configures the HNSW index to use the collection's records
+// as the vector source, avoiding duplicate vector storage.
+func (c *Collection) setupVectorProvider() {
+	if c.index == nil {
+		return
+	}
+	hnswIdx, ok := c.index.(*HNSWIndex)
+	if !ok {
+		return
+	}
+	hnswIdx.Internal().SetVectorProvider(func(id uint64) ([]float32, bool) {
+		rec, ok := c.records[id]
+		if !ok {
+			return nil, false
+		}
+		return rec.Vector, true
+	})
+}
+
+// checkReadOnly returns ErrReadOnly if the database is in read-only mode.
+func (c *Collection) checkReadOnly() error {
+	if c.db != nil && c.db.config != nil && c.db.config.readOnly {
+		return ErrReadOnly
+	}
+	return nil
+}
+
+// syncIfNeeded performs a sync if syncOnWrite is enabled.
+func (c *Collection) syncIfNeeded() {
+	if c.db != nil && c.db.config != nil && c.db.config.syncOnWrite {
+		// Sync requires the DB lock; we must not hold the collection lock.
+		_ = c.db.Sync()
+	}
 }
 
 // Name returns the collection name.
@@ -83,25 +133,31 @@ func (c *Collection) DistanceType() floats.DistanceType {
 // Insert adds a vector with optional payload to the collection.
 // Returns the assigned record ID.
 func (c *Collection) Insert(vector []float32, payload map[string]any) (uint64, error) {
+	if err := c.checkReadOnly(); err != nil {
+		return 0, err
+	}
 	if len(vector) == 0 {
 		return 0, ErrEmptyVector
 	}
 
+	id, err := c.insertLocked(vector, payload)
+	if err != nil {
+		return 0, err
+	}
+
+	c.syncIfNeeded()
+	return id, nil
+}
+
+// insertLocked performs the insert while holding the collection lock.
+func (c *Collection) insertLocked(vector []float32, payload map[string]any) (uint64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	// Check/set dimension
 	if c.dimension == 0 {
 		c.dimension = len(vector)
-		// Initialize HNSW index now that we know the dimension
-		if c.indexType == IndexTypeHNSW && c.hnswConfig != nil && c.index == nil {
-			c.index = NewHNSWIndex(
-				c.dimension,
-				c.distanceType,
-				c.hnswConfig.M,
-				c.hnswConfig.EfConstruction,
-			)
-		}
+		c.initHNSWIfNeeded()
 	} else if len(vector) != c.dimension {
 		return 0, &DimensionError{Expected: c.dimension, Got: len(vector)}
 	}
@@ -139,6 +195,9 @@ func (c *Collection) Insert(vector []float32, payload map[string]any) (uint64, e
 // Returns the assigned record IDs.
 // If payloads is nil or shorter than vectors, missing payloads are treated as nil.
 func (c *Collection) InsertBatch(vectors [][]float32, payloads []map[string]any) ([]uint64, error) {
+	if err := c.checkReadOnly(); err != nil {
+		return nil, err
+	}
 	if len(vectors) == 0 {
 		return []uint64{}, nil
 	}
@@ -153,21 +212,24 @@ func (c *Collection) InsertBatch(vectors [][]float32, payloads []map[string]any)
 		}
 	}
 
+	ids, err := c.insertBatchLocked(vectors, payloads)
+	if err != nil {
+		return nil, err
+	}
+
+	c.syncIfNeeded()
+	return ids, nil
+}
+
+// insertBatchLocked performs the batch insert while holding the collection lock.
+func (c *Collection) insertBatchLocked(vectors [][]float32, payloads []map[string]any) ([]uint64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	// Check/set dimension
 	if c.dimension == 0 {
 		c.dimension = len(vectors[0])
-		// Initialize HNSW index now that we know the dimension
-		if c.indexType == IndexTypeHNSW && c.hnswConfig != nil && c.index == nil {
-			c.index = NewHNSWIndex(
-				c.dimension,
-				c.distanceType,
-				c.hnswConfig.M,
-				c.hnswConfig.EfConstruction,
-			)
-		}
+		c.initHNSWIfNeeded()
 	} else if len(vectors[0]) != c.dimension {
 		return nil, &DimensionError{Expected: c.dimension, Got: len(vectors[0])}
 	}
@@ -246,10 +308,14 @@ func (c *Collection) GetVector(id uint64) ([]float32, error) {
 
 // Delete removes a record by ID.
 func (c *Collection) Delete(id uint64) error {
+	if err := c.checkReadOnly(); err != nil {
+		return err
+	}
+
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	if _, ok := c.records[id]; !ok {
+		c.mu.Unlock()
 		return &NotFoundError{Type: "record", ID: string(rune(id))}
 	}
 
@@ -259,18 +325,23 @@ func (c *Collection) Delete(id uint64) error {
 	}
 
 	delete(c.records, id)
+	c.mu.Unlock()
+
+	c.syncIfNeeded()
 	return nil
 }
 
 // DeleteWhere removes all records matching the filters.
 // Returns the number of deleted records.
 func (c *Collection) DeleteWhere(filters ...Filter) (int, error) {
+	if err := c.checkReadOnly(); err != nil {
+		return 0, err
+	}
 	if len(filters) == 0 {
 		return 0, nil
 	}
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	deleted := 0
 	for id, record := range c.records {
@@ -291,39 +362,55 @@ func (c *Collection) DeleteWhere(filters ...Filter) (int, error) {
 		}
 	}
 
+	c.mu.Unlock()
+
+	if deleted > 0 {
+		c.syncIfNeeded()
+	}
 	return deleted, nil
 }
 
 // Update updates the payload for a record.
 func (c *Collection) Update(id uint64, payload map[string]any) error {
+	if err := c.checkReadOnly(); err != nil {
+		return err
+	}
+
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	record, ok := c.records[id]
 	if !ok {
+		c.mu.Unlock()
 		return &NotFoundError{Type: "record", ID: string(rune(id))}
 	}
 
 	record.Payload = payload
 	record.UpdatedAt = time.Now()
+	c.mu.Unlock()
+
+	c.syncIfNeeded()
 	return nil
 }
 
 // UpdateVector updates the vector for a record.
 func (c *Collection) UpdateVector(id uint64, vector []float32) error {
+	if err := c.checkReadOnly(); err != nil {
+		return err
+	}
 	if len(vector) == 0 {
 		return ErrEmptyVector
 	}
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
 
 	record, ok := c.records[id]
 	if !ok {
+		c.mu.Unlock()
 		return &NotFoundError{Type: "record", ID: string(rune(id))}
 	}
 
 	if len(vector) != c.dimension {
+		c.mu.Unlock()
 		return &DimensionError{Expected: c.dimension, Got: len(vector)}
 	}
 
@@ -335,12 +422,16 @@ func (c *Collection) UpdateVector(id uint64, vector []float32) error {
 		if err := c.index.Insert(id, vector); err != nil {
 			// Re-insert old vector on failure
 			_ = c.index.Insert(id, record.Vector)
+			c.mu.Unlock()
 			return err
 		}
 	}
 
 	copy(record.Vector, vector)
 	record.UpdatedAt = time.Now()
+	c.mu.Unlock()
+
+	c.syncIfNeeded()
 	return nil
 }
 
@@ -365,10 +456,24 @@ func (c *Collection) hardDeleteFromIndex(id uint64) {
 // If the ID doesn't exist, a new record is created with that ID.
 // Returns the record ID (either the provided one or newly generated).
 func (c *Collection) Upsert(id uint64, vector []float32, payload map[string]any) (uint64, error) {
+	if err := c.checkReadOnly(); err != nil {
+		return 0, err
+	}
 	if len(vector) == 0 {
 		return 0, ErrEmptyVector
 	}
 
+	id, err := c.upsertLocked(id, vector, payload)
+	if err != nil {
+		return 0, err
+	}
+
+	c.syncIfNeeded()
+	return id, nil
+}
+
+// upsertLocked performs the upsert while holding the collection lock.
+func (c *Collection) upsertLocked(id uint64, vector []float32, payload map[string]any) (uint64, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -409,10 +514,24 @@ func (c *Collection) Upsert(id uint64, vector []float32, payload map[string]any)
 // Otherwise, a new record is inserted.
 // Returns the record ID and whether it was an insert (true) or update (false).
 func (c *Collection) UpsertByKey(keyField string, keyValue any, vector []float32, payload map[string]any) (uint64, bool, error) {
+	if err := c.checkReadOnly(); err != nil {
+		return 0, false, err
+	}
 	if len(vector) == 0 {
 		return 0, false, ErrEmptyVector
 	}
 
+	id, inserted, err := c.upsertByKeyLocked(keyField, keyValue, vector, payload)
+	if err != nil {
+		return 0, false, err
+	}
+
+	c.syncIfNeeded()
+	return id, inserted, nil
+}
+
+// upsertByKeyLocked performs the upsert-by-key while holding the collection lock.
+func (c *Collection) upsertByKeyLocked(keyField string, keyValue any, vector []float32, payload map[string]any) (uint64, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -563,16 +682,25 @@ func (c *Collection) Search(query []float32, opts ...SearchOption) ([]Result, er
 		opt.apply(config)
 	}
 
-	// Use HNSW index if available and no filters
-	if c.index != nil && len(config.filters) == 0 {
-		return c.searchWithIndex(query, config)
+	// Use HNSW index if available
+	if c.index != nil {
+		results, err := c.searchWithIndex(query, config)
+		if err != nil {
+			return nil, err
+		}
+		// If we got enough results (or no filters were applied), return them.
+		// Otherwise, fall back to brute force for completeness.
+		if len(results) >= config.topK || len(config.filters) == 0 {
+			return results, nil
+		}
 	}
 
-	// Fall back to brute force search
+	// Fall back to brute force search (no index, or insufficient filtered results from HNSW)
 	return c.searchBruteForce(query, config)
 }
 
 // searchWithIndex performs search using the HNSW index.
+// When filters are present, over-fetches from HNSW and post-filters the results.
 func (c *Collection) searchWithIndex(query []float32, config *searchConfig) ([]Result, error) {
 	// Determine ef parameter
 	ef := config.efSearch
@@ -580,10 +708,12 @@ func (c *Collection) searchWithIndex(query []float32, config *searchConfig) ([]R
 		ef = c.hnswConfig.EfSearch
 	}
 
-	// Request more candidates when threshold is set, to ensure we get enough after filtering
+	// Request more candidates when filters or threshold are set,
+	// to ensure we get enough after post-filtering.
 	requestK := config.topK
-	if config.threshold != nil {
-		requestK = max(config.topK*2, 100) // Request double to account for threshold filtering
+	hasFilters := len(config.filters) > 0
+	if hasFilters || config.threshold != nil {
+		requestK = max(config.topK*4, 100)
 	}
 
 	var indexResults []IndexResult
@@ -599,12 +729,17 @@ func (c *Collection) searchWithIndex(query []float32, config *searchConfig) ([]R
 		return nil, err
 	}
 
-	// Convert index results to full results with records
+	// Convert index results to full results with records, applying post-filters
 	results := make([]Result, 0, len(indexResults))
 	for _, ir := range indexResults {
 		record, ok := c.records[ir.ID]
 		if !ok {
 			continue // Record was deleted
+		}
+
+		// Apply payload filters (post-filter HNSW results)
+		if !config.matchesFilters(record) {
+			continue
 		}
 
 		// Apply threshold filter
@@ -810,6 +945,9 @@ func (c *Collection) loadFromSnapshot(snapshot *CollectionSnapshot) {
 	if snapshot.IndexType == IndexTypeHNSW && snapshot.HNSWSnapshot != nil {
 		idx := hnsw.LoadFromSnapshot(snapshot.HNSWSnapshot, snapshot.DistanceType)
 		c.index = &HNSWIndex{idx: idx}
+		c.setupVectorProvider()
+		// Clear the internal vectors map since the provider is now active
+		idx.ClearInternalVectors()
 	}
 }
 
@@ -826,10 +964,17 @@ func (c *Collection) All() []*Record {
 }
 
 // Clear removes all records from the collection.
-func (c *Collection) Clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// Returns an error if the database is read-only.
+func (c *Collection) Clear() error {
+	if err := c.checkReadOnly(); err != nil {
+		return err
+	}
 
+	c.mu.Lock()
 	c.records = make(map[uint64]*Record)
 	// Keep dimension locked, don't reset nextID to avoid ID reuse
+	c.mu.Unlock()
+
+	c.syncIfNeeded()
+	return nil
 }

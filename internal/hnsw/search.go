@@ -1,5 +1,7 @@
 package hnsw
 
+import "sort"
+
 // SearchResult represents a single search result.
 type SearchResult struct {
 	ID       uint64
@@ -129,7 +131,8 @@ func (idx *Index) searchLayerTracked(query []float32, entryID uint64, ef int, la
 	}
 
 	// Initialize with entry point
-	entryDist := idx.distFunc(query, idx.vectors[entryID])
+	entryVec, _ := idx.getVector(entryID)
+	entryDist := idx.distFunc(query, entryVec)
 	candidates := NewCandidateSet(ef, idx.higherBetter)
 	candidates.Add(entryID, entryDist)
 	visited[entryID] = true
@@ -169,7 +172,11 @@ func (idx *Index) searchLayerTracked(query []float32, entryID uint64, ef int, la
 			}
 
 			visited[neighborID] = true
-			dist := idx.distFunc(query, idx.vectors[neighborID])
+			neighborVec, vecOk := idx.getVector(neighborID)
+			if !vecOk {
+				continue
+			}
+			dist := idx.distFunc(query, neighborVec)
 
 			// Add if results not full or better than worst
 			if !candidates.ResultsFull() {
@@ -219,23 +226,23 @@ func (idx *Index) KNNBruteForce(query []float32, k int) ([]SearchResult, error) 
 		if node.Deleted {
 			continue
 		}
-		dist := idx.distFunc(query, idx.vectors[id])
+		vec, ok := idx.getVector(id)
+		if !ok {
+			continue
+		}
+		dist := idx.distFunc(query, vec)
 		results = append(results, result{id: id, dist: dist})
 	}
 
 	// Sort by distance
-	for i := 0; i < len(results); i++ {
-		for j := i + 1; j < len(results); j++ {
-			if idx.higherBetter {
-				if results[i].dist < results[j].dist {
-					results[i], results[j] = results[j], results[i]
-				}
-			} else {
-				if results[i].dist > results[j].dist {
-					results[i], results[j] = results[j], results[i]
-				}
-			}
-		}
+	if idx.higherBetter {
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].dist > results[j].dist
+		})
+	} else {
+		sort.Slice(results, func(i, j int) bool {
+			return results[i].dist < results[j].dist
+		})
 	}
 
 	// Return top k

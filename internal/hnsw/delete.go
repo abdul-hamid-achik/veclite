@@ -98,9 +98,11 @@ func (idx *Index) removeNodeLocked(id uint64) {
 		}
 	}
 
-	// Remove node and vector
+	// Remove node and vector (only from internal map if using internal storage)
 	delete(idx.nodes, id)
-	delete(idx.vectors, id)
+	if idx.vectorProvider == nil {
+		delete(idx.vectors, id)
+	}
 
 	// Update entry point if needed
 	if idx.entryPoint == id {

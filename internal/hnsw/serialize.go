@@ -55,8 +55,12 @@ func (idx *Index) Snapshot() *Snapshot {
 		})
 	}
 
-	// Snapshot vectors
-	for id, vec := range idx.vectors {
+	// Snapshot vectors (from provider or internal map)
+	for id := range idx.nodes {
+		vec, ok := idx.getVector(id)
+		if !ok {
+			continue
+		}
 		v := make([]float32, len(vec))
 		copy(v, vec)
 		snap.Vectors[id] = v

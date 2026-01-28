@@ -33,6 +33,9 @@ var (
 
 	// ErrBatchSizeMismatch is returned when batch operation input sizes don't match.
 	ErrBatchSizeMismatch = errors.New("veclite: batch size mismatch")
+
+	// ErrReadOnly is returned when a write operation is attempted on a read-only database.
+	ErrReadOnly = errors.New("veclite: database is read-only")
 )
 
 // DimensionError provides details about dimension mismatches.
