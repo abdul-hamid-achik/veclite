@@ -1,6 +1,7 @@
 package veclite
 
 import (
+	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -19,6 +20,12 @@ type Collection struct {
 	indexType    IndexType
 	hnswConfig   *HNSWConfig
 	index        Index
+
+	// Text search
+	textIndex *invertedIndex
+
+	// Auto-embedding
+	embedder Embedder
 
 	mu      sync.RWMutex
 	records map[uint64]*Record
@@ -40,6 +47,12 @@ func newCollection(name string, config *collectionConfig, db *DB) *Collection {
 		records:      make(map[uint64]*Record),
 		nextID:       1,
 		db:           db,
+		embedder:     config.embedder,
+	}
+
+	// Initialize text index if configured
+	if len(config.textIndexFields) > 0 {
+		c.textIndex = newInvertedIndex(config.textIndexFields)
 	}
 
 	// Initialize index if HNSW is configured
@@ -145,6 +158,9 @@ func (c *Collection) Insert(vector []float32, payload map[string]any) (uint64, e
 		return 0, err
 	}
 
+	if c.db != nil && c.db.metrics != nil {
+		c.db.metrics.recordInsert()
+	}
 	c.syncIfNeeded()
 	return id, nil
 }
@@ -186,6 +202,11 @@ func (c *Collection) insertLocked(vector []float32, payload map[string]any) (uin
 			c.nextID--
 			return 0, err
 		}
+	}
+
+	// Index for text search
+	if c.textIndex != nil {
+		c.textIndex.indexRecord(id, payload, record.Content)
 	}
 
 	return id, nil
@@ -268,10 +289,18 @@ func (c *Collection) insertBatchLocked(vectors [][]float32, payloads []map[strin
 					if c.index != nil {
 						_ = c.index.Delete(ids[j])
 					}
+					if c.textIndex != nil {
+						c.textIndex.removeRecord(ids[j])
+					}
 				}
 				c.nextID -= uint64(i + 1)
 				return nil, err
 			}
+		}
+
+		// Index for text search
+		if c.textIndex != nil {
+			c.textIndex.indexRecord(id, payload, record.Content)
 		}
 	}
 
@@ -323,10 +352,16 @@ func (c *Collection) Delete(id uint64) error {
 	if c.index != nil {
 		_ = c.index.Delete(id)
 	}
+	if c.textIndex != nil {
+		c.textIndex.removeRecord(id)
+	}
 
 	delete(c.records, id)
 	c.mu.Unlock()
 
+	if c.db != nil && c.db.metrics != nil {
+		c.db.metrics.recordDelete()
+	}
 	c.syncIfNeeded()
 	return nil
 }
@@ -356,6 +391,9 @@ func (c *Collection) DeleteWhere(filters ...Filter) (int, error) {
 			// Delete from index first
 			if c.index != nil {
 				_ = c.index.Delete(id)
+			}
+			if c.textIndex != nil {
+				c.textIndex.removeRecord(id)
 			}
 			delete(c.records, id)
 			deleted++
@@ -669,6 +707,13 @@ func (c *Collection) Search(query []float32, opts ...SearchOption) ([]Result, er
 		return nil, ErrEmptyVector
 	}
 
+	searchStart := time.Now()
+	defer func() {
+		if c.db != nil && c.db.metrics != nil {
+			c.db.metrics.recordSearch(time.Since(searchStart))
+		}
+	}()
+
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -690,13 +735,17 @@ func (c *Collection) Search(query []float32, opts ...SearchOption) ([]Result, er
 		}
 		// If we got enough results (or no filters were applied), return them.
 		// Otherwise, fall back to brute force for completeness.
-		if len(results) >= config.topK || len(config.filters) == 0 {
-			return results, nil
+		if len(results) >= config.effectiveTopK() || len(config.filters) == 0 {
+			return config.applyPagination(results), nil
 		}
 	}
 
 	// Fall back to brute force search (no index, or insufficient filtered results from HNSW)
-	return c.searchBruteForce(query, config)
+	results, err := c.searchBruteForce(query, config)
+	if err != nil {
+		return nil, err
+	}
+	return config.applyPagination(results), nil
 }
 
 // searchWithIndex performs search using the HNSW index.
@@ -708,12 +757,13 @@ func (c *Collection) searchWithIndex(query []float32, config *searchConfig) ([]R
 		ef = c.hnswConfig.EfSearch
 	}
 
-	// Request more candidates when filters or threshold are set,
+	// Request more candidates when filters, threshold, or offset are set,
 	// to ensure we get enough after post-filtering.
-	requestK := config.topK
+	effectiveK := config.effectiveTopK()
+	requestK := effectiveK
 	hasFilters := len(config.filters) > 0
 	if hasFilters || config.threshold != nil {
-		requestK = max(config.topK*4, 100)
+		requestK = max(effectiveK*4, 100)
 	}
 
 	var indexResults []IndexResult
@@ -757,8 +807,8 @@ func (c *Collection) searchWithIndex(query []float32, config *searchConfig) ([]R
 			Score:  ir.Distance,
 		})
 
-		// Stop once we have enough results
-		if len(results) >= config.topK {
+		// Stop once we have enough results (including offset)
+		if len(results) >= effectiveK {
 			break
 		}
 	}
@@ -794,20 +844,27 @@ func (c *Collection) searchBruteForce(query []float32, config *searchConfig) ([]
 		})
 	}
 
-	// Sort results
+	// Sort results (stable sort with ID tiebreaker for deterministic pagination)
 	if c.higherBetter {
-		sort.Slice(results, func(i, j int) bool {
-			return results[i].Score > results[j].Score
+		sort.SliceStable(results, func(i, j int) bool {
+			if results[i].Score != results[j].Score {
+				return results[i].Score > results[j].Score
+			}
+			return results[i].Record.ID < results[j].Record.ID
 		})
 	} else {
-		sort.Slice(results, func(i, j int) bool {
-			return results[i].Score < results[j].Score
+		sort.SliceStable(results, func(i, j int) bool {
+			if results[i].Score != results[j].Score {
+				return results[i].Score < results[j].Score
+			}
+			return results[i].Record.ID < results[j].Record.ID
 		})
 	}
 
-	// Apply topK
-	if len(results) > config.topK {
-		results = results[:config.topK]
+	// Apply topK (including offset for later pagination)
+	effectiveK := config.effectiveTopK()
+	if len(results) > effectiveK {
+		results = results[:effectiveK]
 	}
 
 	return results, nil
@@ -902,6 +959,7 @@ func (c *Collection) snapshot() *CollectionSnapshot {
 			ID:        record.ID,
 			Vector:    record.Vector,
 			Payload:   record.Payload,
+			Content:   record.Content,
 			CreatedAt: record.CreatedAt,
 			UpdatedAt: record.UpdatedAt,
 		})
@@ -912,6 +970,11 @@ func (c *Collection) snapshot() *CollectionSnapshot {
 		if hnswIdx, ok := c.index.(*HNSWIndex); ok {
 			snapshot.HNSWSnapshot = hnswIdx.Internal().Snapshot()
 		}
+	}
+
+	// Snapshot text index if present
+	if c.textIndex != nil {
+		snapshot.TextIndexSnapshot = c.textIndex.snapshot()
 	}
 
 	return snapshot
@@ -936,6 +999,7 @@ func (c *Collection) loadFromSnapshot(snapshot *CollectionSnapshot) {
 			ID:        rs.ID,
 			Vector:    rs.Vector,
 			Payload:   rs.Payload,
+			Content:   rs.Content,
 			CreatedAt: rs.CreatedAt,
 			UpdatedAt: rs.UpdatedAt,
 		}
@@ -949,6 +1013,11 @@ func (c *Collection) loadFromSnapshot(snapshot *CollectionSnapshot) {
 		// Clear the internal vectors map since the provider is now active
 		idx.ClearInternalVectors()
 	}
+
+	// Restore text index if present
+	if snapshot.TextIndexSnapshot != nil {
+		c.textIndex = loadInvertedIndexFromSnapshot(snapshot.TextIndexSnapshot)
+	}
 }
 
 // All returns all records in the collection.
@@ -961,6 +1030,337 @@ func (c *Collection) All() []*Record {
 		results = append(results, record.Clone())
 	}
 	return results
+}
+
+// SearchFunc is a callback for streaming search results.
+// Return false to stop receiving results.
+type SearchFunc func(result Result) bool
+
+// SearchStream performs a search and streams results to the callback function.
+// The callback receives results one at a time and can return false to stop early.
+func (c *Collection) SearchStream(query []float32, fn SearchFunc, opts ...SearchOption) error {
+	results, err := c.Search(query, opts...)
+	if err != nil {
+		return err
+	}
+
+	for _, r := range results {
+		if !fn(r) {
+			break
+		}
+	}
+	return nil
+}
+
+// TextSearch performs BM25 full-text search over indexed fields.
+// Requires text indexing to be enabled via WithTextIndex.
+func (c *Collection) TextSearch(query string, opts ...SearchOption) ([]Result, error) {
+	if c.textIndex == nil {
+		return nil, errors.New("veclite: text index not enabled on this collection")
+	}
+	if query == "" {
+		return nil, errors.New("veclite: empty text query")
+	}
+
+	config := defaultSearchConfig()
+	for _, opt := range opts {
+		opt.apply(config)
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	effectiveK := config.effectiveTopK()
+	textResults := c.textIndex.search(query, effectiveK)
+
+	results := make([]Result, 0, len(textResults))
+	for _, tr := range textResults {
+		record, ok := c.records[tr.id]
+		if !ok {
+			continue
+		}
+
+		// Apply payload filters
+		if !config.matchesFilters(record) {
+			continue
+		}
+
+		results = append(results, Result{
+			Record: record.Clone(),
+			Score:  float32(tr.score),
+		})
+	}
+
+	return config.applyPagination(results), nil
+}
+
+// HybridSearch performs both vector search and BM25 text search, then fuses
+// results using Reciprocal Rank Fusion (RRF) with k=60.
+// Requires text indexing to be enabled via WithTextIndex.
+// Use WithVectorWeight and WithTextWeight to control the balance.
+func (c *Collection) HybridSearch(query []float32, text string, opts ...SearchOption) ([]Result, error) {
+	if c.textIndex == nil {
+		return nil, errors.New("veclite: text index not enabled on this collection")
+	}
+	if len(query) == 0 {
+		return nil, ErrEmptyVector
+	}
+	if text == "" {
+		return nil, errors.New("veclite: empty text query for hybrid search")
+	}
+
+	config := defaultSearchConfig()
+	for _, opt := range opts {
+		opt.apply(config)
+	}
+
+	// Fetch more results from each source for better fusion
+	fetchK := config.effectiveTopK() * 2
+	if fetchK < 20 {
+		fetchK = 20
+	}
+
+	// Run vector search
+	vectorOpts := []SearchOption{TopK(fetchK)}
+	if config.threshold != nil {
+		vectorOpts = append(vectorOpts, Threshold(*config.threshold))
+	}
+	for _, f := range config.filters {
+		vectorOpts = append(vectorOpts, WithFilter(f))
+	}
+	if config.efSearch > 0 {
+		vectorOpts = append(vectorOpts, WithEfSearch(config.efSearch))
+	}
+	vectorResults, err := c.Search(query, vectorOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Run text search
+	textOpts := []SearchOption{TopK(fetchK)}
+	for _, f := range config.filters {
+		textOpts = append(textOpts, WithFilter(f))
+	}
+	textResults, err := c.TextSearch(text, textOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine weights
+	vectorWeight := 1.0
+	textWeight := 1.0
+	if config.vectorWeight > 0 {
+		vectorWeight = config.vectorWeight
+	}
+	if config.textWeight > 0 {
+		textWeight = config.textWeight
+	}
+
+	// Fuse with RRF
+	fused := reciprocalRankFusion(
+		[][]Result{vectorResults, textResults},
+		60,
+		[]float64{vectorWeight, textWeight},
+	)
+
+	// Apply pagination
+	effectiveK := config.effectiveTopK()
+	if len(fused) > effectiveK {
+		fused = fused[:effectiveK]
+	}
+
+	return config.applyPagination(fused), nil
+}
+
+// InsertDocument inserts a vector with content text and payload.
+// Content is automatically indexed for BM25 text search when text indexing is enabled.
+func (c *Collection) InsertDocument(vector []float32, content string, payload map[string]any) (uint64, error) {
+	if err := c.checkReadOnly(); err != nil {
+		return 0, err
+	}
+	if len(vector) == 0 {
+		return 0, ErrEmptyVector
+	}
+
+	c.mu.Lock()
+
+	// Check/set dimension
+	if c.dimension == 0 {
+		c.dimension = len(vector)
+		c.initHNSWIfNeeded()
+	} else if len(vector) != c.dimension {
+		c.mu.Unlock()
+		return 0, &DimensionError{Expected: c.dimension, Got: len(vector)}
+	}
+
+	now := time.Now()
+	id := c.nextID
+	c.nextID++
+
+	record := &Record{
+		ID:        id,
+		Vector:    make([]float32, len(vector)),
+		Payload:   payload,
+		Content:   content,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	copy(record.Vector, vector)
+
+	c.records[id] = record
+
+	if c.index != nil {
+		if err := c.index.Insert(id, vector); err != nil {
+			delete(c.records, id)
+			c.nextID--
+			c.mu.Unlock()
+			return 0, err
+		}
+	}
+
+	if c.textIndex != nil {
+		c.textIndex.indexRecord(id, payload, content)
+	}
+
+	c.mu.Unlock()
+	c.syncIfNeeded()
+	return id, nil
+}
+
+// InsertText embeds the text using the configured embedder and inserts the result.
+// Requires an embedder to be set via WithEmbedder.
+func (c *Collection) InsertText(text string, payload map[string]any) (uint64, error) {
+	if c.embedder == nil {
+		return 0, ErrNoEmbedder
+	}
+
+	vector, err := c.embedder.Embed(text)
+	if err != nil {
+		return 0, err
+	}
+
+	return c.InsertDocument(vector, text, payload)
+}
+
+// SearchText embeds the text query using the configured embedder and searches.
+// Requires an embedder to be set via WithEmbedder.
+func (c *Collection) SearchText(text string, opts ...SearchOption) ([]Result, error) {
+	if c.embedder == nil {
+		return nil, ErrNoEmbedder
+	}
+
+	vector, err := c.embedder.Embed(text)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.Search(vector, opts...)
+}
+
+// ForEach iterates over all records in the collection, calling fn for each.
+// If fn returns false, iteration stops early.
+// Records are cloned before being passed to fn.
+func (c *Collection) ForEach(fn func(*Record) bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	for _, record := range c.records {
+		if !fn(record.Clone()) {
+			return
+		}
+	}
+}
+
+// IterOption configures the iterator.
+type IterOption interface {
+	apply(*iterConfig)
+}
+
+type iterConfig struct {
+	offset int
+	limit  int
+}
+
+type iterOptionFunc func(*iterConfig)
+
+func (f iterOptionFunc) apply(c *iterConfig) {
+	f(c)
+}
+
+// IterOffset sets the number of records to skip.
+func IterOffset(n int) IterOption {
+	return iterOptionFunc(func(c *iterConfig) {
+		if n >= 0 {
+			c.offset = n
+		}
+	})
+}
+
+// IterLimit sets the maximum number of records to return.
+func IterLimit(n int) IterOption {
+	return iterOptionFunc(func(c *iterConfig) {
+		if n > 0 {
+			c.limit = n
+		}
+	})
+}
+
+// Iterator allows iterating over collection records one at a time.
+type Iterator struct {
+	records []*Record
+	pos     int
+}
+
+// Next returns the next record and true, or nil and false if done.
+func (it *Iterator) Next() (*Record, bool) {
+	if it.pos >= len(it.records) {
+		return nil, false
+	}
+	r := it.records[it.pos]
+	it.pos++
+	return r, true
+}
+
+// Close releases resources held by the iterator.
+func (it *Iterator) Close() {
+	it.records = nil
+	it.pos = 0
+}
+
+// Iterate returns an iterator over collection records.
+// Options can control offset and limit for pagination.
+func (c *Collection) Iterate(opts ...IterOption) *Iterator {
+	cfg := &iterConfig{}
+	for _, opt := range opts {
+		opt.apply(cfg)
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	// Collect and sort records by ID for deterministic order
+	all := make([]*Record, 0, len(c.records))
+	for _, record := range c.records {
+		all = append(all, record.Clone())
+	}
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].ID < all[j].ID
+	})
+
+	// Apply offset
+	if cfg.offset > 0 {
+		if cfg.offset >= len(all) {
+			return &Iterator{}
+		}
+		all = all[cfg.offset:]
+	}
+
+	// Apply limit
+	if cfg.limit > 0 && cfg.limit < len(all) {
+		all = all[:cfg.limit]
+	}
+
+	return &Iterator{records: all}
 }
 
 // Clear removes all records from the collection.

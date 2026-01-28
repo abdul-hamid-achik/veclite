@@ -25,6 +25,7 @@ type Option interface {
 type dbConfig struct {
 	syncOnWrite bool
 	readOnly    bool
+	logger      Logger
 }
 
 // HNSWConfig holds HNSW index configuration.
@@ -75,10 +76,13 @@ type CollectionOption interface {
 
 // collectionConfig holds collection configuration.
 type collectionConfig struct {
-	dimension    int
-	distanceType floats.DistanceType
-	indexType    IndexType
-	hnswConfig   *HNSWConfig
+	dimension      int
+	distanceType   floats.DistanceType
+	indexType      IndexType
+	hnswConfig     *HNSWConfig
+	textIndexFields []string
+	embedder       Embedder
+	logger         Logger
 }
 
 // defaultCollectionConfig returns the default collection configuration.
@@ -142,5 +146,22 @@ func WithHNSWConfig(config HNSWConfig) CollectionOption {
 	return collectionOptionFunc(func(c *collectionConfig) {
 		c.indexType = IndexTypeHNSW
 		c.hnswConfig = &config
+	})
+}
+
+// WithTextIndex enables BM25 full-text indexing on the specified payload fields.
+// When enabled, string values in these fields are tokenized and indexed for text search.
+// The Content field of records is always indexed when text indexing is enabled.
+func WithTextIndex(fields ...string) CollectionOption {
+	return collectionOptionFunc(func(c *collectionConfig) {
+		c.textIndexFields = fields
+	})
+}
+
+// WithEmbedder sets an auto-embedding plugin for the collection.
+// When set, InsertText and SearchText methods become available.
+func WithEmbedder(e Embedder) CollectionOption {
+	return collectionOptionFunc(func(c *collectionConfig) {
+		c.embedder = e
 	})
 }

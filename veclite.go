@@ -33,6 +33,8 @@ type DB struct {
 	closed      bool
 	createdAt   time.Time
 	updatedAt   time.Time
+	metrics     *Metrics
+	logger      Logger
 }
 
 // Open opens or creates a VecLite database at the given path.
@@ -55,6 +57,11 @@ func Open(path string, opts ...Option) (*DB, error) {
 		storage = fs
 	}
 
+	logger := config.logger
+	if logger == nil {
+		logger = NopLogger{}
+	}
+
 	db := &DB{
 		path:        path,
 		storage:     storage,
@@ -62,6 +69,8 @@ func Open(path string, opts ...Option) (*DB, error) {
 		collections: make(map[string]*Collection),
 		createdAt:   time.Now(),
 		updatedAt:   time.Now(),
+		metrics:     newMetrics(),
+		logger:      logger,
 	}
 
 	// Load existing data
@@ -279,4 +288,9 @@ func (db *DB) IsClosed() bool {
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 	return db.closed
+}
+
+// Metrics returns the current metrics snapshot.
+func (db *DB) Metrics() MetricsSnapshot {
+	return db.metrics.Snapshot()
 }

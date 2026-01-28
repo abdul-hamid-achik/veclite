@@ -13,6 +13,10 @@ type Record struct {
 	// Payload contains arbitrary metadata associated with the vector.
 	Payload map[string]any
 
+	// Content is the optional original text content associated with this record.
+	// Used for document-oriented storage and automatically indexed by BM25 when text indexing is enabled.
+	Content string
+
 	// CreatedAt is when the record was inserted.
 	CreatedAt time.Time
 
@@ -29,6 +33,7 @@ func (r *Record) Clone() *Record {
 	clone := &Record{
 		ID:        r.ID,
 		Vector:    make([]float32, len(r.Vector)),
+		Content:   r.Content,
 		CreatedAt: r.CreatedAt,
 		UpdatedAt: r.UpdatedAt,
 	}

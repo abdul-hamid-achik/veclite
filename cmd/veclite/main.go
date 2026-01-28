@@ -51,8 +51,18 @@ func main() {
 		cmdDelete(os.Args[2:])
 	case "get":
 		cmdGet(os.Args[2:])
+	case "upsert":
+		cmdUpsert(os.Args[2:])
+	case "update":
+		cmdUpdate(os.Args[2:])
+	case "delete-where":
+		cmdDeleteWhere(os.Args[2:])
+	case "find":
+		cmdFind(os.Args[2:])
 	case "serve":
 		cmdServe(os.Args[2:])
+	case "mcp":
+		cmdMCP(os.Args[2:])
 	case "compact":
 		cmdCompact(os.Args[2:])
 	case "validate":
@@ -87,11 +97,16 @@ Write Commands:
   drop-collection <file> <name>    Drop a collection
   insert <file> <collection>       Insert a vector
   batch-insert <file> <collection> Insert vectors from JSON file
+  upsert <file> <collection>       Upsert a vector (insert or update)
+  update <file> <collection>       Update vector and/or payload
   delete <file> <collection>       Delete a vector by ID
+  delete-where <file> <collection> Delete vectors matching a filter
+  find <file> <collection>         Find records by filter (no vector needed)
   search <file> <collection>       Search for similar vectors
 
 Server Mode:
   serve <file>             Start HTTP server for multi-client access
+  mcp <file>               Start MCP tool server over stdio
 
 Maintenance Commands:
   compact <file>           Compact database and reclaim space
@@ -993,4 +1008,361 @@ func parseFilter(expr string) veclite.Filter {
 
 	// Treat as string
 	return veclite.Equal(key, value)
+}
+
+func cmdUpsert(args []string) {
+	fs := flag.NewFlagSet("upsert", flag.ExitOnError)
+	id := fs.Uint64("id", 0, "Record ID (0 = auto-assign)")
+	vectorStr := fs.String("vector", "", "Vector as JSON array, e.g., '[0.1,0.2,0.3]'")
+	payloadStr := fs.String("payload", "", "Payload as JSON object")
+	keyField := fs.String("key-field", "", "Upsert by key field (uses UpsertByKey)")
+	keyValue := fs.String("key-value", "", "Key field value for UpsertByKey")
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Println("Usage: veclite upsert [options] <file> <collection>")
+		fmt.Println("\nInsert or update a vector.")
+		fmt.Println("\nOptions:")
+		fs.PrintDefaults()
+		fmt.Println("\nExamples:")
+		fmt.Println("  veclite upsert data.veclite embeddings --id=5 --vector='[0.1,0.2,0.3]'")
+		fmt.Println("  veclite upsert data.veclite embeddings --key-field=file --key-value=main.go --vector='[0.1,0.2,0.3]'")
+	}
+	_ = fs.Parse(args)
+
+	if fs.NArg() < 2 {
+		fs.Usage()
+		os.Exit(1)
+	}
+	if *vectorStr == "" {
+		fmt.Fprintln(os.Stderr, "Error: --vector is required")
+		os.Exit(1)
+	}
+
+	path := fs.Arg(0)
+	collName := fs.Arg(1)
+
+	var vector []float32
+	if err := json.Unmarshal([]byte(*vectorStr), &vector); err != nil {
+		var vector64 []float64
+		if err2 := json.Unmarshal([]byte(*vectorStr), &vector64); err2 != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing vector: %v\n", err)
+			os.Exit(1)
+		}
+		vector = make([]float32, len(vector64))
+		for i, v := range vector64 {
+			vector[i] = float32(v)
+		}
+	}
+
+	var payload map[string]any
+	if *payloadStr != "" {
+		if err := json.Unmarshal([]byte(*payloadStr), &payload); err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing payload: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	db, err := veclite.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	coll := db.Collection(collName)
+
+	if *keyField != "" {
+		resultID, inserted, err := coll.UpsertByKey(*keyField, *keyValue, vector, payload)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error upserting: %v\n", err)
+			os.Exit(1)
+		}
+		if err := db.Sync(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error syncing: %v\n", err)
+			os.Exit(1)
+		}
+		action := "updated"
+		if inserted {
+			action = "inserted"
+		}
+		if *jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(map[string]any{"status": action, "id": resultID, "collection": collName})
+			return
+		}
+		fmt.Printf("Upserted (%s) vector with ID: %d\n", action, resultID)
+		return
+	}
+
+	resultID, err := coll.Upsert(*id, vector, payload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error upserting: %v\n", err)
+		os.Exit(1)
+	}
+	if err := db.Sync(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error syncing: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string]any{"status": "upserted", "id": resultID, "collection": collName})
+		return
+	}
+	fmt.Printf("Upserted vector with ID: %d\n", resultID)
+}
+
+func cmdUpdate(args []string) {
+	fs := flag.NewFlagSet("update", flag.ExitOnError)
+	id := fs.Uint64("id", 0, "ID of vector to update")
+	vectorStr := fs.String("vector", "", "New vector as JSON array")
+	payloadStr := fs.String("payload", "", "New payload as JSON object")
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Println("Usage: veclite update [options] <file> <collection>")
+		fmt.Println("\nUpdate a vector's data and/or payload.")
+		fmt.Println("\nOptions:")
+		fs.PrintDefaults()
+		fmt.Println("\nExamples:")
+		fmt.Println("  veclite update data.veclite embeddings --id=5 --payload='{\"file\":\"main.go\"}'")
+		fmt.Println("  veclite update data.veclite embeddings --id=5 --vector='[0.1,0.2,0.3]'")
+	}
+	_ = fs.Parse(args)
+
+	if fs.NArg() < 2 {
+		fs.Usage()
+		os.Exit(1)
+	}
+	if *id == 0 {
+		fmt.Fprintln(os.Stderr, "Error: --id is required")
+		os.Exit(1)
+	}
+	if *vectorStr == "" && *payloadStr == "" {
+		fmt.Fprintln(os.Stderr, "Error: at least one of --vector or --payload is required")
+		os.Exit(1)
+	}
+
+	path := fs.Arg(0)
+	collName := fs.Arg(1)
+
+	db, err := veclite.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	coll, err := db.GetCollection(collName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting collection: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *vectorStr != "" {
+		var vector []float32
+		if err := json.Unmarshal([]byte(*vectorStr), &vector); err != nil {
+			var vector64 []float64
+			if err2 := json.Unmarshal([]byte(*vectorStr), &vector64); err2 != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing vector: %v\n", err)
+				os.Exit(1)
+			}
+			vector = make([]float32, len(vector64))
+			for i, v := range vector64 {
+				vector[i] = float32(v)
+			}
+		}
+		if err := coll.UpdateVector(*id, vector); err != nil {
+			fmt.Fprintf(os.Stderr, "Error updating vector: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	if *payloadStr != "" {
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(*payloadStr), &payload); err != nil {
+			fmt.Fprintf(os.Stderr, "Error parsing payload: %v\n", err)
+			os.Exit(1)
+		}
+		if err := coll.Update(*id, payload); err != nil {
+			fmt.Fprintf(os.Stderr, "Error updating payload: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
+	if err := db.Sync(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error syncing: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string]any{"status": "updated", "id": *id, "collection": collName})
+		return
+	}
+	fmt.Printf("Updated vector with ID: %d\n", *id)
+}
+
+func cmdDeleteWhere(args []string) {
+	fs := flag.NewFlagSet("delete-where", flag.ExitOnError)
+	filterStr := fs.String("filter", "", "Filter expression, e.g., 'type=code'")
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Println("Usage: veclite delete-where [options] <file> <collection>")
+		fmt.Println("\nDelete all vectors matching a filter.")
+		fmt.Println("\nOptions:")
+		fs.PrintDefaults()
+		fmt.Println("\nExamples:")
+		fmt.Println("  veclite delete-where data.veclite embeddings --filter='type=code'")
+	}
+	_ = fs.Parse(args)
+
+	if fs.NArg() < 2 {
+		fs.Usage()
+		os.Exit(1)
+	}
+	if *filterStr == "" {
+		fmt.Fprintln(os.Stderr, "Error: --filter is required")
+		os.Exit(1)
+	}
+
+	path := fs.Arg(0)
+	collName := fs.Arg(1)
+
+	filter := parseFilter(*filterStr)
+	if filter == nil {
+		fmt.Fprintln(os.Stderr, "Error: invalid filter expression")
+		os.Exit(1)
+	}
+
+	db, err := veclite.Open(path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	coll, err := db.GetCollection(collName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting collection: %v\n", err)
+		os.Exit(1)
+	}
+
+	deleted, err := coll.DeleteWhere(filter)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error deleting: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := db.Sync(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error syncing: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *jsonOutput {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(map[string]any{"status": "deleted", "deleted": deleted, "collection": collName})
+		return
+	}
+	fmt.Printf("Deleted %d vectors\n", deleted)
+}
+
+func cmdFind(args []string) {
+	fs := flag.NewFlagSet("find", flag.ExitOnError)
+	filterStr := fs.String("filter", "", "Filter expression, e.g., 'type=code'")
+	limit := fs.Int("limit", 0, "Maximum number of results (0 = all)")
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Println("Usage: veclite find [options] <file> <collection>")
+		fmt.Println("\nFind records by filter (no vector needed).")
+		fmt.Println("\nOptions:")
+		fs.PrintDefaults()
+		fmt.Println("\nExamples:")
+		fmt.Println("  veclite find data.veclite embeddings --filter='type=code'")
+	}
+	_ = fs.Parse(args)
+
+	if fs.NArg() < 2 {
+		fs.Usage()
+		os.Exit(1)
+	}
+
+	path := fs.Arg(0)
+	collName := fs.Arg(1)
+
+	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	coll, err := db.GetCollection(collName)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error getting collection: %v\n", err)
+		os.Exit(1)
+	}
+
+	var filters []veclite.Filter
+	if *filterStr != "" {
+		f := parseFilter(*filterStr)
+		if f != nil {
+			filters = append(filters, f)
+		}
+	}
+
+	records, err := coll.Find(filters...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error finding records: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *limit > 0 && len(records) > *limit {
+		records = records[:*limit]
+	}
+
+	if *jsonOutput {
+		type recordOutput struct {
+			ID      uint64         `json:"id"`
+			Payload map[string]any `json:"payload,omitempty"`
+			Content string         `json:"content,omitempty"`
+		}
+		output := make([]recordOutput, len(records))
+		for i, r := range records {
+			output[i] = recordOutput{
+				ID:      r.ID,
+				Payload: r.Payload,
+				Content: r.Content,
+			}
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(output)
+		return
+	}
+
+	if len(records) == 0 {
+		fmt.Println("No records found")
+		return
+	}
+
+	fmt.Printf("Found %d records:\n", len(records))
+	for i, r := range records {
+		fmt.Printf("%d. ID=%d", i+1, r.ID)
+		if r.Payload != nil {
+			payloadJSON, _ := json.Marshal(r.Payload)
+			fmt.Printf(", payload=%s", payloadJSON)
+		}
+		if r.Content != "" {
+			if len(r.Content) > 80 {
+				fmt.Printf(", content=%q...", r.Content[:80])
+			} else {
+				fmt.Printf(", content=%q", r.Content)
+			}
+		}
+		fmt.Println()
+	}
 }

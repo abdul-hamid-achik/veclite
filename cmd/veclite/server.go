@@ -58,14 +58,22 @@ func cmdServe(args []string) {
 		fmt.Println("\nEndpoints:")
 		fmt.Println("  GET    /health                          Health check")
 		fmt.Println("  GET    /info                            Database info")
+		fmt.Println("  GET    /metrics                         Database metrics")
 		fmt.Println("  GET    /collections                     List collections")
 		fmt.Println("  POST   /collections                     Create collection")
 		fmt.Println("  GET    /collections/{name}              Collection info")
 		fmt.Println("  DELETE /collections/{name}              Drop collection")
+		fmt.Println("  GET    /collections/{name}/vectors      List all vectors (with pagination)")
 		fmt.Println("  POST   /collections/{name}/vectors      Insert vector(s)")
 		fmt.Println("  GET    /collections/{name}/vectors/{id} Get vector by ID")
+		fmt.Println("  PUT    /collections/{name}/vectors/{id} Update vector and/or payload")
 		fmt.Println("  DELETE /collections/{name}/vectors/{id} Delete vector")
 		fmt.Println("  POST   /collections/{name}/search       Search vectors")
+		fmt.Println("  POST   /collections/{name}/upsert       Upsert vector")
+		fmt.Println("  POST   /collections/{name}/find         Find records by filter")
+		fmt.Println("  DELETE /collections/{name}/vectors       Delete vectors by filter")
+		fmt.Println("  POST   /collections/{name}/compact      Compact collection")
+		fmt.Println("  POST   /collections/{name}/validate     Validate collection integrity")
 		fmt.Println("  POST   /sync                            Force sync to disk")
 		fmt.Println("\nExamples:")
 		fmt.Println("  veclite serve data.veclite --port=8080")
@@ -97,6 +105,7 @@ func cmdServe(args []string) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", server.handleHealth)
 	mux.HandleFunc("/info", server.handleInfo)
+	mux.HandleFunc("/metrics", server.handleMetrics)
 	mux.HandleFunc("/collections", server.handleCollections)
 	mux.HandleFunc("/collections/", server.handleCollection)
 	mux.HandleFunc("/sync", server.handleSync)
@@ -336,9 +345,14 @@ func (s *Server) handleCollection(w http.ResponseWriter, r *http.Request) {
 	if parts[1] == "vectors" {
 		if len(parts) == 2 {
 			// /collections/{name}/vectors
-			if r.Method == "POST" {
+			switch r.Method {
+			case "GET":
+				s.listVectors(w, r, collName)
+			case "POST":
 				s.insertVectors(w, r, collName)
-			} else {
+			case "DELETE":
+				s.deleteWhere(w, r, collName)
+			default:
 				writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
 			}
 			return
@@ -355,6 +369,8 @@ func (s *Server) handleCollection(w http.ResponseWriter, r *http.Request) {
 			switch r.Method {
 			case "GET":
 				s.getVector(w, r, collName, id)
+			case "PUT":
+				s.updateVector(w, r, collName, id)
 			case "DELETE":
 				s.deleteVector(w, r, collName, id)
 			default:
@@ -364,13 +380,44 @@ func (s *Server) handleCollection(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if parts[1] == "search" && len(parts) == 2 {
-		if r.Method == "POST" {
-			s.searchVectors(w, r, collName)
-		} else {
-			writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+	if len(parts) == 2 {
+		switch parts[1] {
+		case "search":
+			if r.Method == "POST" {
+				s.searchVectors(w, r, collName)
+			} else {
+				writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+			}
+			return
+		case "upsert":
+			if r.Method == "POST" {
+				s.upsertVector(w, r, collName)
+			} else {
+				writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+			}
+			return
+		case "find":
+			if r.Method == "POST" {
+				s.findRecords(w, r, collName)
+			} else {
+				writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+			}
+			return
+		case "compact":
+			if r.Method == "POST" {
+				s.compactCollection(w, r, collName)
+			} else {
+				writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+			}
+			return
+		case "validate":
+			if r.Method == "POST" {
+				s.validateCollection(w, r, collName)
+			} else {
+				writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+			}
+			return
 		}
-		return
 	}
 
 	writeError(w, http.StatusNotFound, "Not found", "NOT_FOUND")
@@ -583,6 +630,20 @@ func (s *Server) searchVectors(w http.ResponseWriter, r *http.Request, collName 
 		}
 	}
 
+	// Check for NDJSON streaming request
+	if r.Header.Get("Accept") == "application/x-ndjson" {
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		w.WriteHeader(http.StatusOK)
+		enc := json.NewEncoder(w)
+		for _, o := range output {
+			_ = enc.Encode(o)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+		return
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"results": output,
 		"count":   len(output),
@@ -623,6 +684,326 @@ func parseFilterRequest(f filterRequest) veclite.Filter {
 		return veclite.Exists(f.Key)
 	}
 	return nil
+}
+
+// handleMetrics handles GET /metrics
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+		return
+	}
+
+	m := s.db.Metrics()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"search_count":      m.SearchCount,
+		"insert_count":      m.InsertCount,
+		"delete_count":      m.DeleteCount,
+		"avg_search_time_ns": int64(m.AvgSearchTime),
+	})
+}
+
+// listVectors handles GET /collections/{name}/vectors
+func (s *Server) listVectors(w http.ResponseWriter, r *http.Request, collName string) {
+	coll, err := s.db.GetCollection(collName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Collection not found", "NOT_FOUND")
+		return
+	}
+
+	// Parse pagination params
+	offset := 0
+	limit := 100
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	it := coll.Iterate(veclite.IterOffset(offset), veclite.IterLimit(limit))
+	defer it.Close()
+
+	type recordOutput struct {
+		ID      uint64         `json:"id"`
+		Vector  []float32      `json:"vector"`
+		Payload map[string]any `json:"payload,omitempty"`
+		Content string         `json:"content,omitempty"`
+	}
+
+	records := make([]recordOutput, 0)
+	for {
+		rec, ok := it.Next()
+		if !ok {
+			break
+		}
+		records = append(records, recordOutput{
+			ID:      rec.ID,
+			Vector:  rec.Vector,
+			Payload: rec.Payload,
+			Content: rec.Content,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"records": records,
+		"count":   len(records),
+		"offset":  offset,
+		"limit":   limit,
+	})
+}
+
+// updateVector handles PUT /collections/{name}/vectors/{id}
+func (s *Server) updateVector(w http.ResponseWriter, r *http.Request, collName string, id uint64) {
+	coll, err := s.db.GetCollection(collName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Collection not found", "NOT_FOUND")
+		return
+	}
+
+	var req struct {
+		Vector  []float64      `json:"vector"`
+		Payload map[string]any `json:"payload"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
+		return
+	}
+
+	if req.Vector != nil {
+		vector := make([]float32, len(req.Vector))
+		for i, v := range req.Vector {
+			vector[i] = float32(v)
+		}
+		if err := coll.UpdateVector(id, vector); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error(), "UPDATE_ERROR")
+			return
+		}
+	}
+
+	if req.Payload != nil {
+		if err := coll.Update(id, req.Payload); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error(), "UPDATE_ERROR")
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "updated",
+		"id":     id,
+	})
+}
+
+// upsertVector handles POST /collections/{name}/upsert
+func (s *Server) upsertVector(w http.ResponseWriter, r *http.Request, collName string) {
+	coll := s.db.Collection(collName)
+
+	var req struct {
+		ID       uint64         `json:"id"`
+		Vector   []float64      `json:"vector"`
+		Payload  map[string]any `json:"payload"`
+		KeyField string         `json:"key_field"`
+		KeyValue any            `json:"key_value"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
+		return
+	}
+
+	if req.Vector == nil {
+		writeError(w, http.StatusBadRequest, "Vector is required", "MISSING_VECTOR")
+		return
+	}
+
+	vector := make([]float32, len(req.Vector))
+	for i, v := range req.Vector {
+		vector[i] = float32(v)
+	}
+
+	if req.KeyField != "" {
+		id, inserted, err := coll.UpsertByKey(req.KeyField, req.KeyValue, vector, req.Payload)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error(), "UPSERT_ERROR")
+			return
+		}
+		action := "updated"
+		if inserted {
+			action = "inserted"
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": action,
+			"id":     id,
+		})
+		return
+	}
+
+	id, err := coll.Upsert(req.ID, vector, req.Payload)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error(), "UPSERT_ERROR")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "upserted",
+		"id":     id,
+	})
+}
+
+// findRecords handles POST /collections/{name}/find
+func (s *Server) findRecords(w http.ResponseWriter, r *http.Request, collName string) {
+	coll, err := s.db.GetCollection(collName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Collection not found", "NOT_FOUND")
+		return
+	}
+
+	var req struct {
+		Filters []filterRequest `json:"filters"`
+		Limit   int             `json:"limit"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
+		return
+	}
+
+	var filters []veclite.Filter
+	for _, f := range req.Filters {
+		filter := parseFilterRequest(f)
+		if filter != nil {
+			filters = append(filters, filter)
+		}
+	}
+
+	records, err := coll.Find(filters...)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error(), "FIND_ERROR")
+		return
+	}
+
+	if req.Limit > 0 && len(records) > req.Limit {
+		records = records[:req.Limit]
+	}
+
+	type recordOutput struct {
+		ID      uint64         `json:"id"`
+		Payload map[string]any `json:"payload,omitempty"`
+		Content string         `json:"content,omitempty"`
+	}
+
+	output := make([]recordOutput, len(records))
+	for i, rec := range records {
+		output[i] = recordOutput{
+			ID:      rec.ID,
+			Payload: rec.Payload,
+			Content: rec.Content,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"results": output,
+		"count":   len(output),
+	})
+}
+
+// deleteWhere handles DELETE /collections/{name}/vectors with body
+func (s *Server) deleteWhere(w http.ResponseWriter, r *http.Request, collName string) {
+	coll, err := s.db.GetCollection(collName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Collection not found", "NOT_FOUND")
+		return
+	}
+
+	var req struct {
+		Filters []filterRequest `json:"filters"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
+		return
+	}
+
+	if len(req.Filters) == 0 {
+		writeError(w, http.StatusBadRequest, "At least one filter is required", "MISSING_FILTERS")
+		return
+	}
+
+	var filters []veclite.Filter
+	for _, f := range req.Filters {
+		filter := parseFilterRequest(f)
+		if filter != nil {
+			filters = append(filters, filter)
+		}
+	}
+
+	deleted, err := coll.DeleteWhere(filters...)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error(), "DELETE_ERROR")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "deleted",
+		"deleted": deleted,
+	})
+}
+
+// compactCollection handles POST /collections/{name}/compact
+func (s *Server) compactCollection(w http.ResponseWriter, r *http.Request, collName string) {
+	_, err := s.db.GetCollection(collName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Collection not found", "NOT_FOUND")
+		return
+	}
+
+	if err := s.db.Sync(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error(), "COMPACT_ERROR")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":     "compacted",
+		"collection": collName,
+	})
+}
+
+// validateCollection handles POST /collections/{name}/validate
+func (s *Server) validateCollection(w http.ResponseWriter, r *http.Request, collName string) {
+	coll, err := s.db.GetCollection(collName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Collection not found", "NOT_FOUND")
+		return
+	}
+
+	issues := make([]string, 0)
+	records := coll.All()
+	stats := coll.Stats()
+
+	if len(records) > 0 {
+		expectedDim := len(records[0].Vector)
+		for _, rec := range records[1:] {
+			if len(rec.Vector) != expectedDim {
+				issues = append(issues, fmt.Sprintf("record %d has dimension %d, expected %d",
+					rec.ID, len(rec.Vector), expectedDim))
+			}
+		}
+		if stats.Dimension != 0 && stats.Dimension != expectedDim {
+			issues = append(issues, fmt.Sprintf("stats dimension (%d) doesn't match actual (%d)",
+				stats.Dimension, expectedDim))
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"collection": collName,
+		"valid":      len(issues) == 0,
+		"issues":     issues,
+		"count":      stats.Count,
+	})
 }
 
 // handleSync handles POST /sync

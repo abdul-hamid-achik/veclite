@@ -66,6 +66,9 @@ type CollectionSnapshot struct {
 
 	// HNSWSnapshot holds the HNSW index state (if IndexType is hnsw).
 	HNSWSnapshot *hnsw.Snapshot
+
+	// TextIndexSnapshot holds the BM25 text index state (if text indexing is enabled).
+	TextIndexSnapshot *InvertedIndexSnapshot
 }
 
 // RecordSnapshot is the serializable state of a record.
@@ -78,6 +81,9 @@ type RecordSnapshot struct {
 
 	// Payload contains arbitrary metadata.
 	Payload map[string]any
+
+	// Content is the optional text content.
+	Content string
 
 	// CreatedAt is when the record was inserted.
 	CreatedAt time.Time
