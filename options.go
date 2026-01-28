@@ -76,13 +76,12 @@ type CollectionOption interface {
 
 // collectionConfig holds collection configuration.
 type collectionConfig struct {
-	dimension      int
-	distanceType   floats.DistanceType
-	indexType      IndexType
-	hnswConfig     *HNSWConfig
+	dimension       int
+	distanceType    floats.DistanceType
+	indexType       IndexType
+	hnswConfig      *HNSWConfig
 	textIndexFields []string
-	embedder       Embedder
-	logger         Logger
+	embedder        Embedder
 }
 
 // defaultCollectionConfig returns the default collection configuration.
