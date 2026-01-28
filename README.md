@@ -2,28 +2,59 @@
 
 Embeddable vector database for Go with zero external dependencies.
 
-Store vectors with metadata in a single file. Search with HNSW for fast approximate nearest neighbors.
+Store vectors with metadata in a single file. Search with cosine similarity, dot product, or Euclidean distance. Add HNSW for fast approximate nearest neighbors. Use BM25 for full-text search. Combine both with hybrid search.
 
 ## Table of Contents
 
 - [Features](#features)
 - [Quick Start](#quick-start)
-- [Prerequisites](#prerequisites)
 - [Installation](#installation)
-- [CLI Usage](#cli-usage)
-- [HTTP Server Mode](#http-server-mode)
 - [Library API](#library-api)
+  - [Opening a Database](#opening-a-database)
+  - [Collections](#collections)
+  - [Inserting Vectors](#inserting-vectors)
+  - [Document Storage](#document-storage)
+  - [Searching](#searching)
+  - [Text Search (BM25)](#text-search-bm25)
+  - [Hybrid Search](#hybrid-search)
+  - [Streaming Results](#streaming-results)
+  - [Filtering](#filtering)
+  - [Pagination](#pagination)
+  - [Iteration](#iteration)
+  - [Upsert](#upsert)
+  - [Updating Records](#updating-records)
+  - [Deleting Records](#deleting-records)
+  - [Auto-Embedding](#auto-embedding)
+  - [HNSW Configuration](#hnsw-configuration)
+  - [Observability](#observability)
+  - [Statistics](#statistics)
+- [CLI Usage](#cli-usage)
+- [HTTP Server](#http-server)
+- [MCP Tool Server](#mcp-tool-server)
+- [Examples](#examples)
 - [Performance](#performance)
+- [Thread Safety](#thread-safety)
+- [Persistence](#persistence)
 - [Contributing](#contributing)
+- [License](#license)
 
 ## Features
 
-- **Zero dependencies** - Standard library only, no CGO
-- **Single-file storage** - Database persists to one `.veclite` file
-- **HNSW indexing** - Fast approximate nearest neighbor search
-- **Metadata filtering** - Filter results by payload fields
-- **Thread-safe** - Safe for concurrent read/write access
-- **In-memory mode** - Use `:memory:` for testing
+- **Zero dependencies** -- Standard library only, no CGO
+- **Single-file storage** -- Database persists to one `.veclite` file
+- **HNSW indexing** -- Fast approximate nearest neighbor search
+- **BM25 text search** -- Full-text search over record content and payload fields
+- **Hybrid search** -- Combine vector and text search with Reciprocal Rank Fusion
+- **Document storage** -- Store original text content alongside vectors
+- **Auto-embedding** -- Pluggable `Embedder` interface for text-to-vector conversion
+- **Metadata filtering** -- Rich filter expressions (equality, range, glob, prefix, logical operators)
+- **Streaming results** -- Process results via callback without materializing all at once
+- **Pagination** -- Offset/limit on search results and record iteration
+- **Observability** -- Structured logger interface and atomic metrics counters
+- **Thread-safe** -- Safe for concurrent read/write access
+- **In-memory mode** -- Use `:memory:` for testing
+- **CLI and HTTP server** -- Manage databases from the command line or over REST
+- **MCP server** -- Expose VecLite as tools for AI agents via Model Context Protocol
 
 ## Quick Start
 
@@ -36,20 +67,16 @@ import (
 )
 
 func main() {
-    // Open database (creates if not exists)
     db, _ := veclite.Open("vectors.veclite")
     defer db.Close()
 
-    // Get or create collection with HNSW index
     coll, _ := db.CreateCollection("embeddings",
         veclite.WithDimension(384),
         veclite.WithHNSW(16, 200),
     )
 
-    // Insert vectors with metadata
-    coll.Insert([]float32{0.1, 0.2, ...}, map[string]any{"file": "main.go"})
+    coll.Insert([]float32{0.1, 0.2 /* ... */}, map[string]any{"file": "main.go"})
 
-    // Search for similar vectors
     results, _ := coll.Search(queryVector, veclite.TopK(10))
     for _, r := range results {
         fmt.Printf("ID: %d, Score: %.4f\n", r.Record.ID, r.Score)
@@ -57,28 +84,464 @@ func main() {
 }
 ```
 
-## Prerequisites
-
-- Go 1.21 or later
-- No external dependencies required
-
 ## Installation
 
+Requires Go 1.21 or later. No external dependencies.
+
 ```bash
+# Library
 go get github.com/abdul-hamid-achik/veclite
-```
 
-### CLI Installation
-
-```bash
+# CLI
 go install github.com/abdul-hamid-achik/veclite/cmd/veclite@latest
 ```
 
-Or download from [Releases](https://github.com/abdul-hamid-achik/veclite/releases).
+Pre-built binaries are available on the [Releases](https://github.com/abdul-hamid-achik/veclite/releases) page.
+
+## Library API
+
+### Opening a Database
+
+```go
+// File-based (persistent)
+db, err := veclite.Open("vectors.veclite")
+
+// In-memory (testing)
+db, err := veclite.Open(":memory:")
+
+// With options
+db, err := veclite.Open("vectors.veclite",
+    veclite.WithSyncOnWrite(true),  // Sync after each write
+    veclite.WithReadOnly(true),     // Read-only mode
+    veclite.WithLogger(myLogger),   // Structured logging
+)
+
+defer db.Close()
+```
+
+| DB Option | Description |
+|-----------|-------------|
+| `WithSyncOnWrite(bool)` | Sync to disk after each write. Slower but durable. |
+| `WithReadOnly(bool)` | Open in read-only mode. Write operations return errors. |
+| `WithLogger(Logger)` | Set structured logger. Default is `NopLogger` (zero overhead). |
+
+### Collections
+
+```go
+// Get or create with defaults (auto-detects dimension on first insert)
+coll := db.Collection("embeddings")
+
+// Create with explicit options
+coll, err := db.CreateCollection("embeddings",
+    veclite.WithDimension(384),
+    veclite.WithDistanceType(veclite.DistanceCosine),
+    veclite.WithHNSW(16, 200),
+    veclite.WithTextIndex("title", "body"),
+    veclite.WithEmbedder(myEmbedder),
+)
+
+// Get existing (returns error if not found)
+coll, err := db.GetCollection("embeddings")
+
+// List, check, drop
+names := db.Collections()
+exists := db.HasCollection("embeddings")
+err := db.DropCollection("embeddings")
+```
+
+| Collection Option | Description |
+|-------------------|-------------|
+| `WithDimension(int)` | Fixed vector dimension. 0 (default) auto-detects on first insert. |
+| `WithDistanceType(DistanceType)` | Distance metric. Default: `DistanceCosine`. |
+| `WithHNSW(m, efConstruction)` | Enable HNSW index with given parameters. |
+| `WithHNSWConfig(HNSWConfig)` | Enable HNSW with full configuration struct. |
+| `WithTextIndex(fields...)` | Enable BM25 text indexing on named payload fields. `Content` is always indexed. |
+| `WithEmbedder(Embedder)` | Set auto-embedding plugin for `InsertText`/`SearchText`. |
+
+**Distance metrics:**
+
+| Metric | Constant | Interpretation |
+|--------|----------|----------------|
+| Cosine Similarity | `DistanceCosine` | Higher = more similar |
+| Dot Product | `DistanceDot` | Higher = more similar |
+| Euclidean | `DistanceEuclidean` | Lower = more similar |
+
+### Inserting Vectors
+
+```go
+// Single insert with metadata
+id, err := coll.Insert(vector, map[string]any{
+    "file": "main.go",
+    "type": "code",
+})
+
+// Batch insert
+ids, err := coll.InsertBatch(
+    [][]float32{v1, v2, v3},
+    []map[string]any{p1, p2, p3},
+)
+```
+
+### Document Storage
+
+Store original text content alongside vectors for text search and retrieval:
+
+```go
+id, err := coll.InsertDocument(
+    vector,
+    "Go is a statically typed language designed at Google",
+    map[string]any{"title": "Go Language", "category": "programming"},
+)
+```
+
+The `Content` field is stored on the `Record` and automatically indexed by BM25 when text indexing is enabled.
+
+### Searching
+
+```go
+// Basic search
+results, err := coll.Search(queryVector, veclite.TopK(10))
+
+// With minimum similarity threshold
+results, err := coll.Search(queryVector,
+    veclite.TopK(10),
+    veclite.Threshold(0.8),
+)
+
+// With HNSW tuning (higher ef = better recall, slower)
+results, err := coll.Search(queryVector,
+    veclite.TopK(10),
+    veclite.WithEfSearch(200),
+)
+
+// Access results
+for _, r := range results {
+    fmt.Printf("ID: %d, Score: %.4f, Payload: %v\n",
+        r.Record.ID, r.Score, r.Record.Payload)
+}
+```
+
+| Search Option | Description |
+|---------------|-------------|
+| `TopK(k)` | Maximum results to return. Default: 10. |
+| `Threshold(t)` | Minimum similarity score. |
+| `WithFilter(f)` | Add a filter. Multiple filters use AND logic. |
+| `WithFilters(f...)` | Add multiple filters (AND logic). |
+| `WithEfSearch(ef)` | HNSW ef parameter. Higher = better recall, slower. |
+| `WithOffset(n)` | Skip first n results (pagination). |
+| `WithLimit(n)` | Alias for TopK in pagination contexts. |
+| `WithContent(bool)` | Include/exclude `Content` field in results. |
+| `WithVectorWeight(w)` | Vector search weight in hybrid search. Default: 1.0. |
+| `WithTextWeight(w)` | Text search weight in hybrid search. Default: 1.0. |
+
+### Text Search (BM25)
+
+Full-text search using BM25 ranking. Requires `WithTextIndex` on the collection.
+
+```go
+coll, _ := db.CreateCollection("docs",
+    veclite.WithDimension(384),
+    veclite.WithTextIndex("title", "body"),
+)
+
+// Insert documents with content
+coll.InsertDocument(vector, "Go programming language", map[string]any{
+    "title": "Go Language",
+    "body":  "Fast and efficient",
+})
+
+// Search by text
+results, err := coll.TextSearch("Go programming", veclite.TopK(10))
+```
+
+BM25 indexes the `Content` field automatically, plus any payload fields specified in `WithTextIndex`. Uses standard BM25 parameters (k1=1.2, b=0.75).
+
+### Hybrid Search
+
+Combine vector similarity and BM25 text search using Reciprocal Rank Fusion (RRF):
+
+```go
+results, err := coll.HybridSearch(
+    queryVector,
+    "Go programming",
+    veclite.TopK(10),
+    veclite.WithVectorWeight(1.0),
+    veclite.WithTextWeight(0.5),
+)
+```
+
+RRF merges ranked lists from both searches with configurable weights. This produces better results than either search alone when queries have both semantic and keyword components.
+
+### Streaming Results
+
+Process results one at a time via callback. Return `false` to stop early:
+
+```go
+err := coll.SearchStream(queryVector, func(r veclite.Result) bool {
+    fmt.Printf("ID: %d, Score: %.4f\n", r.Record.ID, r.Score)
+    return r.Score > 0.5 // stop when score drops below threshold
+}, veclite.TopK(100))
+```
+
+### Filtering
+
+Filter search results and find operations by metadata:
+
+```go
+// Equality
+results, _ := coll.Search(query,
+    veclite.TopK(10),
+    veclite.WithFilter(veclite.Equal("type", "code")),
+)
+
+// Multiple filters (AND)
+results, _ := coll.Search(query,
+    veclite.TopK(10),
+    veclite.WithFilters(
+        veclite.Equal("language", "go"),
+        veclite.Prefix("file", "src/"),
+    ),
+)
+
+// Logical operators
+results, _ := coll.Search(query,
+    veclite.TopK(10),
+    veclite.WithFilter(veclite.Or(
+        veclite.Equal("lang", "go"),
+        veclite.Equal("lang", "rust"),
+    )),
+)
+
+// Range filters
+results, _ := coll.Search(query,
+    veclite.TopK(10),
+    veclite.WithFilters(
+        veclite.GT("score", 0.5),
+        veclite.Between("line", 100, 500),
+    ),
+)
+
+// Find records without vector search
+records, _ := coll.Find(veclite.Equal("type", "code"))
+record, _ := coll.FindOne(veclite.Equal("file", "main.go"))
+```
+
+**All filter functions:**
+
+| Filter | Description |
+|--------|-------------|
+| `Equal(key, value)` | Exact match |
+| `NotEqual(key, value)` | Not equal |
+| `In(key, values...)` | Value in list |
+| `NotIn(key, values...)` | Value not in list |
+| `Glob(key, pattern)` | Glob pattern (e.g., `*.go`) |
+| `Prefix(key, prefix)` | String prefix |
+| `Suffix(key, suffix)` | String suffix |
+| `Contains(key, substr)` | String contains |
+| `Exists(key)` | Key exists in payload |
+| `GT(key, value)` | Greater than (numeric) |
+| `GTE(key, value)` | Greater than or equal |
+| `LT(key, value)` | Less than (numeric) |
+| `LTE(key, value)` | Less than or equal |
+| `Between(key, min, max)` | Value in range (inclusive) |
+| `And(filters...)` | All must match |
+| `Or(filters...)` | Any can match |
+| `Not(filter)` | Negate |
+
+### Pagination
+
+Use `WithOffset` and `TopK` (or `WithLimit`) to paginate search results:
+
+```go
+// Page 1
+page1, _ := coll.Search(query, veclite.TopK(10))
+
+// Page 2
+page2, _ := coll.Search(query, veclite.TopK(10), veclite.WithOffset(10))
+
+// Page 3
+page3, _ := coll.Search(query, veclite.TopK(10), veclite.WithOffset(20))
+```
+
+### Iteration
+
+Browse records without vector search:
+
+```go
+// Iterator with offset and limit
+it := coll.Iterate(veclite.IterOffset(0), veclite.IterLimit(100))
+for {
+    record, ok := it.Next()
+    if !ok {
+        break
+    }
+    fmt.Println(record.ID, record.Payload)
+}
+it.Close()
+
+// ForEach (return false to stop early)
+coll.ForEach(func(r *veclite.Record) bool {
+    fmt.Println(r.ID)
+    return true // continue
+})
+
+// Get all records
+all := coll.All()
+```
+
+### Upsert
+
+Insert or update records:
+
+```go
+// Upsert by ID (0 = generate new ID)
+id, err := coll.Upsert(0, vector, payload)      // insert new
+id, err := coll.Upsert(42, vector, payload)     // update if exists, insert otherwise
+
+// Upsert by key field (useful for incremental indexing)
+id, wasInsert, err := coll.UpsertByKey("file", "main.go", vector, map[string]any{
+    "file": "main.go",
+    "line": 100,
+})
+```
+
+### Updating Records
+
+```go
+// Update payload only (keep vector)
+err := coll.Update(id, newPayload)
+
+// Update vector only (keep payload)
+err := coll.UpdateVector(id, newVector)
+```
+
+### Deleting Records
+
+```go
+// Delete by ID
+err := coll.Delete(42)
+
+// Delete by filter
+count, err := coll.DeleteWhere(veclite.Equal("type", "temp"))
+
+// Clear all records
+err := coll.Clear()
+```
+
+### Auto-Embedding
+
+Implement the `Embedder` interface to enable automatic text-to-vector conversion:
+
+```go
+type Embedder interface {
+    Embed(text string) ([]float32, error)
+    EmbedBatch(texts []string) ([][]float32, error)
+    Dimension() int
+}
+```
+
+Usage:
+
+```go
+coll, _ := db.CreateCollection("docs",
+    veclite.WithEmbedder(myEmbedder),
+)
+
+// Insert text (auto-embeds to vector)
+id, err := coll.InsertText("Go is a programming language", payload)
+
+// Search by text (auto-embeds query)
+results, err := coll.SearchText("programming languages", veclite.TopK(10))
+```
+
+The `Embedder` interface lives in the core library (zero dependencies). Implementations wrapping OpenAI, Ollama, or other providers belong in separate modules.
+
+### HNSW Configuration
+
+HNSW (Hierarchical Navigable Small World) provides approximate nearest neighbor search:
+
+```go
+// Basic
+coll, _ := db.CreateCollection("vectors",
+    veclite.WithHNSW(16, 200),
+)
+
+// Full configuration
+coll, _ := db.CreateCollection("vectors",
+    veclite.WithHNSWConfig(veclite.HNSWConfig{
+        M:              32,
+        EfConstruction: 400,
+        EfSearch:       100,
+    }),
+)
+```
+
+| Parameter | Default | Range | Trade-off |
+|-----------|---------|-------|-----------|
+| M | 16 | 12-48 | Higher = better recall, more memory |
+| EfConstruction | 200 | 100-500 | Higher = better index quality, slower build |
+| EfSearch | 100 | 50-500 | Higher = better recall, slower search |
+
+Without HNSW, search uses brute-force linear scan (exact results, slower on large datasets).
+
+### Observability
+
+#### Logger
+
+Implement the `Logger` interface to integrate with your logging library:
+
+```go
+type Logger interface {
+    Debug(msg string, keysAndValues ...any)
+    Info(msg string, keysAndValues ...any)
+    Error(msg string, keysAndValues ...any)
+}
+```
+
+`NopLogger` is the default (zero overhead). Set a logger when opening the database:
+
+```go
+db, _ := veclite.Open("data.veclite", veclite.WithLogger(myLogger))
+```
+
+#### Metrics
+
+VecLite tracks operation counts and latency using atomic counters:
+
+```go
+snapshot := db.Metrics()
+fmt.Printf("Searches: %d, Inserts: %d, Deletes: %d, Avg Search: %v\n",
+    snapshot.SearchCount,
+    snapshot.InsertCount,
+    snapshot.DeleteCount,
+    snapshot.AvgSearchTime,
+)
+```
+
+`MetricsSnapshot` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `SearchCount` | `int64` | Total search operations |
+| `InsertCount` | `int64` | Total insert operations |
+| `DeleteCount` | `int64` | Total delete operations |
+| `AvgSearchTime` | `time.Duration` | Average search latency |
+
+### Statistics
+
+```go
+// Database stats
+dbStats := db.Stats()
+fmt.Printf("Collections: %d, Total Records: %d\n",
+    dbStats.Collections, dbStats.TotalRecords)
+
+// Collection stats
+collStats := coll.Stats()
+fmt.Printf("Count: %d, Dimension: %d, Index: %s\n",
+    collStats.Count, collStats.Dimension, collStats.IndexType)
+```
 
 ## CLI Usage
-
-The `veclite` CLI provides full read/write access to VecLite database files.
 
 ```bash
 veclite <command> [arguments]
@@ -106,15 +569,20 @@ veclite <command> [arguments]
 | `insert <file> <collection>` | Insert a vector |
 | `batch-insert <file> <collection>` | Insert vectors from JSON file |
 | `delete <file> <collection>` | Delete a vector by ID |
+| `upsert <file> <collection>` | Insert or update a vector |
+| `update <file> <collection>` | Update payload for a record |
+| `delete-where <file> <collection>` | Delete records matching a filter |
+| `find <file> <collection>` | Find records by filter |
 | `search <file> <collection>` | Search for similar vectors |
 
 #### Server Mode
 
 | Command | Description |
 |---------|-------------|
-| `serve <file>` | Start HTTP server for multi-client access |
+| `serve <file>` | Start HTTP server |
+| `mcp <file>` | Start MCP tool server over stdio |
 
-#### Maintenance Commands
+#### Maintenance
 
 | Command | Description |
 |---------|-------------|
@@ -122,58 +590,44 @@ veclite <command> [arguments]
 | `validate <file>` | Validate database integrity |
 | `benchmark <file>` | Run search performance benchmark |
 
-### Global Flags
+All commands support `--json` for JSON output.
 
-All commands support `--json` flag for JSON output (useful for scripting).
-
-### Examples
+### CLI Examples
 
 ```bash
-# Check version
-veclite version
-
-# View database info
-veclite info data.veclite
-veclite info --json data.veclite
-
-# Create a collection with HNSW index
-veclite create-collection data.veclite embeddings --dimension=384 --distance=cosine --hnsw
+# Create a collection with HNSW index and text search
+veclite create-collection data.veclite embeddings \
+    --dimension=384 --distance=cosine --hnsw --text-index=title,body
 
 # Insert a vector
-veclite insert data.veclite embeddings --vector='[0.1,0.2,0.3,...]' --payload='{"file":"main.go"}'
+veclite insert data.veclite embeddings \
+    --vector='[0.1,0.2,0.3,...]' --payload='{"file":"main.go"}'
 
-# Batch insert from JSON file
+# Batch insert from JSON
 veclite batch-insert data.veclite embeddings --input=vectors.json
 
-# Search for similar vectors
-veclite search data.veclite embeddings --query='[0.1,0.2,0.3,...]' --top-k=10
-veclite search data.veclite embeddings --query='[0.1,0.2,0.3,...]' --filter='type=code'
+# Search
+veclite search data.veclite embeddings \
+    --query='[0.1,0.2,0.3,...]' --top-k=10 --filter='type=code'
 
-# Get a specific vector
-veclite get data.veclite embeddings --id=42
+# Upsert
+veclite upsert data.veclite embeddings \
+    --id=42 --vector='[0.1,0.2,0.3,...]' --payload='{"file":"main.go"}'
 
-# Delete a vector
-veclite delete data.veclite embeddings --id=42
+# Find by filter
+veclite find data.veclite embeddings --filter='type=code'
 
-# Drop a collection
-veclite drop-collection data.veclite embeddings
+# Delete by filter
+veclite delete-where data.veclite embeddings --filter='type=temp'
 
 # Start HTTP server
-veclite serve data.veclite --port=8080
+veclite serve data.veclite --port=8080 --cors
 
-# Validate database integrity
-veclite validate data.veclite
-
-# Compact database
-veclite compact data.veclite
-
-# Run benchmark
-veclite benchmark data.veclite --collection=embeddings --queries=1000
+# Start MCP server
+veclite mcp data.veclite
 ```
 
 ### Batch Insert File Format
-
-The `batch-insert` command supports two input formats:
 
 **JSON Array:**
 ```json
@@ -189,70 +643,53 @@ The `batch-insert` command supports two input formats:
 {"vector": [0.4, 0.5, 0.6], "payload": {"file": "b.go"}}
 ```
 
-### Output Examples
-
-**info command:**
-```
-Database: data.veclite
-Collections: 2
-Total Records: 15000
-```
-
-**collections command:**
-```
-embeddings: 10000 records, dimension=384, distance=cosine, index=hnsw
-images: 5000 records, dimension=512, distance=euclidean, index=none
-```
-
-**search command (JSON):**
-```json
-[
-  {"id": 42, "score": 0.9821, "payload": {"file": "main.go"}},
-  {"id": 17, "score": 0.9654, "payload": {"file": "util.go"}}
-]
-```
-
-**stats command (JSON):**
-```json
-{
-  "path": "data.veclite",
-  "collections": 2,
-  "total_records": 15000,
-  "collection_stats": [
-    {
-      "name": "embeddings",
-      "count": 10000,
-      "dimension": 384,
-      "distance_type": "cosine",
-      "index_type": "hnsw"
-    }
-  ]
-}
-```
-
-## HTTP Server Mode
-
-VecLite can run as an HTTP server for multi-language client access.
+## HTTP Server
 
 ```bash
-veclite serve data.veclite --port=8080 --cors
+veclite serve data.veclite --port=8080 --host=127.0.0.1 --cors
 ```
 
-### REST API Endpoints
+### Endpoints
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | Health check |
 | GET | `/info` | Database info |
+| GET | `/metrics` | Operation metrics |
 | GET | `/collections` | List collections |
 | POST | `/collections` | Create collection |
 | GET | `/collections/{name}` | Collection info |
 | DELETE | `/collections/{name}` | Drop collection |
+| GET | `/collections/{name}/vectors` | List all vectors (paginated) |
 | POST | `/collections/{name}/vectors` | Insert vector(s) |
 | GET | `/collections/{name}/vectors/{id}` | Get vector by ID |
+| PUT | `/collections/{name}/vectors/{id}` | Update vector and/or payload |
 | DELETE | `/collections/{name}/vectors/{id}` | Delete vector |
+| DELETE | `/collections/{name}/vectors` | Delete by filter (with body) |
 | POST | `/collections/{name}/search` | Search vectors |
+| POST | `/collections/{name}/upsert` | Upsert vector |
+| POST | `/collections/{name}/find` | Find records by filter |
+| POST | `/collections/{name}/compact` | Compact collection |
+| POST | `/collections/{name}/validate` | Validate integrity |
 | POST | `/sync` | Force sync to disk |
+
+### Streaming Results
+
+Set `Accept: application/x-ndjson` on search requests to receive results as newline-delimited JSON:
+
+```bash
+curl -X POST http://localhost:8080/collections/embeddings/search \
+  -H "Accept: application/x-ndjson" \
+  -H "Content-Type: application/json" \
+  -d '{"query": [0.1, 0.2, 0.3], "top_k": 100}'
+```
+
+Each line is a JSON object:
+
+```json
+{"id":1,"score":0.9821,"payload":{"file":"main.go"}}
+{"id":5,"score":0.9654,"payload":{"file":"util.go"}}
+```
 
 ### API Examples
 
@@ -295,277 +732,117 @@ curl -X POST http://localhost:8080/collections/embeddings/search \
   }'
 ```
 
+**Upsert:**
+```bash
+curl -X POST http://localhost:8080/collections/embeddings/upsert \
+  -H "Content-Type: application/json" \
+  -d '{"id": 42, "vector": [0.1, 0.2, 0.3], "payload": {"file": "main.go"}}'
+```
+
+**Find by Filter:**
+```bash
+curl -X POST http://localhost:8080/collections/embeddings/find \
+  -H "Content-Type: application/json" \
+  -d '{"filters": [{"key": "type", "op": "eq", "value": "code"}]}'
+```
+
+**Update Vector:**
+```bash
+curl -X PUT http://localhost:8080/collections/embeddings/vectors/42 \
+  -H "Content-Type: application/json" \
+  -d '{"vector": [0.4, 0.5, 0.6], "payload": {"file": "updated.go"}}'
+```
+
 ### Filter Operators
 
-| Operator | Description |
-|----------|-------------|
-| `eq` or `=` | Equal |
-| `neq` or `!=` | Not equal |
-| `gt` or `>` | Greater than (numeric) |
-| `gte` or `>=` | Greater than or equal (numeric) |
-| `lt` or `<` | Less than (numeric) |
-| `lte` or `<=` | Less than or equal (numeric) |
-| `glob` | Glob pattern match |
-| `prefix` | String prefix |
-| `suffix` | String suffix |
-| `contains` | String contains |
-| `exists` | Key exists |
+| Operator | Aliases | Description |
+|----------|---------|-------------|
+| `eq` | `=` | Equal |
+| `neq` | `!=` | Not equal |
+| `gt` | `>` | Greater than (numeric) |
+| `gte` | `>=` | Greater than or equal |
+| `lt` | `<` | Less than (numeric) |
+| `lte` | `<=` | Less than or equal |
+| `glob` | | Glob pattern match |
+| `prefix` | | String prefix |
+| `suffix` | | String suffix |
+| `contains` | | String contains |
+| `exists` | | Key exists |
 
 ### Python Client Example
 
 ```python
 import requests
 
-base_url = "http://localhost:8080"
+base = "http://localhost:8080"
 
 # Create collection
-requests.post(f"{base_url}/collections", json={
-    "name": "embeddings",
-    "dimension": 384,
-    "hnsw": True
+requests.post(f"{base}/collections", json={
+    "name": "embeddings", "dimension": 384, "hnsw": True
 })
 
-# Insert vector
-response = requests.post(f"{base_url}/collections/embeddings/vectors", json={
+# Insert
+r = requests.post(f"{base}/collections/embeddings/vectors", json={
     "vector": [0.1] * 384,
     "payload": {"file": "main.py"}
 })
-print(response.json())  # {"status": "inserted", "id": 1}
+print(r.json())  # {"status": "inserted", "id": 1}
 
 # Search
-response = requests.post(f"{base_url}/collections/embeddings/search", json={
-    "query": [0.1] * 384,
-    "top_k": 5
+r = requests.post(f"{base}/collections/embeddings/search", json={
+    "query": [0.1] * 384, "top_k": 5
 })
-print(response.json())  # {"results": [...], "count": 5}
+print(r.json())  # {"results": [...], "count": 5}
 ```
 
-## Library API
+## MCP Tool Server
 
-### Opening a Database
+VecLite can run as an [MCP](https://modelcontextprotocol.io/) tool server, making it available to AI agents like Claude Code, Cursor, and other MCP-compatible clients.
 
-```go
-// File-based (persistent)
-db, err := veclite.Open("vectors.veclite")
-
-// In-memory (testing)
-db, err := veclite.Open(":memory:")
-
-// With options
-db, err := veclite.Open("vectors.veclite",
-    veclite.WithSyncOnWrite(true),  // Sync after each write
-    veclite.WithReadOnly(true),     // Read-only mode
-)
-
-defer db.Close()
+```bash
+veclite mcp data.veclite
 ```
 
-### Collections
+The server communicates over stdio using JSON-RPC 2.0. It exposes these tools:
 
-```go
-// Get or create (simple)
-coll := db.Collection("embeddings")
+| Tool | Description |
+|------|-------------|
+| `veclite_collections` | List all collections |
+| `veclite_stats` | Get collection statistics |
+| `veclite_search` | Vector similarity search |
+| `veclite_text_search` | BM25 full-text search |
+| `veclite_hybrid_search` | Combined vector + text search |
+| `veclite_find` | Find records by filter |
+| `veclite_insert` | Insert a vector |
 
-// Create with options
-coll, err := db.CreateCollection("embeddings",
-    veclite.WithDimension(384),                    // Fixed dimension
-    veclite.WithDistanceType(veclite.DistanceCosine), // Distance metric
-    veclite.WithHNSW(16, 200),                     // Enable HNSW index
-)
+### MCP Configuration
 
-// Get existing
-coll, err := db.GetCollection("embeddings")
+Add to your MCP client configuration (e.g., `.claude/settings.json`):
 
-// List all
-names := db.Collections()
-
-// Delete
-err := db.DropCollection("embeddings")
-```
-
-### Distance Metrics
-
-| Metric | Constant | Best Score |
-|--------|----------|------------|
-| Cosine Similarity | `DistanceCosine` | Higher = more similar |
-| Dot Product | `DistanceDot` | Higher = more similar |
-| Euclidean | `DistanceEuclidean` | Lower = more similar |
-
-### Inserting Vectors
-
-```go
-// Insert with auto-generated ID
-id, err := coll.Insert(vector, map[string]any{
-    "file": "main.go",
-    "type": "code",
-})
-
-// Batch insert
-vectors := [][]float32{v1, v2, v3}
-payloads := []map[string]any{p1, p2, p3}
-ids, err := coll.InsertBatch(vectors, payloads)
-```
-
-### Upserting (Insert or Update)
-
-```go
-// Upsert by ID (0 = auto-generate new ID)
-id, err := coll.Upsert(0, vector, payload)           // Insert new
-id, err := coll.Upsert(42, vector, payload)          // Update if exists, insert with ID 42 if not
-
-// Upsert by key field (useful for incremental indexing)
-id, wasInsert, err := coll.UpsertByKey("file", "main.go", vector, map[string]any{
-    "file": "main.go",
-    "line": 100,
-})
-// wasInsert is true if new record was created, false if existing was updated
-
-// Update only the vector (keep existing payload)
-err := coll.UpdateVector(id, newVector)
-
-// Update only the payload (keep existing vector)
-err := coll.Update(id, newPayload)
-```
-
-### Searching
-
-```go
-// Basic search
-results, err := coll.Search(queryVector, veclite.TopK(10))
-
-// With threshold
-results, err := coll.Search(queryVector,
-    veclite.TopK(10),
-    veclite.Threshold(0.8),
-)
-
-// With HNSW tuning (higher ef = better recall, slower)
-results, err := coll.Search(queryVector,
-    veclite.TopK(10),
-    veclite.WithEfSearch(200),
-)
-
-// Access results
-for _, r := range results {
-    fmt.Printf("ID: %d, Score: %.4f, Payload: %v\n",
-        r.Record.ID, r.Score, r.Record.Payload)
+```json
+{
+  "mcpServers": {
+    "veclite": {
+      "command": "veclite",
+      "args": ["mcp", "/path/to/data.veclite"]
+    }
+  }
 }
 ```
 
-### Filtering
+## Examples
 
-Filter results by metadata fields:
+Runnable examples are in the `examples/` directory:
 
-```go
-// Equal
-results, _ := coll.Search(query,
-    veclite.TopK(10),
-    veclite.WithFilter(veclite.Equal("type", "code")),
-)
-
-// Multiple filters (AND logic)
-results, _ := coll.Search(query,
-    veclite.TopK(10),
-    veclite.WithFilters(
-        veclite.Equal("language", "go"),
-        veclite.Prefix("file", "src/"),
-    ),
-)
+```bash
+go run ./examples/basic        # Open, insert, search, close
+go run ./examples/hnsw         # HNSW index configuration and benchmarking
+go run ./examples/filtering    # Rich filter expressions
+go run ./examples/batch        # Batch operations, upsert, iteration, pagination
+go run ./examples/http-client  # HTTP API client (start server first)
 ```
 
-**Available filters:**
-- `Equal(key, value)` - Exact match
-- `NotEqual(key, value)` - Not equal
-- `In(key, values...)` - Value in list
-- `NotIn(key, values...)` - Value not in list
-- `Glob(key, pattern)` - Glob pattern match
-- `Prefix(key, prefix)` - String prefix
-- `Suffix(key, suffix)` - String suffix
-- `Contains(key, substr)` - String contains
-- `Exists(key)` - Key exists in payload
-- `And(filters...)` - Combine filters with AND
-- `Or(filters...)` - Combine filters with OR
-- `Not(filter)` - Negate a filter
-
-**Range filters (numeric):**
-- `GreaterThan(key, value)` or `GT(key, value)` - Greater than
-- `GreaterThanOrEqual(key, value)` or `GTE(key, value)` - Greater than or equal
-- `LessThan(key, value)` or `LT(key, value)` - Less than
-- `LessThanOrEqual(key, value)` or `LTE(key, value)` - Less than or equal
-- `Between(key, min, max)` - Value in range (inclusive)
-
-```go
-// Range filter examples
-results, _ := coll.Search(query,
-    veclite.TopK(10),
-    veclite.WithFilters(
-        veclite.GT("score", 0.5),          // score > 0.5
-        veclite.Between("line", 100, 500), // 100 <= line <= 500
-    ),
-)
-```
-
-### HNSW Configuration
-
-```go
-// Basic HNSW
-coll, _ := db.CreateCollection("vectors",
-    veclite.WithHNSW(16, 200),  // M=16, efConstruction=200
-)
-
-// Custom configuration
-coll, _ := db.CreateCollection("vectors",
-    veclite.WithHNSWConfig(veclite.HNSWConfig{
-        M:              32,   // More connections = better recall, more memory
-        EfConstruction: 400,  // Higher = better index quality, slower build
-        EfSearch:       100,  // Default search quality
-    }),
-)
-```
-
-**Parameter Guidelines:**
-
-| Parameter | Default | Range | Trade-off |
-|-----------|---------|-------|-----------|
-| M | 16 | 12-48 | Higher = better recall, more memory |
-| efConstruction | 200 | 100-500 | Higher = better index, slower build |
-| efSearch | 100 | 50-500 | Higher = better recall, slower search |
-
-### Deleting Records
-
-```go
-// Delete by ID
-err := coll.Delete(42)
-
-// Delete by filter
-count, err := coll.DeleteWhere(veclite.Equal("type", "temp"))
-```
-
-### Statistics
-
-```go
-// Database stats
-dbStats := db.Stats()
-fmt.Printf("Collections: %d, Total Records: %d\n",
-    dbStats.Collections, dbStats.TotalRecords)
-
-// Collection stats
-collStats := coll.Stats()
-fmt.Printf("Count: %d, Dimension: %d, Index: %s\n",
-    collStats.Count, collStats.Dimension, collStats.IndexType)
-```
-
-### Debug Search
-
-```go
-// Get search explanation
-explanation, err := coll.SearchExplain(query, veclite.TopK(10))
-fmt.Printf("Index: %s, Nodes Visited: %d, Duration: %v\n",
-    explanation.IndexType,
-    explanation.NodesVisited,
-    explanation.Duration,
-)
-```
+All examples use `:memory:` for zero-setup running (except `http-client`, which connects to a running server).
 
 ## Performance
 
@@ -582,15 +859,19 @@ HNSW provides >95% recall at 6-7x speedup over brute force.
 
 VecLite is safe for concurrent access:
 - Multiple goroutines can read simultaneously
-- Writes are serialized with proper locking
+- Writes are serialized with `sync.RWMutex`
+- Metrics use atomic counters for lock-free reads
 - Use `WithSyncOnWrite(true)` for durability after each write
 
 ## Persistence
 
-Data is stored using Go's gob encoding:
+Data is stored using Go's gob encoding in a single `.veclite` file:
 - Call `db.Sync()` to persist changes manually
-- Use `WithSyncOnWrite(true)` for automatic persistence
+- Use `WithSyncOnWrite(true)` for automatic persistence after each write
 - `db.Close()` syncs before closing
+- HNSW indexes, BM25 inverted indexes, and record content are all persisted
+- File locking prevents concurrent process access
+- CRC32 checksums validate data integrity on load
 
 ## Contributing
 
