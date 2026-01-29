@@ -36,3 +36,7 @@ Thumbs.db
 # Build
 dist/
 bin/
+
+# ONNX embedder dependencies (download separately)
+models/
+lib/

@@ -25,6 +25,7 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
   - [Updating Records](#updating-records)
   - [Deleting Records](#deleting-records)
   - [Auto-Embedding](#auto-embedding)
+  - [Local ONNX Embedder](#local-onnx-embedder)
   - [HNSW Configuration](#hnsw-configuration)
   - [Observability](#observability)
   - [Statistics](#statistics)
@@ -47,6 +48,7 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
 - **Hybrid search** -- Combine vector and text search with Reciprocal Rank Fusion
 - **Document storage** -- Store original text content alongside vectors
 - **Auto-embedding** -- Pluggable `Embedder` interface for text-to-vector conversion
+- **Local ONNX embedder** -- Optional `all-MiniLM-L6-v2` embedder with zero external dependencies (build with `-tags onnx`)
 - **Metadata filtering** -- Rich filter expressions (equality, range, glob, prefix, logical operators)
 - **Streaming results** -- Process results via callback without materializing all at once
 - **Pagination** -- Offset/limit on search results and record iteration
@@ -455,6 +457,219 @@ results, err := coll.SearchText("programming languages", veclite.TopK(10))
 ```
 
 The `Embedder` interface lives in the core library (zero dependencies). Implementations wrapping OpenAI, Ollama, or other providers belong in separate modules.
+
+### Local ONNX Embedder
+
+VecLite provides an optional local embedding system using ONNX Runtime with the `all-MiniLM-L6-v2` model. This enables:
+
+- **Zero external API dependencies** -- No Ollama or OpenAI required
+- **Offline capability** -- Text never leaves your machine
+- **Low latency** -- ~10ms per embedding vs ~50ms with external services
+- **384-dimensional vectors** -- Compatible with most vector search use cases
+
+#### Quick Start (macOS)
+
+Complete setup in 4 steps:
+
+```bash
+# 1. Install ONNX Runtime
+brew install onnxruntime
+
+# 2. Download libtokenizers
+mkdir -p lib
+curl -L -o lib/libtokenizers.tar.gz \
+  "https://github.com/daulet/tokenizers/releases/latest/download/libtokenizers.darwin-arm64.tar.gz"
+tar -xzf lib/libtokenizers.tar.gz -C lib && rm lib/libtokenizers.tar.gz
+
+# 3. Download model files (~90MB)
+mkdir -p models
+curl -L -o models/tokenizer.json \
+  "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json"
+curl -L -o models/model.onnx \
+  "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx"
+
+# 4. Build with ONNX support
+CGO_LDFLAGS="-L./lib" go build -tags onnx ./...
+```
+
+#### Installation Details
+
+The ONNX embedder requires native libraries and model files.
+
+**Step 1: Install ONNX Runtime**
+
+| Platform | Command |
+|----------|---------|
+| macOS (Homebrew) | `brew install onnxruntime` |
+| Linux | Download from [onnxruntime releases](https://github.com/microsoft/onnxruntime/releases) |
+| Windows | Download from [onnxruntime releases](https://github.com/microsoft/onnxruntime/releases) |
+
+**Step 2: Install libtokenizers**
+
+The `github.com/daulet/tokenizers` package requires the libtokenizers native library.
+
+macOS ARM64 (Apple Silicon):
+```bash
+mkdir -p lib
+curl -L -o lib/libtokenizers.tar.gz \
+  "https://github.com/daulet/tokenizers/releases/latest/download/libtokenizers.darwin-arm64.tar.gz"
+tar -xzf lib/libtokenizers.tar.gz -C lib && rm lib/libtokenizers.tar.gz
+```
+
+macOS Intel:
+```bash
+mkdir -p lib
+curl -L -o lib/libtokenizers.tar.gz \
+  "https://github.com/daulet/tokenizers/releases/latest/download/libtokenizers.darwin-amd64.tar.gz"
+tar -xzf lib/libtokenizers.tar.gz -C lib && rm lib/libtokenizers.tar.gz
+```
+
+Linux:
+```bash
+mkdir -p lib
+curl -L -o lib/libtokenizers.tar.gz \
+  "https://github.com/daulet/tokenizers/releases/latest/download/libtokenizers.linux-amd64.tar.gz"
+tar -xzf lib/libtokenizers.tar.gz -C lib && rm lib/libtokenizers.tar.gz
+```
+
+See [github.com/daulet/tokenizers](https://github.com/daulet/tokenizers) for other platforms.
+
+**Step 3: Download Model Files**
+
+Option A - Using curl (~90MB):
+```bash
+mkdir -p models
+curl -L -o models/tokenizer.json \
+  "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json"
+curl -L -o models/model.onnx \
+  "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx"
+```
+
+Option B - Quantized model (~25MB, slightly lower quality):
+```bash
+mkdir -p models
+curl -L -o models/tokenizer.json \
+  "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json"
+curl -L -o models/model.onnx \
+  "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx"
+```
+
+Option C - Using Go (requires native libs installed first):
+```go
+import "github.com/abdul-hamid-achik/veclite/embed/onnx"
+
+// Full model
+err := onnx.DownloadMiniLM("./models")
+
+// Or quantized
+err := onnx.DownloadMiniLMQuantized("./models")
+```
+
+**Step 4: Build**
+
+```bash
+# Set library path and build
+CGO_LDFLAGS="-L./lib" go build -tags onnx ./...
+```
+
+#### Running Tests
+
+```bash
+# Run all ONNX tests
+CGO_LDFLAGS="-L./lib" VECLITE_ONNX_MODEL_DIR=./models \
+  go test -tags onnx -v ./embed/onnx/...
+
+# Run benchmarks
+CGO_LDFLAGS="-L./lib" VECLITE_ONNX_MODEL_DIR=./models \
+  go test -tags onnx -bench=. -benchmem ./embed/onnx/...
+```
+
+#### Usage
+
+```go
+import (
+    "github.com/abdul-hamid-achik/veclite"
+    "github.com/abdul-hamid-achik/veclite/embed/onnx"
+)
+
+// Create ONNX embedder
+embedder, err := onnx.NewMiniLM("./models")
+if err != nil {
+    log.Fatal(err)
+}
+defer embedder.Close()
+
+// Use with veclite
+db, _ := veclite.Open("data.veclite")
+coll, _ := db.CreateCollection("docs",
+    veclite.WithDimension(384),  // MiniLM outputs 384 dimensions
+    veclite.WithEmbedder(embedder),
+)
+
+// Insert and search by text
+id, _ := coll.InsertText("Go is a statically typed language", nil)
+results, _ := coll.SearchText("programming languages", veclite.TopK(5))
+```
+
+#### Batch Embedding
+
+For better performance with multiple texts, use batch embedding:
+
+```go
+texts := []string{
+    "First document",
+    "Second document",
+    "Third document",
+}
+
+vectors, err := embedder.EmbedBatch(texts)
+// Then insert with InsertBatch
+```
+
+#### Performance
+
+Benchmarks on Apple M5:
+
+| Operation | Time | Throughput |
+|-----------|------|------------|
+| Single embed | ~12ms | ~83 texts/sec |
+| Batch 10 | ~100ms | ~100 texts/sec |
+| Batch 100 | ~875ms | ~114 texts/sec |
+
+Batching improves throughput by ~37% compared to single embedding.
+
+#### Custom Models
+
+You can use other ONNX-exported sentence transformers:
+
+```go
+embedder, err := onnx.NewEmbedder(
+    "/path/to/model.onnx",
+    "/path/to/tokenizer.json",
+    onnx.WithDimension(768),    // For larger models
+    onnx.WithMaxLength(512),    // Max token sequence length
+)
+```
+
+#### Troubleshooting
+
+**"library 'tokenizers' not found"**
+```bash
+# Ensure CGO_LDFLAGS points to the lib directory
+CGO_LDFLAGS="-L/full/path/to/lib" go build -tags onnx ./...
+```
+
+**"onnxruntime.so not found"**
+```bash
+# The library auto-detects common paths. If not found, set manually:
+export ONNXRUNTIME_LIB=/opt/homebrew/lib/libonnxruntime.dylib
+```
+
+**"model.onnx not found"**
+```bash
+# Ensure VECLITE_ONNX_MODEL_DIR points to the models directory
+VECLITE_ONNX_MODEL_DIR=/full/path/to/models go test -tags onnx ./embed/onnx/...
+```
 
 ### HNSW Configuration
 
