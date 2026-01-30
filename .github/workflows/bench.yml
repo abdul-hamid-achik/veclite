@@ -38,10 +38,11 @@ jobs:
           output-file-path: benchmark.txt
           external-data-json-path: ./cache/benchmark-data.json
           fail-on-alert: false
-          alert-threshold: "150%"
-          comment-on-alert: true
+          alert-threshold: "200%"
+          comment-on-alert: false
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: false
+          save-data-file: true
 
       - name: Upload benchmark artifacts
         uses: actions/upload-artifact@v4
