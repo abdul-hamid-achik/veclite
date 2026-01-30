@@ -357,14 +357,14 @@ func TestConsolidationFindClusters(t *testing.T) {
 
 	// Create clustered data
 	// Cluster 1: near (1, 0, 0)
-	coll.Insert([]float32{1, 0, 0}, nil)
-	coll.Insert([]float32{0.99, 0.01, 0}, nil)
-	coll.Insert([]float32{0.98, 0.02, 0}, nil)
+	_, _ = coll.Insert([]float32{1, 0, 0}, nil)
+	_, _ = coll.Insert([]float32{0.99, 0.01, 0}, nil)
+	_, _ = coll.Insert([]float32{0.98, 0.02, 0}, nil)
 
 	// Cluster 2: near (0, 1, 0)
-	coll.Insert([]float32{0, 1, 0}, nil)
-	coll.Insert([]float32{0.01, 0.99, 0}, nil)
-	coll.Insert([]float32{0.02, 0.98, 0}, nil)
+	_, _ = coll.Insert([]float32{0, 1, 0}, nil)
+	_, _ = coll.Insert([]float32{0.01, 0.99, 0}, nil)
+	_, _ = coll.Insert([]float32{0.02, 0.98, 0}, nil)
 
 	clusters, err := coll.FindSimilarClusters(ConsolidationConfig{
 		SimilarityThreshold: 0.95,

@@ -383,7 +383,7 @@ func BenchmarkMemoryOperations(b *testing.B) {
 
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			coll.Search(query, TopK(10), WithFilter(ImportanceAbove(0.5)))
+			_, _ = coll.Search(query, TopK(10), WithFilter(ImportanceAbove(0.5)))
 		}
 	})
 }

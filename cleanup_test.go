@@ -118,7 +118,7 @@ func TestMemoryLimiterEnforcesLimit(t *testing.T) {
 
 	// Insert 100 records
 	for i := 0; i < 100; i++ {
-		coll.Insert([]float32{float32(i), 0, 0}, nil)
+		_, _ = coll.Insert([]float32{float32(i), 0, 0}, nil)
 	}
 
 	if coll.Count() != 100 {
@@ -238,7 +238,7 @@ func TestMemoryLimiterBackground(t *testing.T) {
 
 	// Insert 50 records
 	for i := 0; i < 50; i++ {
-		coll.Insert([]float32{float32(i), 0, 0}, nil)
+		_, _ = coll.Insert([]float32{float32(i), 0, 0}, nil)
 	}
 
 	// Start limiter with max 30
@@ -270,7 +270,7 @@ func TestMemoryLimiterUnderLimit(t *testing.T) {
 
 	// Insert 10 records
 	for i := 0; i < 10; i++ {
-		coll.Insert([]float32{float32(i), 0, 0}, nil)
+		_, _ = coll.Insert([]float32{float32(i), 0, 0}, nil)
 	}
 
 	// Try to enforce limit of 100 (no eviction needed)
@@ -308,7 +308,7 @@ func TestMemoryLimiterSkipsArchived(t *testing.T) {
 
 	// Insert regular records
 	for i := 5; i < 15; i++ {
-		coll.Insert([]float32{float32(i), 0, 0}, nil)
+		_, _ = coll.Insert([]float32{float32(i), 0, 0}, nil)
 	}
 
 	// Total: 15 records (5 archived + 10 regular)
