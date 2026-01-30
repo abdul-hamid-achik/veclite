@@ -82,6 +82,7 @@ type collectionConfig struct {
 	hnswConfig      *HNSWConfig
 	textIndexFields []string
 	embedder        Embedder
+	memoryConfig    *MemoryConfig
 }
 
 // defaultCollectionConfig returns the default collection configuration.

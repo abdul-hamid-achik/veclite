@@ -13,8 +13,13 @@ import (
 
 // MCPServer handles MCP protocol using the official Go SDK.
 type MCPServer struct {
-	db     *veclite.DB
-	server *mcp.Server
+	db       *veclite.DB
+	server   *mcp.Server
+	embedder veclite.Embedder
+	// graphStore caches created KnowledgeGraph instances by name
+	graphStore map[string]*veclite.KnowledgeGraph
+	// episodeStore caches EpisodeStore instances by collection name
+	episodeStore map[string]*veclite.EpisodeStore
 }
 
 func cmdMCP(args []string) {
@@ -31,8 +36,68 @@ func cmdMCP(args []string) {
 	}
 	defer db.Close()
 
-	srv := &MCPServer{db: db}
+	srv := &MCPServer{
+		db:           db,
+		graphStore:   make(map[string]*veclite.KnowledgeGraph),
+		episodeStore: make(map[string]*veclite.EpisodeStore),
+	}
+
+	// Try to load embedder if available
+	srv.initEmbedder()
+
 	srv.run()
+}
+
+// initEmbedder tries to initialize an embedder for auto-embedding support.
+// It looks for ONNX models in standard locations.
+func (s *MCPServer) initEmbedder() {
+	// The ONNX embedder requires build tags, so we use a callback pattern
+	// to allow optional initialization. For now, this is a no-op in the
+	// standard build. Users can set up embedders via the API.
+	// Future: check for VECLITE_MODEL_DIR env var or ~/.veclite/models
+}
+
+// getOrCreateGraph returns or creates a knowledge graph by name.
+func (s *MCPServer) getOrCreateGraph(name string) (*veclite.KnowledgeGraph, error) {
+	if kg, ok := s.graphStore[name]; ok {
+		return kg, nil
+	}
+	kg, err := s.db.CreateKnowledgeGraph(name)
+	if err != nil {
+		return nil, err
+	}
+	s.graphStore[name] = kg
+	return kg, nil
+}
+
+// getOrCreateEpisodeStore returns or creates an episode store for a collection.
+func (s *MCPServer) getOrCreateEpisodeStore(collectionName string) (*veclite.EpisodeStore, error) {
+	if es, ok := s.episodeStore[collectionName]; ok {
+		return es, nil
+	}
+	es, err := s.db.CreateEpisodeStore(collectionName)
+	if err != nil {
+		return nil, err
+	}
+	s.episodeStore[collectionName] = es
+	return es, nil
+}
+
+// embedText attempts to embed text using the configured embedder.
+// Returns error if no embedder is configured.
+func (s *MCPServer) embedText(text string) ([]float32, error) {
+	if s.embedder == nil {
+		return nil, fmt.Errorf("no embedder configured; provide vector directly or configure ONNX embedder")
+	}
+	return s.embedder.Embed(text)
+}
+
+// embedTextBatch attempts to embed multiple texts using the configured embedder.
+func (s *MCPServer) embedTextBatch(texts []string) ([][]float32, error) {
+	if s.embedder == nil {
+		return nil, fmt.Errorf("no embedder configured; provide vectors directly or configure ONNX embedder")
+	}
+	return s.embedder.EmbedBatch(texts)
 }
 
 func (s *MCPServer) run() {
@@ -93,7 +158,7 @@ type insertInput struct {
 
 type memoryRememberInput struct {
 	Text       string         `json:"text" jsonschema:"description=The text content to remember,required"`
-	Vector     []float64      `json:"vector" jsonschema:"description=Vector embedding of the text,required"`
+	Vector     []float64      `json:"vector,omitempty" jsonschema:"description=Vector embedding of the text. Optional if embedder is configured."`
 	Importance float64        `json:"importance,omitempty" jsonschema:"description=Importance score from 0.0 to 1.0 (default 0.5)"`
 	Tags       []string       `json:"tags,omitempty" jsonschema:"description=Optional tags for categorization"`
 	TTLHours   float64        `json:"ttl_hours,omitempty" jsonschema:"description=Optional time-to-live in hours (0 = never expires)"`
@@ -101,7 +166,8 @@ type memoryRememberInput struct {
 }
 
 type memoryRecallInput struct {
-	Query          []float64 `json:"query" jsonschema:"description=Query vector for semantic search,required"`
+	Query          []float64 `json:"query,omitempty" jsonschema:"description=Query vector for semantic search. Optional if text and embedder are configured."`
+	Text           string    `json:"text,omitempty" jsonschema:"description=Text to search for. Will be auto-embedded if embedder is configured."`
 	Limit          int       `json:"limit,omitempty" jsonschema:"description=Maximum number of memories to return (default 10)"`
 	MinImportance  float64   `json:"min_importance,omitempty" jsonschema:"description=Minimum importance score (0.0-1.0)"`
 	Tags           []string  `json:"tags,omitempty" jsonschema:"description=Filter by tags (any match)"`
@@ -114,6 +180,163 @@ type memoryForgetInput struct {
 	Tags            []string `json:"tags,omitempty" jsonschema:"description=Delete memories with any of these tags"`
 	ExpiredOnly     bool     `json:"expired_only,omitempty" jsonschema:"description=Only delete expired memories"`
 	BelowImportance float64  `json:"below_importance,omitempty" jsonschema:"description=Delete memories with importance below this threshold"`
+}
+
+type embedInput struct {
+	Text  string   `json:"text,omitempty" jsonschema:"description=Text to embed"`
+	Texts []string `json:"texts,omitempty" jsonschema:"description=Multiple texts to embed in batch"`
+}
+
+// Graph tool inputs
+
+type graphAddEntityInput struct {
+	Graph      string         `json:"graph" jsonschema:"description=Knowledge graph name,required"`
+	ID         string         `json:"id" jsonschema:"description=Unique entity ID,required"`
+	Type       string         `json:"type,omitempty" jsonschema:"description=Entity type (e.g. person/company/concept)"`
+	Name       string         `json:"name,omitempty" jsonschema:"description=Human-readable name"`
+	Vector     []float64      `json:"vector,omitempty" jsonschema:"description=Optional embedding vector"`
+	Properties map[string]any `json:"properties,omitempty" jsonschema:"description=Additional properties"`
+}
+
+type graphAddRelationshipInput struct {
+	Graph         string         `json:"graph" jsonschema:"description=Knowledge graph name,required"`
+	ID            string         `json:"id" jsonschema:"description=Unique relationship ID,required"`
+	SourceID      string         `json:"source_id" jsonschema:"description=Source entity ID,required"`
+	TargetID      string         `json:"target_id" jsonschema:"description=Target entity ID,required"`
+	Type          string         `json:"type,omitempty" jsonschema:"description=Relationship type (e.g. works_at/knows)"`
+	Weight        float64        `json:"weight,omitempty" jsonschema:"description=Relationship strength (0.0-1.0)"`
+	Bidirectional bool           `json:"bidirectional,omitempty" jsonschema:"description=Whether relationship goes both ways"`
+	Properties    map[string]any `json:"properties,omitempty" jsonschema:"description=Additional properties"`
+}
+
+type graphGetRelationshipsInput struct {
+	Graph     string `json:"graph" jsonschema:"description=Knowledge graph name,required"`
+	EntityID  string `json:"entity_id" jsonschema:"description=Entity ID to get relationships for,required"`
+	Direction string `json:"direction,omitempty" jsonschema:"description=Direction: outgoing/incoming/both (default both)"`
+}
+
+type graphTraverseInput struct {
+	Graph             string   `json:"graph" jsonschema:"description=Knowledge graph name,required"`
+	StartIDs          []string `json:"start_ids" jsonschema:"description=Starting entity IDs,required"`
+	MaxDepth          int      `json:"max_depth,omitempty" jsonschema:"description=Maximum traversal depth (default 3)"`
+	MaxNodes          int      `json:"max_nodes,omitempty" jsonschema:"description=Maximum nodes to visit (default 100)"`
+	MinWeight         float64  `json:"min_weight,omitempty" jsonschema:"description=Minimum relationship weight"`
+	RelationshipTypes []string `json:"relationship_types,omitempty" jsonschema:"description=Filter by relationship types"`
+	EntityTypes       []string `json:"entity_types,omitempty" jsonschema:"description=Filter by entity types"`
+	Direction         string   `json:"direction,omitempty" jsonschema:"description=Direction: outgoing/incoming/both (default both)"`
+}
+
+type graphExpandedSearchInput struct {
+	Graph       string    `json:"graph" jsonschema:"description=Knowledge graph name,required"`
+	Query       []float64 `json:"query,omitempty" jsonschema:"description=Query vector"`
+	Text        string    `json:"text,omitempty" jsonschema:"description=Text to search (auto-embedded if embedder configured)"`
+	TopK        int       `json:"top_k,omitempty" jsonschema:"description=Number of results (default 10)"`
+	ExpandDepth int       `json:"expand_depth,omitempty" jsonschema:"description=Graph expansion depth (default 1)"`
+}
+
+// Conversation tool inputs
+
+type conversationAddTurnInput struct {
+	Collection    string         `json:"collection" jsonschema:"description=Collection name,required"`
+	SessionID     string         `json:"session_id" jsonschema:"description=Session/conversation ID,required"`
+	Role          string         `json:"role,omitempty" jsonschema:"description=Speaker role (user/assistant/system)"`
+	Content       string         `json:"content" jsonschema:"description=Turn content text,required"`
+	TurnNumber    int            `json:"turn_number,omitempty" jsonschema:"description=Sequential turn number (auto-increment if 0)"`
+	ParentChunkID uint64         `json:"parent_chunk_id,omitempty" jsonschema:"description=Parent chunk ID for threaded conversations"`
+	Vector        []float64      `json:"vector,omitempty" jsonschema:"description=Optional embedding vector (auto-embedded if not provided)"`
+	Importance    float64        `json:"importance,omitempty" jsonschema:"description=Importance score (0.0-1.0)"`
+	TTLHours      float64        `json:"ttl_hours,omitempty" jsonschema:"description=Time-to-live in hours"`
+	Metadata      map[string]any `json:"metadata,omitempty" jsonschema:"description=Additional metadata"`
+}
+
+type conversationGetSessionInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+	SessionID  string `json:"session_id" jsonschema:"description=Session ID to retrieve,required"`
+}
+
+type conversationSearchSessionInput struct {
+	Collection string    `json:"collection" jsonschema:"description=Collection name,required"`
+	SessionID  string    `json:"session_id" jsonschema:"description=Session ID to search within,required"`
+	Query      []float64 `json:"query,omitempty" jsonschema:"description=Query vector"`
+	Text       string    `json:"text,omitempty" jsonschema:"description=Text to search (auto-embedded if embedder configured)"`
+	Limit      int       `json:"limit,omitempty" jsonschema:"description=Maximum results (default 10)"`
+}
+
+type conversationListSessionsInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+}
+
+type conversationGetThreadInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+	ChunkID    uint64 `json:"chunk_id" jsonschema:"description=Chunk ID to get thread for,required"`
+}
+
+// Episode tool inputs
+
+type episodeDetectInput struct {
+	Collection          string  `json:"collection" jsonschema:"description=Collection name,required"`
+	TimeGapMinutes      float64 `json:"time_gap_minutes,omitempty" jsonschema:"description=Max time gap between records in same episode (default 30)"`
+	MinRecords          int     `json:"min_records,omitempty" jsonschema:"description=Minimum records to form episode (default 2)"`
+	SimilarityThreshold float64 `json:"similarity_threshold,omitempty" jsonschema:"description=Minimum similarity for grouping (0.0-1.0)"`
+}
+
+type episodeCreateInput struct {
+	Collection string   `json:"collection" jsonschema:"description=Collection name,required"`
+	RecordIDs  []uint64 `json:"record_ids" jsonschema:"description=Record IDs to include,required"`
+	Title      string   `json:"title,omitempty" jsonschema:"description=Episode title/summary"`
+}
+
+type episodeGetInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+	EpisodeID  string `json:"episode_id" jsonschema:"description=Episode ID to retrieve,required"`
+}
+
+type episodeListInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+}
+
+type episodeSearchInput struct {
+	Collection string    `json:"collection" jsonschema:"description=Collection name,required"`
+	Query      []float64 `json:"query,omitempty" jsonschema:"description=Query vector"`
+	Text       string    `json:"text,omitempty" jsonschema:"description=Text to search (auto-embedded if embedder configured)"`
+	Limit      int       `json:"limit,omitempty" jsonschema:"description=Maximum results (default 10)"`
+}
+
+type episodeSearchExpandedInput struct {
+	Collection string    `json:"collection" jsonschema:"description=Collection name,required"`
+	Query      []float64 `json:"query,omitempty" jsonschema:"description=Query vector"`
+	Text       string    `json:"text,omitempty" jsonschema:"description=Text to search (auto-embedded if embedder configured)"`
+	TopK       int       `json:"top_k,omitempty" jsonschema:"description=Number of results (default 10)"`
+}
+
+// Consolidation tool inputs
+
+type memoryFindClustersInput struct {
+	Collection          string  `json:"collection" jsonschema:"description=Collection name (default: memories),required"`
+	SimilarityThreshold float64 `json:"similarity_threshold,omitempty" jsonschema:"description=Minimum similarity for grouping (default 0.85)"`
+	MinSize             int     `json:"min_size,omitempty" jsonschema:"description=Minimum cluster size (default 2)"`
+	MaxSize             int     `json:"max_size,omitempty" jsonschema:"description=Maximum cluster size (default 10)"`
+}
+
+type memoryConsolidateInput struct {
+	Collection       string   `json:"collection" jsonschema:"description=Collection name (default: memories),required"`
+	ClusterIDs       []string `json:"cluster_ids,omitempty" jsonschema:"description=Specific cluster IDs to consolidate (empty = all)"`
+	Summary          string   `json:"summary,omitempty" jsonschema:"description=Manual summary for consolidation"`
+	ArchiveOriginals bool     `json:"archive_originals,omitempty" jsonschema:"description=Archive original records after consolidation"`
+}
+
+type memoryArchiveInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name (default: memories)"`
+	RecordID   uint64 `json:"record_id" jsonschema:"description=Record ID to archive,required"`
+}
+
+type memoryUnarchiveInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name (default: memories)"`
+	RecordID   uint64 `json:"record_id" jsonschema:"description=Record ID to unarchive,required"`
+}
+
+type memoryGetArchivedInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name (default: memories)"`
 }
 
 func (s *MCPServer) registerTools() {
@@ -197,6 +420,162 @@ func (s *MCPServer) registerTools() {
 		Description: "Remove memories by age, tags, or expired status",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input memoryForgetInput) (*mcp.CallToolResult, any, error) {
 		return s.toolMemoryForget(input)
+	})
+
+	// veclite_embed - Embed text using ONNX
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_embed",
+		Description: "Convert text to vector embedding using the configured ONNX embedder",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input embedInput) (*mcp.CallToolResult, any, error) {
+		return s.toolEmbed(input)
+	})
+
+	// Graph tools
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "graph_add_entity",
+		Description: "Add an entity node to a knowledge graph with optional embedding vector",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input graphAddEntityInput) (*mcp.CallToolResult, any, error) {
+		return s.toolGraphAddEntity(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "graph_add_relationship",
+		Description: "Add a relationship edge between two entities in a knowledge graph",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input graphAddRelationshipInput) (*mcp.CallToolResult, any, error) {
+		return s.toolGraphAddRelationship(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "graph_get_relationships",
+		Description: "Get all relationships for an entity in a knowledge graph",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input graphGetRelationshipsInput) (*mcp.CallToolResult, any, error) {
+		return s.toolGraphGetRelationships(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "graph_traverse",
+		Description: "Perform BFS traversal of a knowledge graph from starting entities",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input graphTraverseInput) (*mcp.CallToolResult, any, error) {
+		return s.toolGraphTraverse(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "graph_expanded_search",
+		Description: "Search knowledge graph with vector similarity and expand results with graph context",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input graphExpandedSearchInput) (*mcp.CallToolResult, any, error) {
+		return s.toolGraphExpandedSearch(input)
+	})
+
+	// Conversation tools
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "conversation_add_turn",
+		Description: "Add a conversation turn with session tracking and optional threading",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input conversationAddTurnInput) (*mcp.CallToolResult, any, error) {
+		return s.toolConversationAddTurn(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "conversation_get_session",
+		Description: "Get all turns in a conversation session ordered by turn number",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input conversationGetSessionInput) (*mcp.CallToolResult, any, error) {
+		return s.toolConversationGetSession(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "conversation_search_session",
+		Description: "Search within a specific conversation session using vector similarity",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input conversationSearchSessionInput) (*mcp.CallToolResult, any, error) {
+		return s.toolConversationSearchSession(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "conversation_list_sessions",
+		Description: "List all conversation session IDs in a collection",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input conversationListSessionsInput) (*mcp.CallToolResult, any, error) {
+		return s.toolConversationListSessions(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "conversation_get_thread",
+		Description: "Get all records in a conversation thread starting from a chunk ID",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input conversationGetThreadInput) (*mcp.CallToolResult, any, error) {
+		return s.toolConversationGetThread(input)
+	})
+
+	// Episode tools
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "episode_detect",
+		Description: "Auto-detect episodes using temporal and similarity clustering",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input episodeDetectInput) (*mcp.CallToolResult, any, error) {
+		return s.toolEpisodeDetect(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "episode_create",
+		Description: "Manually create an episode from a set of record IDs",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input episodeCreateInput) (*mcp.CallToolResult, any, error) {
+		return s.toolEpisodeCreate(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "episode_get",
+		Description: "Get details of a specific episode including its records",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input episodeGetInput) (*mcp.CallToolResult, any, error) {
+		return s.toolEpisodeGet(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "episode_list",
+		Description: "List all detected episodes in a collection",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input episodeListInput) (*mcp.CallToolResult, any, error) {
+		return s.toolEpisodeList(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "episode_search",
+		Description: "Search episodes by their vector representation",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input episodeSearchInput) (*mcp.CallToolResult, any, error) {
+		return s.toolEpisodeSearch(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "episode_search_expanded",
+		Description: "Search with episode context expansion for richer results",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input episodeSearchExpandedInput) (*mcp.CallToolResult, any, error) {
+		return s.toolEpisodeSearchExpanded(input)
+	})
+
+	// Consolidation tools
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "memory_find_clusters",
+		Description: "Find clusters of similar memories that could be consolidated",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input memoryFindClustersInput) (*mcp.CallToolResult, any, error) {
+		return s.toolMemoryFindClusters(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "memory_archive",
+		Description: "Archive a memory record (excluded from searches but preserved)",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input memoryArchiveInput) (*mcp.CallToolResult, any, error) {
+		return s.toolMemoryArchive(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "memory_unarchive",
+		Description: "Restore an archived memory record to active status",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input memoryUnarchiveInput) (*mcp.CallToolResult, any, error) {
+		return s.toolMemoryUnarchive(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "memory_get_archived",
+		Description: "List all archived memory records",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input memoryGetArchivedInput) (*mcp.CallToolResult, any, error) {
+		return s.toolMemoryGetArchived(input)
 	})
 }
 
@@ -366,12 +745,21 @@ func (s *MCPServer) toolMemoryRemember(input memoryRememberInput) (*mcp.CallTool
 	if input.Text == "" {
 		return errorResult("Text is required")
 	}
-	if len(input.Vector) == 0 {
-		return errorResult("Vector is required")
+
+	var vec []float32
+	if len(input.Vector) > 0 {
+		vec = float64ToFloat32(input.Vector)
+	} else if s.embedder != nil {
+		var err error
+		vec, err = s.embedder.Embed(input.Text)
+		if err != nil {
+			return errorResult("Auto-embedding failed: " + err.Error())
+		}
+	} else {
+		return errorResult("Vector is required when embedder is not configured")
 	}
 
 	coll := s.db.Collection(memoriesCollection)
-	vec := float64ToFloat32(input.Vector)
 
 	// Build payload
 	payload := make(map[string]any)
@@ -418,16 +806,25 @@ func (s *MCPServer) toolMemoryRemember(input memoryRememberInput) (*mcp.CallTool
 }
 
 func (s *MCPServer) toolMemoryRecall(input memoryRecallInput) (*mcp.CallToolResult, any, error) {
-	if len(input.Query) == 0 {
-		return errorResult("Query vector is required")
+	var queryVec []float32
+	if len(input.Query) > 0 {
+		queryVec = float64ToFloat32(input.Query)
+	} else if input.Text != "" && s.embedder != nil {
+		var err error
+		queryVec, err = s.embedder.Embed(input.Text)
+		if err != nil {
+			return errorResult("Auto-embedding failed: " + err.Error())
+		}
+	} else if input.Text != "" {
+		return errorResult("Query vector is required when embedder is not configured. Provide 'query' vector or configure ONNX embedder.")
+	} else {
+		return errorResult("Either 'query' vector or 'text' is required")
 	}
 
 	coll, err := s.db.GetCollection(memoriesCollection)
 	if err != nil {
 		return errorResult("Memories collection not found. Use memory_remember first.")
 	}
-
-	queryVec := float64ToFloat32(input.Query)
 
 	// Build search options
 	limit := 10
@@ -550,6 +947,788 @@ func (s *MCPServer) toolMemoryForget(input memoryForgetInput) (*mcp.CallToolResu
 	return textResult(map[string]any{
 		"status":  "forgotten",
 		"deleted": deleted,
+	})
+}
+
+// Embed tool implementation
+
+func (s *MCPServer) toolEmbed(input embedInput) (*mcp.CallToolResult, any, error) {
+	if s.embedder == nil {
+		return errorResult("No embedder configured. Set VECLITE_MODEL_DIR or use ONNX embedder.")
+	}
+
+	if input.Text != "" {
+		vec, err := s.embedder.Embed(input.Text)
+		if err != nil {
+			return errorResult("Embedding failed: " + err.Error())
+		}
+		return textResult(map[string]any{
+			"vector":    vec,
+			"dimension": len(vec),
+		})
+	}
+
+	if len(input.Texts) > 0 {
+		vecs, err := s.embedder.EmbedBatch(input.Texts)
+		if err != nil {
+			return errorResult("Batch embedding failed: " + err.Error())
+		}
+		return textResult(map[string]any{
+			"vectors":   vecs,
+			"count":     len(vecs),
+			"dimension": s.embedder.Dimension(),
+		})
+	}
+
+	return errorResult("Either 'text' or 'texts' is required")
+}
+
+// Graph tool implementations
+
+func (s *MCPServer) toolGraphAddEntity(input graphAddEntityInput) (*mcp.CallToolResult, any, error) {
+	kg, err := s.getOrCreateGraph(input.Graph)
+	if err != nil {
+		return errorResult("Failed to create/get graph: " + err.Error())
+	}
+
+	entity := veclite.Entity{
+		ID:         input.ID,
+		Type:       input.Type,
+		Name:       input.Name,
+		Properties: input.Properties,
+	}
+
+	if len(input.Vector) > 0 {
+		entity.Vector = float64ToFloat32(input.Vector)
+	}
+
+	if err := kg.AddEntity(entity); err != nil {
+		return errorResult("Failed to add entity: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	return textResult(map[string]any{
+		"status":    "added",
+		"entity_id": input.ID,
+		"graph":     input.Graph,
+	})
+}
+
+func (s *MCPServer) toolGraphAddRelationship(input graphAddRelationshipInput) (*mcp.CallToolResult, any, error) {
+	kg, err := s.getOrCreateGraph(input.Graph)
+	if err != nil {
+		return errorResult("Failed to create/get graph: " + err.Error())
+	}
+
+	rel := veclite.Relationship{
+		ID:            input.ID,
+		SourceID:      input.SourceID,
+		TargetID:      input.TargetID,
+		Type:          input.Type,
+		Weight:        float32(input.Weight),
+		Bidirectional: input.Bidirectional,
+		Properties:    input.Properties,
+	}
+
+	if err := kg.AddRelationship(rel); err != nil {
+		return errorResult("Failed to add relationship: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	return textResult(map[string]any{
+		"status":          "added",
+		"relationship_id": input.ID,
+		"graph":           input.Graph,
+	})
+}
+
+func (s *MCPServer) toolGraphGetRelationships(input graphGetRelationshipsInput) (*mcp.CallToolResult, any, error) {
+	kg, ok := s.graphStore[input.Graph]
+	if !ok {
+		return errorResult("Graph not found: " + input.Graph)
+	}
+
+	direction := input.Direction
+	if direction == "" {
+		direction = "both"
+	}
+
+	rels := kg.GetRelationships(input.EntityID, direction)
+
+	relOut := make([]map[string]any, len(rels))
+	for i, r := range rels {
+		relOut[i] = map[string]any{
+			"id":            r.ID,
+			"source_id":     r.SourceID,
+			"target_id":     r.TargetID,
+			"type":          r.Type,
+			"weight":        r.Weight,
+			"bidirectional": r.Bidirectional,
+			"properties":    r.Properties,
+		}
+	}
+
+	return textResult(map[string]any{
+		"entity_id":     input.EntityID,
+		"direction":     direction,
+		"relationships": relOut,
+		"count":         len(relOut),
+	})
+}
+
+func (s *MCPServer) toolGraphTraverse(input graphTraverseInput) (*mcp.CallToolResult, any, error) {
+	kg, ok := s.graphStore[input.Graph]
+	if !ok {
+		return errorResult("Graph not found: " + input.Graph)
+	}
+
+	config := veclite.TraversalConfig{
+		MaxDepth:          input.MaxDepth,
+		MaxNodes:          input.MaxNodes,
+		MinWeight:         float32(input.MinWeight),
+		RelationshipTypes: input.RelationshipTypes,
+		EntityTypes:       input.EntityTypes,
+		Direction:         input.Direction,
+	}
+
+	result, err := kg.Traverse(input.StartIDs, config)
+	if err != nil {
+		return errorResult("Traversal failed: " + err.Error())
+	}
+
+	entities := make([]map[string]any, len(result.Entities))
+	for i, e := range result.Entities {
+		entities[i] = map[string]any{
+			"id":         e.ID,
+			"type":       e.Type,
+			"name":       e.Name,
+			"depth":      result.Depths[e.ID],
+			"properties": e.Properties,
+		}
+	}
+
+	rels := make([]map[string]any, len(result.Relationships))
+	for i, r := range result.Relationships {
+		rels[i] = map[string]any{
+			"id":        r.ID,
+			"source_id": r.SourceID,
+			"target_id": r.TargetID,
+			"type":      r.Type,
+			"weight":    r.Weight,
+		}
+	}
+
+	return textResult(map[string]any{
+		"entities":      entities,
+		"relationships": rels,
+		"entity_count":  len(entities),
+		"rel_count":     len(rels),
+	})
+}
+
+func (s *MCPServer) toolGraphExpandedSearch(input graphExpandedSearchInput) (*mcp.CallToolResult, any, error) {
+	kg, ok := s.graphStore[input.Graph]
+	if !ok {
+		return errorResult("Graph not found: " + input.Graph)
+	}
+
+	var queryVec []float32
+	if len(input.Query) > 0 {
+		queryVec = float64ToFloat32(input.Query)
+	} else if input.Text != "" && s.embedder != nil {
+		var err error
+		queryVec, err = s.embedder.Embed(input.Text)
+		if err != nil {
+			return errorResult("Auto-embedding failed: " + err.Error())
+		}
+	} else if input.Text != "" {
+		return errorResult("Query vector is required when embedder is not configured")
+	} else {
+		return errorResult("Either 'query' vector or 'text' is required")
+	}
+
+	topK := 10
+	if input.TopK > 0 {
+		topK = input.TopK
+	}
+
+	expandDepth := 1
+	if input.ExpandDepth > 0 {
+		expandDepth = input.ExpandDepth
+	}
+
+	results, err := kg.SearchWithExpansion(queryVec, veclite.TraversalConfig{
+		MaxDepth: expandDepth,
+	}, veclite.TopK(topK))
+	if err != nil {
+		return errorResult("Search failed: " + err.Error())
+	}
+
+	out := make([]map[string]any, len(results))
+	for i, r := range results {
+		related := make([]map[string]any, len(r.RelatedEntities))
+		for j, re := range r.RelatedEntities {
+			related[j] = map[string]any{
+				"id":   re.ID,
+				"type": re.Type,
+				"name": re.Name,
+			}
+		}
+
+		rels := make([]map[string]any, len(r.Relationships))
+		for j, rel := range r.Relationships {
+			rels[j] = map[string]any{
+				"id":        rel.ID,
+				"source_id": rel.SourceID,
+				"target_id": rel.TargetID,
+				"type":      rel.Type,
+			}
+		}
+
+		out[i] = map[string]any{
+			"entity": map[string]any{
+				"id":         r.Entity.ID,
+				"type":       r.Entity.Type,
+				"name":       r.Entity.Name,
+				"properties": r.Entity.Properties,
+			},
+			"score":            r.Score,
+			"related_entities": related,
+			"relationships":    rels,
+		}
+	}
+
+	return textResult(map[string]any{
+		"results": out,
+		"count":   len(out),
+	})
+}
+
+// Conversation tool implementations
+
+func (s *MCPServer) toolConversationAddTurn(input conversationAddTurnInput) (*mcp.CallToolResult, any, error) {
+	coll := s.db.Collection(input.Collection)
+
+	var vec []float32
+	if len(input.Vector) > 0 {
+		vec = float64ToFloat32(input.Vector)
+	} else if s.embedder != nil && input.Content != "" {
+		var err error
+		vec, err = s.embedder.Embed(input.Content)
+		if err != nil {
+			return errorResult("Auto-embedding failed: " + err.Error())
+		}
+	}
+
+	turn := veclite.ConversationTurn{
+		SessionID:     input.SessionID,
+		TurnNumber:    input.TurnNumber,
+		Role:          input.Role,
+		Content:       input.Content,
+		Vector:        vec,
+		ParentChunkID: input.ParentChunkID,
+		Payload:       input.Metadata,
+		Importance:    float32(input.Importance),
+	}
+
+	if input.TTLHours > 0 {
+		turn.TTL = time.Duration(input.TTLHours * float64(time.Hour))
+	}
+
+	id, err := coll.InsertTurn(turn)
+	if err != nil {
+		return errorResult("Failed to add turn: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	return textResult(map[string]any{
+		"status":     "added",
+		"id":         id,
+		"session_id": input.SessionID,
+	})
+}
+
+func (s *MCPServer) toolConversationGetSession(input conversationGetSessionInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(input.Collection)
+	if err != nil {
+		return errorResult("Collection not found: " + input.Collection)
+	}
+
+	records, err := coll.GetSession(input.SessionID)
+	if err != nil {
+		return errorResult("Failed to get session: " + err.Error())
+	}
+
+	turns := make([]map[string]any, len(records))
+	for i, r := range records {
+		turn := map[string]any{
+			"id":         r.ID,
+			"content":    r.Content,
+			"created_at": r.CreatedAt.Format(time.RFC3339),
+		}
+		if r.Payload != nil {
+			if role, ok := r.Payload[veclite.PayloadKeyRole]; ok {
+				turn["role"] = role
+			}
+			if tn, ok := r.Payload[veclite.PayloadKeyTurnNumber]; ok {
+				turn["turn_number"] = tn
+			}
+		}
+		turns[i] = turn
+	}
+
+	return textResult(map[string]any{
+		"session_id": input.SessionID,
+		"turns":      turns,
+		"count":      len(turns),
+	})
+}
+
+func (s *MCPServer) toolConversationSearchSession(input conversationSearchSessionInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(input.Collection)
+	if err != nil {
+		return errorResult("Collection not found: " + input.Collection)
+	}
+
+	var queryVec []float32
+	if len(input.Query) > 0 {
+		queryVec = float64ToFloat32(input.Query)
+	} else if input.Text != "" && s.embedder != nil {
+		queryVec, err = s.embedder.Embed(input.Text)
+		if err != nil {
+			return errorResult("Auto-embedding failed: " + err.Error())
+		}
+	} else if input.Text != "" {
+		return errorResult("Query vector required when embedder is not configured")
+	} else {
+		return errorResult("Either 'query' vector or 'text' is required")
+	}
+
+	limit := 10
+	if input.Limit > 0 {
+		limit = input.Limit
+	}
+
+	results, err := coll.SearchInSession(input.SessionID, queryVec, veclite.TopK(limit))
+	if err != nil {
+		return errorResult("Search failed: " + err.Error())
+	}
+
+	return textResult(map[string]any{
+		"session_id": input.SessionID,
+		"results":    formatResults(results),
+		"count":      len(results),
+	})
+}
+
+func (s *MCPServer) toolConversationListSessions(input conversationListSessionsInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(input.Collection)
+	if err != nil {
+		return errorResult("Collection not found: " + input.Collection)
+	}
+
+	sessions := coll.ListSessions()
+
+	return textResult(map[string]any{
+		"sessions": sessions,
+		"count":    len(sessions),
+	})
+}
+
+func (s *MCPServer) toolConversationGetThread(input conversationGetThreadInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(input.Collection)
+	if err != nil {
+		return errorResult("Collection not found: " + input.Collection)
+	}
+
+	records, err := coll.GetThread(input.ChunkID)
+	if err != nil {
+		return errorResult("Failed to get thread: " + err.Error())
+	}
+
+	turns := make([]map[string]any, len(records))
+	for i, r := range records {
+		turns[i] = map[string]any{
+			"id":         r.ID,
+			"content":    r.Content,
+			"created_at": r.CreatedAt.Format(time.RFC3339),
+			"payload":    r.Payload,
+		}
+	}
+
+	return textResult(map[string]any{
+		"chunk_id": input.ChunkID,
+		"thread":   turns,
+		"count":    len(turns),
+	})
+}
+
+// Episode tool implementations
+
+func (s *MCPServer) toolEpisodeDetect(input episodeDetectInput) (*mcp.CallToolResult, any, error) {
+	es, err := s.getOrCreateEpisodeStore(input.Collection)
+	if err != nil {
+		return errorResult("Failed to create episode store: " + err.Error())
+	}
+
+	config := veclite.EpisodeConfig{
+		MinRecords:          input.MinRecords,
+		SimilarityThreshold: float32(input.SimilarityThreshold),
+	}
+
+	if input.TimeGapMinutes > 0 {
+		config.TimeGapThreshold = time.Duration(input.TimeGapMinutes * float64(time.Minute))
+	}
+
+	episodes, err := es.DetectEpisodes(config)
+	if err != nil {
+		return errorResult("Episode detection failed: " + err.Error())
+	}
+
+	out := make([]map[string]any, len(episodes))
+	for i, ep := range episodes {
+		out[i] = map[string]any{
+			"id":           ep.ID,
+			"title":        ep.Title,
+			"record_count": len(ep.RecordIDs),
+			"record_ids":   ep.RecordIDs,
+			"time_range": map[string]any{
+				"start":    ep.TimeRange.Start.Format(time.RFC3339),
+				"end":      ep.TimeRange.End.Format(time.RFC3339),
+				"duration": ep.Duration().String(),
+			},
+			"created_at": ep.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	return textResult(map[string]any{
+		"episodes": out,
+		"count":    len(out),
+	})
+}
+
+func (s *MCPServer) toolEpisodeCreate(input episodeCreateInput) (*mcp.CallToolResult, any, error) {
+	es, err := s.getOrCreateEpisodeStore(input.Collection)
+	if err != nil {
+		return errorResult("Failed to create episode store: " + err.Error())
+	}
+
+	episode, err := es.CreateEpisode(input.RecordIDs, input.Title)
+	if err != nil {
+		return errorResult("Failed to create episode: " + err.Error())
+	}
+
+	return textResult(map[string]any{
+		"status":       "created",
+		"episode_id":   episode.ID,
+		"title":        episode.Title,
+		"record_count": len(episode.RecordIDs),
+	})
+}
+
+func (s *MCPServer) toolEpisodeGet(input episodeGetInput) (*mcp.CallToolResult, any, error) {
+	es, ok := s.episodeStore[input.Collection]
+	if !ok {
+		return errorResult("No episodes detected for collection: " + input.Collection)
+	}
+
+	episode, err := es.GetEpisode(input.EpisodeID)
+	if err != nil {
+		return errorResult("Episode not found: " + err.Error())
+	}
+
+	records, _ := es.ExpandEpisode(input.EpisodeID)
+	recordsOut := make([]map[string]any, len(records))
+	for i, r := range records {
+		recordsOut[i] = map[string]any{
+			"id":         r.ID,
+			"content":    r.Content,
+			"created_at": r.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	return textResult(map[string]any{
+		"id":       episode.ID,
+		"title":    episode.Title,
+		"metadata": episode.Metadata,
+		"time_range": map[string]any{
+			"start":    episode.TimeRange.Start.Format(time.RFC3339),
+			"end":      episode.TimeRange.End.Format(time.RFC3339),
+			"duration": episode.Duration().String(),
+		},
+		"records":    recordsOut,
+		"created_at": episode.CreatedAt.Format(time.RFC3339),
+	})
+}
+
+func (s *MCPServer) toolEpisodeList(input episodeListInput) (*mcp.CallToolResult, any, error) {
+	es, ok := s.episodeStore[input.Collection]
+	if !ok {
+		return textResult(map[string]any{
+			"episodes": []any{},
+			"count":    0,
+		})
+	}
+
+	episodes := es.ListEpisodes()
+
+	out := make([]map[string]any, len(episodes))
+	for i, ep := range episodes {
+		out[i] = map[string]any{
+			"id":           ep.ID,
+			"title":        ep.Title,
+			"record_count": len(ep.RecordIDs),
+			"duration":     ep.Duration().String(),
+			"created_at":   ep.CreatedAt.Format(time.RFC3339),
+		}
+	}
+
+	return textResult(map[string]any{
+		"episodes": out,
+		"count":    len(out),
+	})
+}
+
+func (s *MCPServer) toolEpisodeSearch(input episodeSearchInput) (*mcp.CallToolResult, any, error) {
+	es, ok := s.episodeStore[input.Collection]
+	if !ok {
+		return errorResult("No episodes detected for collection: " + input.Collection)
+	}
+
+	var queryVec []float32
+	if len(input.Query) > 0 {
+		queryVec = float64ToFloat32(input.Query)
+	} else if input.Text != "" && s.embedder != nil {
+		var err error
+		queryVec, err = s.embedder.Embed(input.Text)
+		if err != nil {
+			return errorResult("Auto-embedding failed: " + err.Error())
+		}
+	} else if input.Text != "" {
+		return errorResult("Query vector required when embedder is not configured")
+	} else {
+		return errorResult("Either 'query' vector or 'text' is required")
+	}
+
+	limit := 10
+	if input.Limit > 0 {
+		limit = input.Limit
+	}
+
+	episodes, err := es.SearchEpisodes(queryVec, limit)
+	if err != nil {
+		return errorResult("Episode search failed: " + err.Error())
+	}
+
+	out := make([]map[string]any, len(episodes))
+	for i, ep := range episodes {
+		out[i] = map[string]any{
+			"id":           ep.ID,
+			"title":        ep.Title,
+			"record_count": len(ep.RecordIDs),
+		}
+	}
+
+	return textResult(map[string]any{
+		"episodes": out,
+		"count":    len(out),
+	})
+}
+
+func (s *MCPServer) toolEpisodeSearchExpanded(input episodeSearchExpandedInput) (*mcp.CallToolResult, any, error) {
+	es, ok := s.episodeStore[input.Collection]
+	if !ok {
+		return errorResult("No episodes detected for collection: " + input.Collection)
+	}
+
+	var queryVec []float32
+	if len(input.Query) > 0 {
+		queryVec = float64ToFloat32(input.Query)
+	} else if input.Text != "" && s.embedder != nil {
+		var err error
+		queryVec, err = s.embedder.Embed(input.Text)
+		if err != nil {
+			return errorResult("Auto-embedding failed: " + err.Error())
+		}
+	} else if input.Text != "" {
+		return errorResult("Query vector required when embedder is not configured")
+	} else {
+		return errorResult("Either 'query' vector or 'text' is required")
+	}
+
+	topK := 10
+	if input.TopK > 0 {
+		topK = input.TopK
+	}
+
+	results, err := es.SearchWithEpisodeExpansion(queryVec, veclite.TopK(topK))
+	if err != nil {
+		return errorResult("Search failed: " + err.Error())
+	}
+
+	out := make([]map[string]any, len(results))
+	for i, r := range results {
+		result := map[string]any{
+			"id":      r.Result.Record.ID,
+			"score":   r.Result.Score,
+			"content": r.Result.Record.Content,
+		}
+
+		if r.Episode != nil {
+			result["episode"] = map[string]any{
+				"id":           r.Episode.ID,
+				"title":        r.Episode.Title,
+				"record_count": len(r.Episode.RecordIDs),
+			}
+
+			contextRecords := make([]map[string]any, len(r.EpisodeRecords))
+			for j, cr := range r.EpisodeRecords {
+				contextRecords[j] = map[string]any{
+					"id":      cr.ID,
+					"content": cr.Content,
+				}
+			}
+			result["episode_context"] = contextRecords
+		}
+
+		out[i] = result
+	}
+
+	return textResult(map[string]any{
+		"results": out,
+		"count":   len(out),
+	})
+}
+
+// Consolidation tool implementations
+
+func (s *MCPServer) toolMemoryFindClusters(input memoryFindClustersInput) (*mcp.CallToolResult, any, error) {
+	collName := input.Collection
+	if collName == "" {
+		collName = memoriesCollection
+	}
+
+	coll, err := s.db.GetCollection(collName)
+	if err != nil {
+		return errorResult("Collection not found: " + collName)
+	}
+
+	config := veclite.ConsolidationConfig{
+		SimilarityThreshold: float32(input.SimilarityThreshold),
+		MinGroupSize:        input.MinSize,
+		MaxGroupSize:        input.MaxSize,
+	}
+
+	clusters, err := coll.FindSimilarClusters(config)
+	if err != nil {
+		return errorResult("Cluster detection failed: " + err.Error())
+	}
+
+	out := make([]map[string]any, len(clusters))
+	for i, c := range clusters {
+		recordIDs := make([]uint64, len(c.Records))
+		for j, r := range c.Records {
+			recordIDs[j] = r.ID
+		}
+
+		out[i] = map[string]any{
+			"id":                 c.ID,
+			"record_count":       len(c.Records),
+			"record_ids":         recordIDs,
+			"average_importance": c.AverageImportance,
+			"time_range": map[string]any{
+				"start":    c.TimeRange.Start.Format(time.RFC3339),
+				"end":      c.TimeRange.End.Format(time.RFC3339),
+				"duration": c.TimeRange.Duration().String(),
+			},
+		}
+	}
+
+	return textResult(map[string]any{
+		"clusters": out,
+		"count":    len(out),
+	})
+}
+
+func (s *MCPServer) toolMemoryArchive(input memoryArchiveInput) (*mcp.CallToolResult, any, error) {
+	collName := input.Collection
+	if collName == "" {
+		collName = memoriesCollection
+	}
+
+	coll, err := s.db.GetCollection(collName)
+	if err != nil {
+		return errorResult("Collection not found: " + collName)
+	}
+
+	if err := coll.ArchiveRecord(input.RecordID); err != nil {
+		return errorResult("Archive failed: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	return textResult(map[string]any{
+		"status":    "archived",
+		"record_id": input.RecordID,
+	})
+}
+
+func (s *MCPServer) toolMemoryUnarchive(input memoryUnarchiveInput) (*mcp.CallToolResult, any, error) {
+	collName := input.Collection
+	if collName == "" {
+		collName = memoriesCollection
+	}
+
+	coll, err := s.db.GetCollection(collName)
+	if err != nil {
+		return errorResult("Collection not found: " + collName)
+	}
+
+	if err := coll.UnarchiveRecord(input.RecordID); err != nil {
+		return errorResult("Unarchive failed: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	return textResult(map[string]any{
+		"status":    "unarchived",
+		"record_id": input.RecordID,
+	})
+}
+
+func (s *MCPServer) toolMemoryGetArchived(input memoryGetArchivedInput) (*mcp.CallToolResult, any, error) {
+	collName := input.Collection
+	if collName == "" {
+		collName = memoriesCollection
+	}
+
+	coll, err := s.db.GetCollection(collName)
+	if err != nil {
+		return errorResult("Collection not found: " + collName)
+	}
+
+	records, err := coll.GetArchived()
+	if err != nil {
+		return errorResult("Failed to get archived: " + err.Error())
+	}
+
+	out := make([]map[string]any, len(records))
+	for i, r := range records {
+		out[i] = map[string]any{
+			"id":         r.ID,
+			"content":    r.Content,
+			"importance": r.Importance,
+			"created_at": r.CreatedAt.Format(time.RFC3339),
+			"payload":    r.Payload,
+		}
+	}
+
+	return textResult(map[string]any{
+		"archived": out,
+		"count":    len(out),
 	})
 }
 

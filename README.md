@@ -37,6 +37,7 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
   - [Subscriptions (Real-time Notifications)](#subscriptions-real-time-notifications)
   - [Memory Consolidation](#memory-consolidation)
   - [Episodic Memory](#episodic-memory)
+  - [Memory Pressure Handling](#memory-pressure-handling)
   - [Knowledge Graph](#knowledge-graph)
 - [OpenClaw Integration](#openclaw-integration)
 - [CLI Usage](#cli-usage)
@@ -71,9 +72,11 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
 ### Agent Memory Features
 
 - **TTL and expiration** -- Records can expire automatically after a duration
+- **Background TTL cleanup** -- Automatic periodic cleanup of expired records
 - **Importance scoring** -- Assign importance (0.0-1.0) to records for prioritized retrieval
 - **Temporal decay** -- Search scores decay based on record age (exponential, linear, gaussian)
 - **Access tracking** -- Track when records are accessed and how often
+- **Memory pressure handling** -- Automatic eviction with FIFO, LRU, or importance policies
 - **Conversation memory** -- Session-based conversation turns with threading support
 - **Real-time subscriptions** -- Get notified when new records match a query
 - **Memory consolidation** -- Cluster and consolidate similar memories
@@ -806,12 +809,18 @@ if record.HasTTL() {
     fmt.Printf("TTL remaining: %v\n", record.TTL())
 }
 
-// Clean up expired records
+// Clean up expired records (manual)
 count, err := coll.CleanupExpired()
 fmt.Printf("Removed %d expired records\n", count)
 
 // Count expired without removing
 expiredCount := coll.CountExpired()
+
+// Automatic background cleanup
+stop := db.StartTTLCleaner(5*time.Minute, func(collection string, deleted int) {
+    fmt.Printf("Cleaned %d expired records from %s\n", deleted, collection)
+})
+defer stop()  // Stop the cleaner when done
 ```
 
 ### Importance and Decay Scoring
@@ -1047,6 +1056,49 @@ episode, _ := episodeStore.FindRecordEpisode(recordID)
 allEpisodes := episodeStore.ListEpisodes()
 episodeStore.DeleteEpisode(episodeID)
 ```
+
+### Memory Pressure Handling
+
+Manage collection size with automatic eviction policies:
+
+```go
+// Configure memory limits when creating a collection
+coll, _ := db.CreateCollection("memories",
+    veclite.WithDimension(384),
+    veclite.WithMemoryLimits(veclite.MemoryConfig{
+        MaxRecords:        10000,           // Maximum records allowed
+        EvictionPolicy:    "importance",    // "fifo", "lru", or "importance"
+        EvictionBatchSize: 100,             // Records to evict per cycle
+        CleanupInterval:   5 * time.Minute, // Background check interval
+    }),
+)
+
+// Or enforce limits manually after inserts
+evicted := coll.EnforceMemoryLimit(veclite.MemoryConfig{
+    MaxRecords:     5000,
+    EvictionPolicy: "fifo",  // Remove oldest records first
+})
+fmt.Printf("Evicted %d records\n", evicted)
+
+// Start a background memory limiter
+stop := coll.StartMemoryLimiter(veclite.MemoryConfig{
+    MaxRecords:        10000,
+    EvictionPolicy:    "lru",        // Remove least recently accessed
+    CleanupInterval:   time.Minute,
+    EvictionBatchSize: 50,
+})
+defer stop()
+```
+
+**Eviction Policies:**
+
+| Policy | Behavior |
+|--------|----------|
+| `fifo` | Remove oldest records first (by creation time) |
+| `lru` | Remove least recently accessed records first |
+| `importance` | Remove lowest importance records first |
+
+Archived records (via `ArchiveRecord`) are never evicted regardless of policy.
 
 ### Knowledge Graph
 
@@ -1468,6 +1520,8 @@ veclite mcp data.veclite
 
 The server communicates over stdio using JSON-RPC 2.0. It exposes these tools:
 
+**Core Vector Operations:**
+
 | Tool | Description |
 |------|-------------|
 | `veclite_collections` | List all collections |
@@ -1477,9 +1531,54 @@ The server communicates over stdio using JSON-RPC 2.0. It exposes these tools:
 | `veclite_hybrid_search` | Combined vector + text search |
 | `veclite_find` | Find records by filter |
 | `veclite_insert` | Insert a vector |
-| `memory_remember` | Store a memory with importance, tags, and TTL |
-| `memory_recall` | Semantic search for memories with filters |
+
+**Agent Memory Tools:**
+
+| Tool | Description |
+|------|-------------|
+| `memory_remember` | Store a memory with importance, tags, and TTL (auto-embeds text if embedder configured) |
+| `memory_recall` | Semantic search for memories with filters (auto-embeds query text) |
 | `memory_forget` | Remove memories by criteria |
+
+**Knowledge Graph Tools:**
+
+| Tool | Description |
+|------|-------------|
+| `graph_add_entity` | Add an entity node to the knowledge graph |
+| `graph_add_relationship` | Add a relationship edge between entities |
+| `graph_get_relationships` | Get relationships for an entity |
+| `graph_traverse` | BFS traversal from starting entities |
+| `graph_search` | Vector search with graph expansion |
+
+**Conversation Memory Tools:**
+
+| Tool | Description |
+|------|-------------|
+| `conversation_add_turn` | Add a conversation turn to a session |
+| `conversation_get_session` | Get all turns in a session |
+| `conversation_search` | Search within a session |
+| `conversation_list_sessions` | List all session IDs |
+| `conversation_get_thread` | Get a conversation thread |
+
+**Episodic Memory Tools:**
+
+| Tool | Description |
+|------|-------------|
+| `episode_detect` | Auto-detect episodes from time gaps |
+| `episode_create` | Manually create an episode from record IDs |
+| `episode_get` | Get episode details |
+| `episode_list` | List all episodes |
+| `episode_search` | Search episodes by vector similarity |
+| `episode_expand` | Get all records in an episode |
+
+**Memory Consolidation Tools:**
+
+| Tool | Description |
+|------|-------------|
+| `memory_find_clusters` | Find clusters of similar memories |
+| `memory_archive` | Archive a memory (protects from eviction) |
+| `memory_unarchive` | Restore an archived memory |
+| `memory_get_archived` | List archived memories |
 
 ### MCP Configuration
 

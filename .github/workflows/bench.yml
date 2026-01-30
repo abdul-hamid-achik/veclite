@@ -1,0 +1,83 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Run benchmarks
+        run: go test -bench=. -benchmem -count=3 -run=^$ ./... | tee benchmark.txt
+
+      - name: Download previous benchmark data
+        uses: actions/cache@v4
+        with:
+          path: ./cache
+          key: ${{ runner.os }}-benchmark
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: "go"
+          output-file-path: benchmark.txt
+          external-data-json-path: ./cache/benchmark-data.json
+          fail-on-alert: false
+          alert-threshold: "150%"
+          comment-on-alert: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: false
+
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmark.txt
+          retention-days: 30
+
+  benchmark-comparison:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - name: Run benchmarks on PR branch
+        run: go test -bench=. -benchmem -count=5 -run=^$ ./... > new.txt
+
+      - name: Checkout base branch
+        run: git checkout ${{ github.event.pull_request.base.ref }}
+
+      - name: Run benchmarks on base branch
+        run: go test -bench=. -benchmem -count=5 -run=^$ ./... > old.txt || echo "Benchmarks may have changed"
+
+      - name: Compare benchmarks
+        run: |
+          echo "## Benchmark Comparison" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          benchstat old.txt new.txt >> $GITHUB_STEP_SUMMARY 2>&1 || echo "No comparable benchmarks found"
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
