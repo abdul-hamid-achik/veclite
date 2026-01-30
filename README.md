@@ -1518,67 +1518,102 @@ VecLite can run as an [MCP](https://modelcontextprotocol.io/) tool server, makin
 veclite mcp data.veclite
 ```
 
-The server communicates over stdio using JSON-RPC 2.0. It exposes these tools:
+The server communicates over stdio using JSON-RPC 2.0. It exposes **55 tools** across several categories:
 
-**Core Vector Operations:**
+### Core Vector Operations
 
 | Tool | Description |
 |------|-------------|
-| `veclite_collections` | List all collections |
-| `veclite_stats` | Get collection statistics |
+| `veclite_collections` | List all collections with stats |
+| `veclite_stats` | Get database statistics |
 | `veclite_search` | Vector similarity search |
 | `veclite_text_search` | BM25 full-text search |
-| `veclite_hybrid_search` | Combined vector + text search |
+| `veclite_hybrid_search` | Combined vector + text search with RRF fusion |
 | `veclite_find` | Find records by filter |
-| `veclite_insert` | Insert a vector |
+| `veclite_insert` | Insert a vector with optional payload and content |
+| `veclite_get` | Retrieve a record by ID |
+| `veclite_delete` | Delete a record by ID |
+| `veclite_update` | Update a record's payload |
+| `veclite_upsert` | Insert or update by ID |
+| `veclite_delete_where` | Delete records matching filter conditions |
+| `veclite_clear` | Clear all records from a collection (requires `confirm: true`) |
+| `veclite_insert_batch` | Bulk insert multiple vectors |
+| `veclite_upsert_by_key` | Insert or update by payload key field |
+| `veclite_embed` | Convert text to vector using configured embedder |
 
-**Agent Memory Tools:**
+### Collection Management
 
 | Tool | Description |
 |------|-------------|
-| `memory_remember` | Store a memory with importance, tags, and TTL (auto-embeds text if embedder configured) |
-| `memory_recall` | Semantic search for memories with filters (auto-embeds query text) |
+| `veclite_create_collection` | Create a collection with options (dimension, distance, index) |
+| `veclite_drop_collection` | Delete a collection (requires `confirm: true`) |
+| `veclite_sync` | Force persist all changes to disk |
+| `veclite_metrics` | Get performance metrics (search/insert/delete counts) |
+
+### Agent Memory Tools
+
+| Tool | Description |
+|------|-------------|
+| `memory_remember` | Store a memory with importance, tags, and TTL |
+| `memory_recall` | Semantic search for memories with filters |
 | `memory_forget` | Remove memories by criteria |
+| `memory_enforce_limit` | Enforce memory limit with eviction policy (fifo/lru/importance) |
+| `memory_consolidate` | Find similar memory clusters |
+| `memory_expand_consolidation` | Get original records from a consolidation |
 
-**Knowledge Graph Tools:**
+### Knowledge Graph Tools
 
 | Tool | Description |
 |------|-------------|
-| `graph_add_entity` | Add an entity node to the knowledge graph |
+| `graph_add_entity` | Add an entity node with optional vector |
 | `graph_add_relationship` | Add a relationship edge between entities |
+| `graph_get_entity` | Get an entity by ID |
+| `graph_update_entity` | Update an existing entity |
+| `graph_delete_entity` | Delete an entity and its relationships |
 | `graph_get_relationships` | Get relationships for an entity |
+| `graph_delete_relationship` | Delete a relationship by ID |
+| `graph_list_entities` | List entities, optionally filtered by type |
 | `graph_traverse` | BFS traversal from starting entities |
-| `graph_search` | Vector search with graph expansion |
+| `graph_expanded_search` | Vector search with graph context expansion |
 
-**Conversation Memory Tools:**
+### Conversation Memory Tools
 
 | Tool | Description |
 |------|-------------|
-| `conversation_add_turn` | Add a conversation turn to a session |
+| `conversation_add_turn` | Add a conversation turn with session tracking |
 | `conversation_get_session` | Get all turns in a session |
-| `conversation_search` | Search within a session |
+| `conversation_search_session` | Search within a specific session |
 | `conversation_list_sessions` | List all session IDs |
-| `conversation_get_thread` | Get a conversation thread |
+| `conversation_get_thread` | Get a conversation thread by chunk ID |
+| `conversation_delete_session` | Delete all turns in a session (requires `confirm: true`) |
+| `conversation_get_stats` | Get session statistics (turn count, roles, duration) |
 
-**Episodic Memory Tools:**
+### Episodic Memory Tools
 
 | Tool | Description |
 |------|-------------|
-| `episode_detect` | Auto-detect episodes from time gaps |
-| `episode_create` | Manually create an episode from record IDs |
-| `episode_get` | Get episode details |
-| `episode_list` | List all episodes |
+| `episode_detect` | Auto-detect episodes using time gaps and similarity |
+| `episode_create` | Create an episode from record IDs |
+| `episode_get` | Get episode details including records |
+| `episode_list` | List all episodes in a collection |
 | `episode_search` | Search episodes by vector similarity |
-| `episode_expand` | Get all records in an episode |
+| `episode_search_expanded` | Search with episode context expansion |
 
-**Memory Consolidation Tools:**
+### Memory Consolidation Tools
 
 | Tool | Description |
 |------|-------------|
 | `memory_find_clusters` | Find clusters of similar memories |
-| `memory_archive` | Archive a memory (protects from eviction) |
+| `memory_archive` | Archive a memory (excludes from searches, protects from eviction) |
 | `memory_unarchive` | Restore an archived memory |
 | `memory_get_archived` | List archived memories |
+
+### TTL/Cleanup Tools
+
+| Tool | Description |
+|------|-------------|
+| `veclite_cleanup_expired` | Remove all expired records from a collection |
+| `veclite_count_expired` | Count expired records without removing them |
 
 ### MCP Configuration
 

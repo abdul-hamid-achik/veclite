@@ -315,6 +315,145 @@ type memoryGetArchivedInput struct {
 	Collection string `json:"collection" jsonschema:"description=Collection name (default: memories)"`
 }
 
+// Phase 1: Essential CRUD input types
+
+type getInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+	ID         uint64 `json:"id" jsonschema:"description=Record ID,required"`
+}
+
+type deleteInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+	ID         uint64 `json:"id" jsonschema:"description=Record ID,required"`
+}
+
+type updateInput struct {
+	Collection string         `json:"collection" jsonschema:"description=Collection name,required"`
+	ID         uint64         `json:"id" jsonschema:"description=Record ID,required"`
+	Payload    map[string]any `json:"payload" jsonschema:"description=New payload to set,required"`
+}
+
+type upsertInput struct {
+	Collection string         `json:"collection" jsonschema:"description=Collection name,required"`
+	ID         uint64         `json:"id,omitempty" jsonschema:"description=Record ID (0 for auto-generated)"`
+	Vector     []float64      `json:"vector" jsonschema:"description=Vector to insert/update,required"`
+	Payload    map[string]any `json:"payload,omitempty" jsonschema:"description=Optional metadata"`
+}
+
+type deleteWhereInput struct {
+	Collection string          `json:"collection" jsonschema:"description=Collection name,required"`
+	Filters    []filterRequest `json:"filters" jsonschema:"description=Filter conditions,required"`
+}
+
+type clearInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+	Confirm    bool   `json:"confirm" jsonschema:"description=Must be true to confirm destructive operation,required"`
+}
+
+// Phase 2: Batch + Collection Management input types
+
+type insertBatchInput struct {
+	Collection string           `json:"collection" jsonschema:"description=Collection name,required"`
+	Vectors    [][]float64      `json:"vectors" jsonschema:"description=Vectors to insert,required"`
+	Payloads   []map[string]any `json:"payloads,omitempty" jsonschema:"description=Payloads for each vector (optional)"`
+}
+
+type upsertByKeyInput struct {
+	Collection string         `json:"collection" jsonschema:"description=Collection name,required"`
+	KeyField   string         `json:"key_field" jsonschema:"description=Payload field to match on,required"`
+	KeyValue   any            `json:"key_value" jsonschema:"description=Value to match,required"`
+	Vector     []float64      `json:"vector" jsonschema:"description=Vector to insert/update,required"`
+	Payload    map[string]any `json:"payload,omitempty" jsonschema:"description=Optional metadata"`
+}
+
+type createCollectionInput struct {
+	Name         string `json:"name" jsonschema:"description=Collection name,required"`
+	Dimension    int    `json:"dimension,omitempty" jsonschema:"description=Vector dimension (auto-detected if not set)"`
+	DistanceType string `json:"distance_type,omitempty" jsonschema:"description=Distance metric: cosine/euclidean/dot (default cosine)"`
+	IndexType    string `json:"index_type,omitempty" jsonschema:"description=Index type: hnsw/flat (default hnsw)"`
+}
+
+type dropCollectionInput struct {
+	Name    string `json:"name" jsonschema:"description=Collection name to drop,required"`
+	Confirm bool   `json:"confirm" jsonschema:"description=Must be true to confirm destructive operation,required"`
+}
+
+type syncInput struct{}
+
+type metricsInput struct{}
+
+// Phase 3: Graph CRUD input types
+
+type graphGetEntityInput struct {
+	Graph    string `json:"graph" jsonschema:"description=Knowledge graph name,required"`
+	EntityID string `json:"entity_id" jsonschema:"description=Entity ID to retrieve,required"`
+}
+
+type graphUpdateEntityInput struct {
+	Graph      string         `json:"graph" jsonschema:"description=Knowledge graph name,required"`
+	ID         string         `json:"id" jsonschema:"description=Entity ID,required"`
+	Type       string         `json:"type,omitempty" jsonschema:"description=Entity type"`
+	Name       string         `json:"name,omitempty" jsonschema:"description=Human-readable name"`
+	Vector     []float64      `json:"vector,omitempty" jsonschema:"description=Optional embedding vector"`
+	Properties map[string]any `json:"properties,omitempty" jsonschema:"description=Additional properties"`
+}
+
+type graphDeleteEntityInput struct {
+	Graph    string `json:"graph" jsonschema:"description=Knowledge graph name,required"`
+	EntityID string `json:"entity_id" jsonschema:"description=Entity ID to delete,required"`
+}
+
+type graphDeleteRelationshipInput struct {
+	Graph          string `json:"graph" jsonschema:"description=Knowledge graph name,required"`
+	RelationshipID string `json:"relationship_id" jsonschema:"description=Relationship ID to delete,required"`
+}
+
+type graphListEntitiesInput struct {
+	Graph      string `json:"graph" jsonschema:"description=Knowledge graph name,required"`
+	EntityType string `json:"entity_type,omitempty" jsonschema:"description=Filter by entity type (empty for all)"`
+}
+
+// Phase 4: Cleanup, Consolidation, and Conversation input types
+
+type cleanupExpiredInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+}
+
+type countExpiredInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+}
+
+type memoryEnforceLimitInput struct {
+	Collection        string `json:"collection" jsonschema:"description=Collection name (default: memories)"`
+	MaxRecords        int    `json:"max_records" jsonschema:"description=Maximum number of records,required"`
+	EvictionPolicy    string `json:"eviction_policy,omitempty" jsonschema:"description=Eviction policy: fifo/lru/importance (default fifo)"`
+	EvictionBatchSize int    `json:"eviction_batch_size,omitempty" jsonschema:"description=Number of records to evict per batch"`
+}
+
+type memoryConsolidateInput struct {
+	Collection          string  `json:"collection" jsonschema:"description=Collection name (default: memories)"`
+	SimilarityThreshold float64 `json:"similarity_threshold,omitempty" jsonschema:"description=Minimum similarity for grouping (default 0.85)"`
+	MinSize             int     `json:"min_size,omitempty" jsonschema:"description=Minimum cluster size (default 2)"`
+	MaxSize             int     `json:"max_size,omitempty" jsonschema:"description=Maximum cluster size (default 10)"`
+	ArchiveOriginals    bool    `json:"archive_originals,omitempty" jsonschema:"description=Archive original records after consolidation"`
+}
+
+type memoryExpandConsolidationInput struct {
+	Collection      string `json:"collection" jsonschema:"description=Collection name (default: memories)"`
+	ConsolidationID uint64 `json:"consolidation_id" jsonschema:"description=ID of the consolidation record,required"`
+}
+
+type conversationDeleteSessionInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+	SessionID  string `json:"session_id" jsonschema:"description=Session ID to delete,required"`
+	Confirm    bool   `json:"confirm" jsonschema:"description=Must be true to confirm destructive operation,required"`
+}
+
+type conversationGetStatsInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+	SessionID  string `json:"session_id" jsonschema:"description=Session ID to get stats for,required"`
+}
+
 func (s *MCPServer) registerTools() {
 	// veclite_collections - List all collections
 	mcp.AddTool(s.server, &mcp.Tool{
@@ -552,6 +691,182 @@ func (s *MCPServer) registerTools() {
 		Description: "List all archived memory records",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input memoryGetArchivedInput) (*mcp.CallToolResult, any, error) {
 		return s.toolMemoryGetArchived(input)
+	})
+
+	// Phase 1: Essential CRUD tools
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_get",
+		Description: "Get a record by ID",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input getInput) (*mcp.CallToolResult, any, error) {
+		return s.toolGet(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_delete",
+		Description: "Delete a record by ID",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input deleteInput) (*mcp.CallToolResult, any, error) {
+		return s.toolDelete(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_update",
+		Description: "Update a record's payload by ID",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input updateInput) (*mcp.CallToolResult, any, error) {
+		return s.toolUpdate(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_upsert",
+		Description: "Insert a new record or update an existing one by ID",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input upsertInput) (*mcp.CallToolResult, any, error) {
+		return s.toolUpsert(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_delete_where",
+		Description: "Delete all records matching filter conditions",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input deleteWhereInput) (*mcp.CallToolResult, any, error) {
+		return s.toolDeleteWhere(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_clear",
+		Description: "Clear all records from a collection (requires confirm: true)",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input clearInput) (*mcp.CallToolResult, any, error) {
+		return s.toolClear(input)
+	})
+
+	// Phase 2: Batch + Collection Management tools
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_insert_batch",
+		Description: "Insert multiple vectors in a single batch operation",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input insertBatchInput) (*mcp.CallToolResult, any, error) {
+		return s.toolInsertBatch(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_upsert_by_key",
+		Description: "Insert or update a record based on a key field in the payload",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input upsertByKeyInput) (*mcp.CallToolResult, any, error) {
+		return s.toolUpsertByKey(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_create_collection",
+		Description: "Create a new collection with specified options",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input createCollectionInput) (*mcp.CallToolResult, any, error) {
+		return s.toolCreateCollection(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_drop_collection",
+		Description: "Delete a collection and all its data (requires confirm: true)",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input dropCollectionInput) (*mcp.CallToolResult, any, error) {
+		return s.toolDropCollection(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_sync",
+		Description: "Force persist all pending changes to disk",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input syncInput) (*mcp.CallToolResult, any, error) {
+		return s.toolSync()
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_metrics",
+		Description: "Get performance metrics for the database",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input metricsInput) (*mcp.CallToolResult, any, error) {
+		return s.toolMetrics()
+	})
+
+	// Phase 3: Graph CRUD tools
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "graph_get_entity",
+		Description: "Get an entity from a knowledge graph by ID",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input graphGetEntityInput) (*mcp.CallToolResult, any, error) {
+		return s.toolGraphGetEntity(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "graph_update_entity",
+		Description: "Update an existing entity in a knowledge graph",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input graphUpdateEntityInput) (*mcp.CallToolResult, any, error) {
+		return s.toolGraphUpdateEntity(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "graph_delete_entity",
+		Description: "Delete an entity and all its relationships from a knowledge graph",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input graphDeleteEntityInput) (*mcp.CallToolResult, any, error) {
+		return s.toolGraphDeleteEntity(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "graph_delete_relationship",
+		Description: "Delete a relationship from a knowledge graph",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input graphDeleteRelationshipInput) (*mcp.CallToolResult, any, error) {
+		return s.toolGraphDeleteRelationship(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "graph_list_entities",
+		Description: "List all entities in a knowledge graph, optionally filtered by type",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input graphListEntitiesInput) (*mcp.CallToolResult, any, error) {
+		return s.toolGraphListEntities(input)
+	})
+
+	// Phase 4: Cleanup, Consolidation, and Conversation tools
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_cleanup_expired",
+		Description: "Remove all expired records from a collection",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input cleanupExpiredInput) (*mcp.CallToolResult, any, error) {
+		return s.toolCleanupExpired(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_count_expired",
+		Description: "Count the number of expired records in a collection",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input countExpiredInput) (*mcp.CallToolResult, any, error) {
+		return s.toolCountExpired(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "memory_enforce_limit",
+		Description: "Enforce a memory limit by evicting records according to a policy",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input memoryEnforceLimitInput) (*mcp.CallToolResult, any, error) {
+		return s.toolMemoryEnforceLimit(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "memory_consolidate",
+		Description: "Find and optionally consolidate similar memory clusters",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input memoryConsolidateInput) (*mcp.CallToolResult, any, error) {
+		return s.toolMemoryConsolidate(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "memory_expand_consolidation",
+		Description: "Get the original records that were merged into a consolidation record",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input memoryExpandConsolidationInput) (*mcp.CallToolResult, any, error) {
+		return s.toolMemoryExpandConsolidation(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "conversation_delete_session",
+		Description: "Delete all turns in a conversation session (requires confirm: true)",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input conversationDeleteSessionInput) (*mcp.CallToolResult, any, error) {
+		return s.toolConversationDeleteSession(input)
+	})
+
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "conversation_get_stats",
+		Description: "Get statistics about a conversation session",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input conversationGetStatsInput) (*mcp.CallToolResult, any, error) {
+		return s.toolConversationGetStats(input)
 	})
 }
 
@@ -1706,6 +2021,609 @@ func (s *MCPServer) toolMemoryGetArchived(input memoryGetArchivedInput) (*mcp.Ca
 		"archived": out,
 		"count":    len(out),
 	})
+}
+
+// Phase 1: Essential CRUD tool implementations
+
+func (s *MCPServer) toolGet(input getInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(input.Collection)
+	if err != nil {
+		return errorResult("Collection not found: " + input.Collection)
+	}
+
+	record, err := coll.Get(input.ID)
+	if err != nil {
+		return errorResult("Record not found: " + err.Error())
+	}
+
+	return textResult(map[string]any{
+		"id":         record.ID,
+		"payload":    record.Payload,
+		"content":    record.Content,
+		"importance": record.Importance,
+		"created_at": record.CreatedAt.Format(time.RFC3339),
+		"updated_at": record.UpdatedAt.Format(time.RFC3339),
+	})
+}
+
+func (s *MCPServer) toolDelete(input deleteInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(input.Collection)
+	if err != nil {
+		return errorResult("Collection not found: " + input.Collection)
+	}
+
+	if err := coll.Delete(input.ID); err != nil {
+		return errorResult("Delete failed: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	return textResult(map[string]any{
+		"status": "deleted",
+		"id":     input.ID,
+	})
+}
+
+func (s *MCPServer) toolUpdate(input updateInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(input.Collection)
+	if err != nil {
+		return errorResult("Collection not found: " + input.Collection)
+	}
+
+	if err := coll.Update(input.ID, input.Payload); err != nil {
+		return errorResult("Update failed: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	return textResult(map[string]any{
+		"status": "updated",
+		"id":     input.ID,
+	})
+}
+
+func (s *MCPServer) toolUpsert(input upsertInput) (*mcp.CallToolResult, any, error) {
+	coll := s.db.Collection(input.Collection)
+
+	vec := float64ToFloat32(input.Vector)
+
+	id, err := coll.Upsert(input.ID, vec, input.Payload)
+	if err != nil {
+		return errorResult("Upsert failed: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	return textResult(map[string]any{
+		"status": "upserted",
+		"id":     id,
+	})
+}
+
+func (s *MCPServer) toolDeleteWhere(input deleteWhereInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(input.Collection)
+	if err != nil {
+		return errorResult("Collection not found: " + input.Collection)
+	}
+
+	var vecliteFilters []veclite.Filter
+	for _, f := range input.Filters {
+		filter := parseFilterRequest(f)
+		if filter != nil {
+			vecliteFilters = append(vecliteFilters, filter)
+		}
+	}
+
+	if len(vecliteFilters) == 0 {
+		return errorResult("At least one filter is required")
+	}
+
+	deleted, err := coll.DeleteWhere(vecliteFilters...)
+	if err != nil {
+		return errorResult("DeleteWhere failed: " + err.Error())
+	}
+
+	if deleted > 0 {
+		_ = s.db.Sync()
+	}
+
+	return textResult(map[string]any{
+		"status":  "deleted",
+		"deleted": deleted,
+	})
+}
+
+func (s *MCPServer) toolClear(input clearInput) (*mcp.CallToolResult, any, error) {
+	if !input.Confirm {
+		return errorResult("This operation requires confirm: true")
+	}
+
+	coll, err := s.db.GetCollection(input.Collection)
+	if err != nil {
+		return errorResult("Collection not found: " + input.Collection)
+	}
+
+	if err := coll.Clear(); err != nil {
+		return errorResult("Clear failed: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	return textResult(map[string]any{
+		"status":     "cleared",
+		"collection": input.Collection,
+	})
+}
+
+// Phase 2: Batch + Collection Management tool implementations
+
+func (s *MCPServer) toolInsertBatch(input insertBatchInput) (*mcp.CallToolResult, any, error) {
+	coll := s.db.Collection(input.Collection)
+
+	// Convert vectors
+	vectors := make([][]float32, len(input.Vectors))
+	for i, v := range input.Vectors {
+		vectors[i] = float64ToFloat32(v)
+	}
+
+	// Ensure payloads slice matches vectors if provided
+	var payloads []map[string]any
+	if len(input.Payloads) > 0 {
+		payloads = input.Payloads
+		// Pad with nil if fewer payloads than vectors
+		for len(payloads) < len(vectors) {
+			payloads = append(payloads, nil)
+		}
+	} else {
+		payloads = make([]map[string]any, len(vectors))
+	}
+
+	ids, err := coll.InsertBatch(vectors, payloads)
+	if err != nil {
+		return errorResult("InsertBatch failed: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	return textResult(map[string]any{
+		"status":   "inserted",
+		"ids":      ids,
+		"inserted": len(ids),
+	})
+}
+
+func (s *MCPServer) toolUpsertByKey(input upsertByKeyInput) (*mcp.CallToolResult, any, error) {
+	coll := s.db.Collection(input.Collection)
+
+	vec := float64ToFloat32(input.Vector)
+
+	id, inserted, err := coll.UpsertByKey(input.KeyField, input.KeyValue, vec, input.Payload)
+	if err != nil {
+		return errorResult("UpsertByKey failed: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	action := "updated"
+	if inserted {
+		action = "inserted"
+	}
+
+	return textResult(map[string]any{
+		"status":   action,
+		"id":       id,
+		"inserted": inserted,
+	})
+}
+
+func (s *MCPServer) toolCreateCollection(input createCollectionInput) (*mcp.CallToolResult, any, error) {
+	var opts []veclite.CollectionOption
+
+	if input.Dimension > 0 {
+		opts = append(opts, veclite.WithDimension(input.Dimension))
+	}
+
+	if input.DistanceType != "" {
+		var distType veclite.DistanceType
+		switch input.DistanceType {
+		case "cosine":
+			distType = veclite.DistanceCosine
+		case "dot":
+			distType = veclite.DistanceDot
+		case "euclidean":
+			distType = veclite.DistanceEuclidean
+		default:
+			return errorResult("Invalid distance_type: " + input.DistanceType + ". Must be cosine, dot, or euclidean")
+		}
+		opts = append(opts, veclite.WithDistanceType(distType))
+	}
+
+	if input.IndexType != "" {
+		switch input.IndexType {
+		case "hnsw":
+			// Use default HNSW parameters: M=16, efConstruction=200
+			opts = append(opts, veclite.WithHNSW(16, 200))
+		case "flat":
+			// No special option for flat - it's the default when no index is specified
+		default:
+			return errorResult("Invalid index_type: " + input.IndexType + ". Must be hnsw or flat")
+		}
+	}
+
+	coll, err := s.db.CreateCollection(input.Name, opts...)
+	if err != nil {
+		return errorResult("CreateCollection failed: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	return textResult(map[string]any{
+		"status":     "created",
+		"collection": coll.Name(),
+	})
+}
+
+func (s *MCPServer) toolDropCollection(input dropCollectionInput) (*mcp.CallToolResult, any, error) {
+	if !input.Confirm {
+		return errorResult("This operation requires confirm: true")
+	}
+
+	if err := s.db.DropCollection(input.Name); err != nil {
+		return errorResult("DropCollection failed: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	return textResult(map[string]any{
+		"status":     "dropped",
+		"collection": input.Name,
+	})
+}
+
+func (s *MCPServer) toolSync() (*mcp.CallToolResult, any, error) {
+	if err := s.db.Sync(); err != nil {
+		return errorResult("Sync failed: " + err.Error())
+	}
+
+	return textResult(map[string]any{
+		"status": "synced",
+	})
+}
+
+func (s *MCPServer) toolMetrics() (*mcp.CallToolResult, any, error) {
+	metrics := s.db.Metrics()
+
+	return textResult(map[string]any{
+		"insert_count":    metrics.InsertCount,
+		"delete_count":    metrics.DeleteCount,
+		"search_count":    metrics.SearchCount,
+		"avg_search_time": metrics.AvgSearchTime.String(),
+	})
+}
+
+// Phase 3: Graph CRUD tool implementations
+
+func (s *MCPServer) toolGraphGetEntity(input graphGetEntityInput) (*mcp.CallToolResult, any, error) {
+	kg, ok := s.graphStore[input.Graph]
+	if !ok {
+		return errorResult("Graph not found: " + input.Graph)
+	}
+
+	entity, err := kg.GetEntity(input.EntityID)
+	if err != nil {
+		return errorResult("Entity not found: " + err.Error())
+	}
+
+	return textResult(map[string]any{
+		"id":         entity.ID,
+		"type":       entity.Type,
+		"name":       entity.Name,
+		"properties": entity.Properties,
+		"has_vector": len(entity.Vector) > 0,
+	})
+}
+
+func (s *MCPServer) toolGraphUpdateEntity(input graphUpdateEntityInput) (*mcp.CallToolResult, any, error) {
+	kg, ok := s.graphStore[input.Graph]
+	if !ok {
+		return errorResult("Graph not found: " + input.Graph)
+	}
+
+	entity := veclite.Entity{
+		ID:         input.ID,
+		Type:       input.Type,
+		Name:       input.Name,
+		Properties: input.Properties,
+	}
+
+	if len(input.Vector) > 0 {
+		entity.Vector = float64ToFloat32(input.Vector)
+	}
+
+	if err := kg.UpdateEntity(entity); err != nil {
+		return errorResult("UpdateEntity failed: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	return textResult(map[string]any{
+		"status":    "updated",
+		"entity_id": input.ID,
+		"graph":     input.Graph,
+	})
+}
+
+func (s *MCPServer) toolGraphDeleteEntity(input graphDeleteEntityInput) (*mcp.CallToolResult, any, error) {
+	kg, ok := s.graphStore[input.Graph]
+	if !ok {
+		return errorResult("Graph not found: " + input.Graph)
+	}
+
+	if err := kg.DeleteEntity(input.EntityID); err != nil {
+		return errorResult("DeleteEntity failed: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	return textResult(map[string]any{
+		"status":    "deleted",
+		"entity_id": input.EntityID,
+		"graph":     input.Graph,
+	})
+}
+
+func (s *MCPServer) toolGraphDeleteRelationship(input graphDeleteRelationshipInput) (*mcp.CallToolResult, any, error) {
+	kg, ok := s.graphStore[input.Graph]
+	if !ok {
+		return errorResult("Graph not found: " + input.Graph)
+	}
+
+	if err := kg.DeleteRelationship(input.RelationshipID); err != nil {
+		return errorResult("DeleteRelationship failed: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	return textResult(map[string]any{
+		"status":          "deleted",
+		"relationship_id": input.RelationshipID,
+		"graph":           input.Graph,
+	})
+}
+
+func (s *MCPServer) toolGraphListEntities(input graphListEntitiesInput) (*mcp.CallToolResult, any, error) {
+	kg, ok := s.graphStore[input.Graph]
+	if !ok {
+		return errorResult("Graph not found: " + input.Graph)
+	}
+
+	entities := kg.ListEntities(input.EntityType)
+
+	out := make([]map[string]any, len(entities))
+	for i, e := range entities {
+		out[i] = map[string]any{
+			"id":         e.ID,
+			"type":       e.Type,
+			"name":       e.Name,
+			"properties": e.Properties,
+		}
+	}
+
+	return textResult(map[string]any{
+		"entities": out,
+		"count":    len(out),
+		"graph":    input.Graph,
+	})
+}
+
+// Phase 4: Cleanup, Consolidation, and Conversation tool implementations
+
+func (s *MCPServer) toolCleanupExpired(input cleanupExpiredInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(input.Collection)
+	if err != nil {
+		return errorResult("Collection not found: " + input.Collection)
+	}
+
+	deleted, err := coll.CleanupExpired()
+	if err != nil {
+		return errorResult("CleanupExpired failed: " + err.Error())
+	}
+
+	if deleted > 0 {
+		_ = s.db.Sync()
+	}
+
+	return textResult(map[string]any{
+		"status":  "cleaned",
+		"deleted": deleted,
+	})
+}
+
+func (s *MCPServer) toolCountExpired(input countExpiredInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(input.Collection)
+	if err != nil {
+		return errorResult("Collection not found: " + input.Collection)
+	}
+
+	count := coll.CountExpired()
+
+	return textResult(map[string]any{
+		"expired": count,
+	})
+}
+
+func (s *MCPServer) toolMemoryEnforceLimit(input memoryEnforceLimitInput) (*mcp.CallToolResult, any, error) {
+	collName := input.Collection
+	if collName == "" {
+		collName = memoriesCollection
+	}
+
+	coll, err := s.db.GetCollection(collName)
+	if err != nil {
+		return errorResult("Collection not found: " + collName)
+	}
+
+	config := veclite.MemoryConfig{
+		MaxRecords:        input.MaxRecords,
+		EvictionPolicy:    input.EvictionPolicy,
+		EvictionBatchSize: input.EvictionBatchSize,
+	}
+
+	if config.EvictionPolicy == "" {
+		config.EvictionPolicy = "fifo"
+	}
+
+	evicted := coll.EnforceMemoryLimit(config)
+
+	if evicted > 0 {
+		_ = s.db.Sync()
+	}
+
+	return textResult(map[string]any{
+		"status":  "enforced",
+		"evicted": evicted,
+	})
+}
+
+func (s *MCPServer) toolMemoryConsolidate(input memoryConsolidateInput) (*mcp.CallToolResult, any, error) {
+	collName := input.Collection
+	if collName == "" {
+		collName = memoriesCollection
+	}
+
+	coll, err := s.db.GetCollection(collName)
+	if err != nil {
+		return errorResult("Collection not found: " + collName)
+	}
+
+	config := veclite.ConsolidationConfig{
+		SimilarityThreshold: float32(input.SimilarityThreshold),
+		MinGroupSize:        input.MinSize,
+		MaxGroupSize:        input.MaxSize,
+		ArchiveOriginals:    input.ArchiveOriginals,
+	}
+
+	// Note: Without embedder and summary generator, this just finds clusters
+	// It won't create consolidated records
+	clusters, err := coll.FindSimilarClusters(config)
+	if err != nil {
+		return errorResult("FindSimilarClusters failed: " + err.Error())
+	}
+
+	out := make([]map[string]any, len(clusters))
+	for i, c := range clusters {
+		recordIDs := make([]uint64, len(c.Records))
+		for j, r := range c.Records {
+			recordIDs[j] = r.ID
+		}
+
+		out[i] = map[string]any{
+			"id":                 c.ID,
+			"record_count":       len(c.Records),
+			"record_ids":         recordIDs,
+			"average_importance": c.AverageImportance,
+		}
+	}
+
+	return textResult(map[string]any{
+		"clusters_found": len(clusters),
+		"clusters":       out,
+	})
+}
+
+func (s *MCPServer) toolMemoryExpandConsolidation(input memoryExpandConsolidationInput) (*mcp.CallToolResult, any, error) {
+	collName := input.Collection
+	if collName == "" {
+		collName = memoriesCollection
+	}
+
+	coll, err := s.db.GetCollection(collName)
+	if err != nil {
+		return errorResult("Collection not found: " + collName)
+	}
+
+	records, err := coll.ExpandConsolidation(input.ConsolidationID)
+	if err != nil {
+		return errorResult("ExpandConsolidation failed: " + err.Error())
+	}
+
+	out := make([]map[string]any, len(records))
+	for i, r := range records {
+		out[i] = map[string]any{
+			"id":         r.ID,
+			"content":    r.Content,
+			"importance": r.Importance,
+			"created_at": r.CreatedAt.Format(time.RFC3339),
+			"payload":    r.Payload,
+		}
+	}
+
+	return textResult(map[string]any{
+		"consolidation_id": input.ConsolidationID,
+		"records":          out,
+		"count":            len(out),
+	})
+}
+
+func (s *MCPServer) toolConversationDeleteSession(input conversationDeleteSessionInput) (*mcp.CallToolResult, any, error) {
+	if !input.Confirm {
+		return errorResult("This operation requires confirm: true")
+	}
+
+	coll, err := s.db.GetCollection(input.Collection)
+	if err != nil {
+		return errorResult("Collection not found: " + input.Collection)
+	}
+
+	// Get all records in the session
+	records, err := coll.GetSession(input.SessionID)
+	if err != nil {
+		return errorResult("GetSession failed: " + err.Error())
+	}
+
+	// Delete each record
+	deleted := 0
+	for _, r := range records {
+		if err := coll.Delete(r.ID); err == nil {
+			deleted++
+		}
+	}
+
+	if deleted > 0 {
+		_ = s.db.Sync()
+	}
+
+	return textResult(map[string]any{
+		"status":     "deleted",
+		"session_id": input.SessionID,
+		"deleted":    deleted,
+	})
+}
+
+func (s *MCPServer) toolConversationGetStats(input conversationGetStatsInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(input.Collection)
+	if err != nil {
+		return errorResult("Collection not found: " + input.Collection)
+	}
+
+	stats, err := coll.GetSessionStats(input.SessionID)
+	if err != nil {
+		return errorResult("GetSessionStats failed: " + err.Error())
+	}
+
+	result := map[string]any{
+		"session_id": stats.SessionID,
+		"turn_count": stats.TurnCount,
+		"roles":      stats.Roles,
+	}
+
+	if stats.TurnCount > 0 {
+		result["first_turn"] = stats.FirstTurn.Format(time.RFC3339)
+		result["last_turn"] = stats.LastTurn.Format(time.RFC3339)
+		result["duration"] = stats.LastTurn.Sub(stats.FirstTurn).String()
+	}
+
+	return textResult(result)
 }
 
 // Helper functions

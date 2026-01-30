@@ -425,6 +425,455 @@ func TestConsolidationArchiveNotFound(t *testing.T) {
 	}
 }
 
+// TC-CRUD-001: Get record by ID
+func TestCollectionGet(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(3))
+	id, _ := coll.Insert([]float32{1, 0, 0}, map[string]any{"name": "test"})
+
+	record, err := coll.Get(id)
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+
+	if record.ID != id {
+		t.Errorf("Expected ID %d, got %d", id, record.ID)
+	}
+	if record.Payload["name"] != "test" {
+		t.Errorf("Expected name 'test', got %v", record.Payload["name"])
+	}
+}
+
+// TC-CRUD-002: Get non-existent record fails
+func TestCollectionGetNotFound(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(3))
+
+	_, err := coll.Get(999)
+	if err == nil {
+		t.Error("Expected error for non-existent record")
+	}
+}
+
+// TC-CRUD-003: Update record payload
+func TestCollectionUpdatePayload(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(3))
+	id, _ := coll.Insert([]float32{1, 0, 0}, map[string]any{"name": "old"})
+
+	err := coll.Update(id, map[string]any{"name": "new", "extra": "field"})
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	record, _ := coll.Get(id)
+	if record.Payload["name"] != "new" {
+		t.Errorf("Expected name 'new', got %v", record.Payload["name"])
+	}
+	if record.Payload["extra"] != "field" {
+		t.Errorf("Expected extra 'field', got %v", record.Payload["extra"])
+	}
+}
+
+// TC-CRUD-004: Update non-existent record fails
+func TestCollectionUpdateNotFound(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(3))
+
+	err := coll.Update(999, map[string]any{"name": "test"})
+	if err == nil {
+		t.Error("Expected error for non-existent record")
+	}
+}
+
+// TC-CRUD-005: Delete record by ID
+func TestCollectionDeleteByID(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(3))
+	id, _ := coll.Insert([]float32{1, 0, 0}, nil)
+
+	err := coll.Delete(id)
+	if err != nil {
+		t.Fatalf("Delete failed: %v", err)
+	}
+
+	_, err = coll.Get(id)
+	if err == nil {
+		t.Error("Expected error after delete")
+	}
+}
+
+// TC-CRUD-006: Delete non-existent record fails
+func TestCollectionDeleteNotFound(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(3))
+
+	err := coll.Delete(999)
+	if err == nil {
+		t.Error("Expected error for non-existent record")
+	}
+}
+
+// TC-GRAPH-006: Delete entity removes relationships
+func TestKnowledgeGraphDeleteEntityCleansRelationships(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	kg, _ := db.CreateKnowledgeGraph("test")
+
+	_ = kg.AddEntity(Entity{ID: "alice", Type: "person"})
+	_ = kg.AddEntity(Entity{ID: "bob", Type: "person"})
+	_ = kg.AddRelationship(Relationship{
+		ID: "rel1", SourceID: "alice", TargetID: "bob", Type: "knows",
+	})
+
+	// Delete bob - relationship should be cleaned up
+	err := kg.DeleteEntity("bob")
+	if err != nil {
+		t.Fatalf("DeleteEntity failed: %v", err)
+	}
+
+	// Alice's relationships should be empty
+	rels := kg.GetRelationships("alice", "outgoing")
+	if len(rels) != 0 {
+		t.Errorf("Expected 0 relationships after deleting target, got %d", len(rels))
+	}
+}
+
+// TC-GRAPH-007: Delete relationship
+func TestKnowledgeGraphDeleteRelationship(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	kg, _ := db.CreateKnowledgeGraph("test")
+
+	_ = kg.AddEntity(Entity{ID: "alice", Type: "person"})
+	_ = kg.AddEntity(Entity{ID: "bob", Type: "person"})
+	_ = kg.AddRelationship(Relationship{
+		ID: "rel1", SourceID: "alice", TargetID: "bob", Type: "knows",
+	})
+
+	err := kg.DeleteRelationship("rel1")
+	if err != nil {
+		t.Fatalf("DeleteRelationship failed: %v", err)
+	}
+
+	rels := kg.GetRelationships("alice", "outgoing")
+	if len(rels) != 0 {
+		t.Errorf("Expected 0 relationships after delete, got %d", len(rels))
+	}
+}
+
+// TC-GRAPH-008: Delete non-existent relationship fails
+func TestKnowledgeGraphDeleteRelationshipNotFound(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	kg, _ := db.CreateKnowledgeGraph("test")
+
+	err := kg.DeleteRelationship("non-existent")
+	if err == nil {
+		t.Error("Expected error for non-existent relationship")
+	}
+}
+
+// TC-GRAPH-009: List entities by type
+func TestKnowledgeGraphListEntitiesByType(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	kg, _ := db.CreateKnowledgeGraph("test")
+
+	_ = kg.AddEntity(Entity{ID: "p1", Type: "person", Name: "Alice"})
+	_ = kg.AddEntity(Entity{ID: "p2", Type: "person", Name: "Bob"})
+	_ = kg.AddEntity(Entity{ID: "c1", Type: "company", Name: "Acme"})
+
+	persons := kg.ListEntities("person")
+	if len(persons) != 2 {
+		t.Errorf("Expected 2 persons, got %d", len(persons))
+	}
+
+	companies := kg.ListEntities("company")
+	if len(companies) != 1 {
+		t.Errorf("Expected 1 company, got %d", len(companies))
+	}
+
+	all := kg.ListEntities("")
+	if len(all) != 3 {
+		t.Errorf("Expected 3 total entities, got %d", len(all))
+	}
+}
+
+// TC-CLEANUP-001: Count expired records
+func TestCountExpiredMCP(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(3))
+
+	// Insert record with expired TTL (use WithExpiresAt with past time)
+	_, _ = coll.InsertWithOptions(
+		[]float32{1, 0, 0},
+		nil,
+		WithExpiresAt(time.Now().Add(-1*time.Hour)), // Already expired
+	)
+
+	// Insert record without TTL
+	_, _ = coll.Insert([]float32{0, 1, 0}, nil)
+
+	count := coll.CountExpired()
+	if count != 1 {
+		t.Errorf("Expected 1 expired record, got %d", count)
+	}
+}
+
+// TC-CLEANUP-002: Cleanup expired records
+func TestCleanupExpiredMCP(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(3))
+
+	// Insert record with expired TTL (use WithExpiresAt with past time)
+	_, _ = coll.InsertWithOptions(
+		[]float32{1, 0, 0},
+		nil,
+		WithExpiresAt(time.Now().Add(-1*time.Hour)), // Already expired
+	)
+
+	// Insert record without TTL
+	id2, _ := coll.Insert([]float32{0, 1, 0}, nil)
+
+	deleted, err := coll.CleanupExpired()
+	if err != nil {
+		t.Fatalf("CleanupExpired failed: %v", err)
+	}
+
+	if deleted != 1 {
+		t.Errorf("Expected 1 deleted, got %d", deleted)
+	}
+
+	// Non-expired record should still exist
+	_, err = coll.Get(id2)
+	if err != nil {
+		t.Error("Non-expired record should still exist")
+	}
+}
+
+// TC-MEMORY-001: Enforce memory limit
+func TestEnforceMemoryLimitMCP(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(3))
+
+	// Insert 10 records
+	for i := 0; i < 10; i++ {
+		_, _ = coll.Insert([]float32{float32(i), 0, 0}, nil)
+	}
+
+	// Enforce limit of 5 - need EvictionBatchSize to be set appropriately
+	evicted := coll.EnforceMemoryLimit(MemoryConfig{
+		MaxRecords:        5,
+		EvictionPolicy:    "fifo",
+		EvictionBatchSize: 10, // Must be large enough to evict all at once
+	})
+
+	if evicted != 5 {
+		t.Errorf("Expected 5 evicted, got %d", evicted)
+	}
+
+	if coll.Count() != 5 {
+		t.Errorf("Expected 5 remaining, got %d", coll.Count())
+	}
+}
+
+// TC-CONSOLIDATION-004: Expand consolidation record
+func TestExpandConsolidationRecord(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("test", WithDimension(3))
+
+	// Insert some records
+	id1, _ := coll.Insert([]float32{1, 0, 0}, nil)
+	id2, _ := coll.Insert([]float32{0.9, 0.1, 0}, nil)
+
+	// Create a consolidation record manually
+	_, _ = coll.Insert([]float32{0.95, 0.05, 0}, map[string]any{
+		PayloadKeyIsConsolidation:   true,
+		PayloadKeyConsolidatedFrom:  []uint64{id1, id2},
+		PayloadKeyConsolidationGroup: "group1",
+	})
+
+	// Find the consolidation record
+	consolidations, _ := coll.GetConsolidations()
+	if len(consolidations) != 1 {
+		t.Fatalf("Expected 1 consolidation, got %d", len(consolidations))
+	}
+
+	// Expand it
+	records, err := coll.ExpandConsolidation(consolidations[0].ID)
+	if err != nil {
+		t.Fatalf("ExpandConsolidation failed: %v", err)
+	}
+
+	if len(records) != 2 {
+		t.Errorf("Expected 2 original records, got %d", len(records))
+	}
+}
+
+// TC-CONV-004: Delete session
+func TestConversationDeleteSession(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("conv", WithDimension(3))
+
+	// Add turns to two sessions
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "s1", Content: "msg1", Vector: []float32{1, 0, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "s1", Content: "msg2", Vector: []float32{0.9, 0.1, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "s2", Content: "msg3", Vector: []float32{0, 1, 0}})
+
+	// Get session s1 records and delete them
+	records, _ := coll.GetSession("s1")
+	for _, r := range records {
+		_ = coll.Delete(r.ID)
+	}
+
+	// Verify s1 is deleted
+	records, _ = coll.GetSession("s1")
+	if len(records) != 0 {
+		t.Errorf("Expected 0 records in deleted session, got %d", len(records))
+	}
+
+	// Verify s2 still exists
+	records, _ = coll.GetSession("s2")
+	if len(records) != 1 {
+		t.Errorf("Expected 1 record in s2, got %d", len(records))
+	}
+}
+
+// TC-CONV-005: Get session stats
+func TestConversationSessionStats(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, _ := db.CreateCollection("conv", WithDimension(3))
+
+	// Add turns with different roles
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "s1", Role: "user", Content: "Hello", Vector: []float32{1, 0, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "s1", Role: "assistant", Content: "Hi", Vector: []float32{0.9, 0.1, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "s1", Role: "user", Content: "How are you?", Vector: []float32{0.8, 0.2, 0}})
+
+	stats, err := coll.GetSessionStats("s1")
+	if err != nil {
+		t.Fatalf("GetSessionStats failed: %v", err)
+	}
+
+	if stats.TurnCount != 3 {
+		t.Errorf("Expected 3 turns, got %d", stats.TurnCount)
+	}
+	if stats.Roles["user"] != 2 {
+		t.Errorf("Expected 2 user turns, got %d", stats.Roles["user"])
+	}
+	if stats.Roles["assistant"] != 1 {
+		t.Errorf("Expected 1 assistant turn, got %d", stats.Roles["assistant"])
+	}
+}
+
+// TC-COLLECTION-001: Create collection with options
+func TestCreateCollectionWithOptions(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, err := db.CreateCollection("test",
+		WithDimension(128),
+		WithDistanceType(DistanceDot),
+		WithHNSW(16, 200),
+	)
+	if err != nil {
+		t.Fatalf("CreateCollection failed: %v", err)
+	}
+
+	if coll.Dimension() != 128 {
+		t.Errorf("Expected dimension 128, got %d", coll.Dimension())
+	}
+	if coll.DistanceType() != DistanceDot {
+		t.Errorf("Expected distance type 'dot', got %v", coll.DistanceType())
+	}
+}
+
+// TC-COLLECTION-002: Drop collection
+func TestDropCollectionMCP(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	_, _ = db.CreateCollection("test", WithDimension(3))
+
+	err := db.DropCollection("test")
+	if err != nil {
+		t.Fatalf("DropCollection failed: %v", err)
+	}
+
+	_, err = db.GetCollection("test")
+	if err == nil {
+		t.Error("Expected error for dropped collection")
+	}
+}
+
+// TC-COLLECTION-003: Drop non-existent collection fails
+func TestDropCollectionNotFound(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	err := db.DropCollection("non-existent")
+	if err == nil {
+		t.Error("Expected error for non-existent collection")
+	}
+}
+
+// TC-DB-001: Sync database
+func TestDatabaseSync(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll := db.Collection("test")
+	_, _ = coll.Insert([]float32{1, 0, 0}, nil)
+
+	err := db.Sync()
+	if err != nil {
+		t.Fatalf("Sync failed: %v", err)
+	}
+}
+
+// TC-DB-002: Get metrics
+func TestDatabaseMetrics(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll := db.Collection("test")
+	_, _ = coll.Insert([]float32{1, 0, 0}, nil)
+	_, _ = coll.Insert([]float32{0, 1, 0}, nil)
+
+	metrics := db.Metrics()
+	if metrics.InsertCount < 2 {
+		t.Errorf("Expected at least 2 inserts, got %d", metrics.InsertCount)
+	}
+}
+
 // TC-INTEGRATION-001: Full agent memory workflow
 func TestAgentMemoryWorkflow(t *testing.T) {
 	db, _ := Open(":memory:")
