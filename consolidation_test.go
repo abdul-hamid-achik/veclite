@@ -16,16 +16,16 @@ func TestFindSimilarClusters(t *testing.T) {
 
 	// Insert similar vectors that should cluster together
 	// Cluster 1: vectors pointing mostly in X direction
-	coll.Insert([]float32{0.9, 0.1, 0.0, 0.0}, map[string]any{"group": "x"})
-	coll.Insert([]float32{0.85, 0.15, 0.0, 0.0}, map[string]any{"group": "x"})
-	coll.Insert([]float32{0.95, 0.05, 0.0, 0.0}, map[string]any{"group": "x"})
+	_, _ = coll.Insert([]float32{0.9, 0.1, 0.0, 0.0}, map[string]any{"group": "x"})
+	_, _ = coll.Insert([]float32{0.85, 0.15, 0.0, 0.0}, map[string]any{"group": "x"})
+	_, _ = coll.Insert([]float32{0.95, 0.05, 0.0, 0.0}, map[string]any{"group": "x"})
 
 	// Cluster 2: vectors pointing mostly in Y direction
-	coll.Insert([]float32{0.1, 0.9, 0.0, 0.0}, map[string]any{"group": "y"})
-	coll.Insert([]float32{0.15, 0.85, 0.0, 0.0}, map[string]any{"group": "y"})
+	_, _ = coll.Insert([]float32{0.1, 0.9, 0.0, 0.0}, map[string]any{"group": "y"})
+	_, _ = coll.Insert([]float32{0.15, 0.85, 0.0, 0.0}, map[string]any{"group": "y"})
 
 	// Outlier (not similar to either cluster)
-	coll.Insert([]float32{0.0, 0.0, 1.0, 0.0}, map[string]any{"group": "z"})
+	_, _ = coll.Insert([]float32{0.0, 0.0, 1.0, 0.0}, map[string]any{"group": "z"})
 
 	t.Run("basic clustering", func(t *testing.T) {
 		clusters, err := coll.FindSimilarClusters(ConsolidationConfig{
@@ -96,9 +96,9 @@ func TestConsolidate(t *testing.T) {
 	coll := db.Collection("test")
 
 	// Insert similar vectors
-	coll.InsertWithOptions([]float32{0.9, 0.1, 0.0, 0.0}, map[string]any{"content": "apple"}, WithImportance(0.7))
-	coll.InsertWithOptions([]float32{0.85, 0.15, 0.0, 0.0}, map[string]any{"content": "apricot"}, WithImportance(0.9))
-	coll.InsertWithOptions([]float32{0.95, 0.05, 0.0, 0.0}, map[string]any{"content": "avocado"}, WithImportance(0.5))
+	_, _ = coll.InsertWithOptions([]float32{0.9, 0.1, 0.0, 0.0}, map[string]any{"content": "apple"}, WithImportance(0.7))
+	_, _ = coll.InsertWithOptions([]float32{0.85, 0.15, 0.0, 0.0}, map[string]any{"content": "apricot"}, WithImportance(0.9))
+	_, _ = coll.InsertWithOptions([]float32{0.95, 0.05, 0.0, 0.0}, map[string]any{"content": "avocado"}, WithImportance(0.5))
 
 	t.Run("without summary generator", func(t *testing.T) {
 		result, err := coll.Consolidate(ConsolidationConfig{
@@ -121,9 +121,9 @@ func TestConsolidate(t *testing.T) {
 	t.Run("with summary generator", func(t *testing.T) {
 		// Create a fresh collection
 		coll2 := db.Collection("test2")
-		coll2.InsertWithOptions([]float32{0.9, 0.1, 0.0, 0.0}, map[string]any{"content": "apple"}, WithImportance(0.7))
-		coll2.InsertWithOptions([]float32{0.85, 0.15, 0.0, 0.0}, map[string]any{"content": "apricot"}, WithImportance(0.9))
-		coll2.InsertWithOptions([]float32{0.95, 0.05, 0.0, 0.0}, map[string]any{"content": "avocado"}, WithImportance(0.5))
+		_, _ = coll2.InsertWithOptions([]float32{0.9, 0.1, 0.0, 0.0}, map[string]any{"content": "apple"}, WithImportance(0.7))
+		_, _ = coll2.InsertWithOptions([]float32{0.85, 0.15, 0.0, 0.0}, map[string]any{"content": "apricot"}, WithImportance(0.9))
+		_, _ = coll2.InsertWithOptions([]float32{0.95, 0.05, 0.0, 0.0}, map[string]any{"content": "avocado"}, WithImportance(0.5))
 
 		summaryGenerator := func(records []*Record) (string, map[string]any, error) {
 			var contents []string
@@ -177,8 +177,8 @@ func TestConsolidate(t *testing.T) {
 
 	t.Run("requires embedder with summary generator", func(t *testing.T) {
 		coll3 := db.Collection("test3")
-		coll3.Insert([]float32{0.9, 0.1, 0.0, 0.0}, nil)
-		coll3.Insert([]float32{0.85, 0.15, 0.0, 0.0}, nil)
+		_, _ = coll3.Insert([]float32{0.9, 0.1, 0.0, 0.0}, nil)
+		_, _ = coll3.Insert([]float32{0.85, 0.15, 0.0, 0.0}, nil)
 
 		_, err := coll3.Consolidate(ConsolidationConfig{
 			SimilarityThreshold: 0.9,
@@ -258,10 +258,10 @@ func TestGetConsolidations(t *testing.T) {
 	coll := db.Collection("test")
 
 	// Insert regular records
-	coll.Insert([]float32{1, 0, 0, 0}, map[string]any{"type": "regular"})
+	_, _ = coll.Insert([]float32{1, 0, 0, 0}, map[string]any{"type": "regular"})
 
 	// Insert consolidation record
-	coll.Insert([]float32{0, 1, 0, 0}, map[string]any{
+	_, _ = coll.Insert([]float32{0, 1, 0, 0}, map[string]any{
 		PayloadKeyIsConsolidation: true,
 		"type":                    "consolidated",
 	})

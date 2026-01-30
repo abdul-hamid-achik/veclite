@@ -204,8 +204,8 @@ func TestSearchWithImportanceBoost(t *testing.T) {
 	// Insert records with different importance
 	vec := []float32{1.0, 0.0, 0.0}
 
-	coll.InsertWithOptions(vec, map[string]any{"name": "low"}, WithImportance(0.1))
-	coll.InsertWithOptions(vec, map[string]any{"name": "high"}, WithImportance(0.9))
+	_, _ = coll.InsertWithOptions(vec, map[string]any{"name": "low"}, WithImportance(0.1))
+	_, _ = coll.InsertWithOptions(vec, map[string]any{"name": "high"}, WithImportance(0.9))
 
 	t.Run("search with importance boost prefers high importance", func(t *testing.T) {
 		results, err := coll.Search(vec, TopK(10), WithImportanceBoost(2.0))

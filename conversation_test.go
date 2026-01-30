@@ -88,13 +88,13 @@ func TestGetSession(t *testing.T) {
 	coll := db.Collection("conversations")
 
 	// Insert turns for two sessions
-	coll.InsertTurn(ConversationTurn{SessionID: "session-1", TurnNumber: 1, Vector: []float32{1, 0, 0, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "session-1", TurnNumber: 1, Vector: []float32{1, 0, 0, 0}})
 	time.Sleep(time.Millisecond)
-	coll.InsertTurn(ConversationTurn{SessionID: "session-1", TurnNumber: 2, Vector: []float32{0, 1, 0, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "session-1", TurnNumber: 2, Vector: []float32{0, 1, 0, 0}})
 	time.Sleep(time.Millisecond)
-	coll.InsertTurn(ConversationTurn{SessionID: "session-2", TurnNumber: 1, Vector: []float32{0, 0, 1, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "session-2", TurnNumber: 1, Vector: []float32{0, 0, 1, 0}})
 	time.Sleep(time.Millisecond)
-	coll.InsertTurn(ConversationTurn{SessionID: "session-1", TurnNumber: 3, Vector: []float32{0, 0, 0, 1}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "session-1", TurnNumber: 3, Vector: []float32{0, 0, 0, 1}})
 
 	records, err := coll.GetSession("session-1")
 	if err != nil {
@@ -175,9 +175,9 @@ func TestSearchInSession(t *testing.T) {
 	coll := db.Collection("conversations")
 
 	// Insert turns in different sessions
-	coll.InsertTurn(ConversationTurn{SessionID: "session-1", TurnNumber: 1, Vector: []float32{1, 0, 0, 0}})
-	coll.InsertTurn(ConversationTurn{SessionID: "session-1", TurnNumber: 2, Vector: []float32{0.9, 0.1, 0, 0}})
-	coll.InsertTurn(ConversationTurn{SessionID: "session-2", TurnNumber: 1, Vector: []float32{0.95, 0.05, 0, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "session-1", TurnNumber: 1, Vector: []float32{1, 0, 0, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "session-1", TurnNumber: 2, Vector: []float32{0.9, 0.1, 0, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "session-2", TurnNumber: 1, Vector: []float32{0.95, 0.05, 0, 0}})
 
 	// Search in session-1 only
 	results, err := coll.SearchInSession("session-1", []float32{1, 0, 0, 0}, WithLimit(10))
@@ -205,9 +205,9 @@ func TestListSessions(t *testing.T) {
 
 	coll := db.Collection("conversations")
 
-	coll.InsertTurn(ConversationTurn{SessionID: "alpha", TurnNumber: 1, Vector: []float32{1, 0, 0, 0}})
-	coll.InsertTurn(ConversationTurn{SessionID: "beta", TurnNumber: 1, Vector: []float32{0, 1, 0, 0}})
-	coll.InsertTurn(ConversationTurn{SessionID: "alpha", TurnNumber: 2, Vector: []float32{0, 0, 1, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "alpha", TurnNumber: 1, Vector: []float32{1, 0, 0, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "beta", TurnNumber: 1, Vector: []float32{0, 1, 0, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "alpha", TurnNumber: 2, Vector: []float32{0, 0, 1, 0}})
 
 	sessions := coll.ListSessions()
 
@@ -230,9 +230,9 @@ func TestGetSessionStats(t *testing.T) {
 
 	coll := db.Collection("conversations")
 
-	coll.InsertTurn(ConversationTurn{SessionID: "session-1", TurnNumber: 1, Role: "user", Vector: []float32{1, 0, 0, 0}})
-	coll.InsertTurn(ConversationTurn{SessionID: "session-1", TurnNumber: 2, Role: "assistant", Vector: []float32{0, 1, 0, 0}})
-	coll.InsertTurn(ConversationTurn{SessionID: "session-1", TurnNumber: 3, Role: "user", Vector: []float32{0, 0, 1, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "session-1", TurnNumber: 1, Role: "user", Vector: []float32{1, 0, 0, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "session-1", TurnNumber: 2, Role: "assistant", Vector: []float32{0, 1, 0, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "session-1", TurnNumber: 3, Role: "user", Vector: []float32{0, 0, 1, 0}})
 
 	stats, err := coll.GetSessionStats("session-1")
 	if err != nil {

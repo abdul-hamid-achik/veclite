@@ -70,19 +70,19 @@ func TestDetectEpisodes(t *testing.T) {
 
 	// Insert records with time gaps
 	// Episode 1: close in time
-	coll.Insert([]float32{1, 0, 0, 0}, nil)
+	_, _ = coll.Insert([]float32{1, 0, 0, 0}, nil)
 	time.Sleep(10 * time.Millisecond)
-	coll.Insert([]float32{0.9, 0.1, 0, 0}, nil)
+	_, _ = coll.Insert([]float32{0.9, 0.1, 0, 0}, nil)
 	time.Sleep(10 * time.Millisecond)
-	coll.Insert([]float32{0.8, 0.2, 0, 0}, nil)
+	_, _ = coll.Insert([]float32{0.8, 0.2, 0, 0}, nil)
 
 	// Gap (simulated by just continuing - actual time gap would be larger)
 	time.Sleep(50 * time.Millisecond)
 
 	// Episode 2: another cluster
-	coll.Insert([]float32{0, 1, 0, 0}, nil)
+	_, _ = coll.Insert([]float32{0, 1, 0, 0}, nil)
 	time.Sleep(10 * time.Millisecond)
-	coll.Insert([]float32{0.1, 0.9, 0, 0}, nil)
+	_, _ = coll.Insert([]float32{0.1, 0.9, 0, 0}, nil)
 
 	es, err := db.CreateEpisodeStore("memories")
 	if err != nil {
@@ -208,24 +208,24 @@ func TestEpisodeOperations(t *testing.T) {
 	})
 
 	t.Run("find record episode", func(t *testing.T) {
-		episode, err := es.FindRecordEpisode(id1)
+		foundEpisode, err := es.FindRecordEpisode(id1)
 		if err != nil {
 			t.Fatalf("FindRecordEpisode failed: %v", err)
 		}
-		if episode == nil {
-			t.Error("expected to find episode for record")
+		if foundEpisode == nil {
+			t.Fatal("expected to find episode for record")
 		}
-		if episode.ID != ep1.ID {
-			t.Errorf("expected episode %s, got %s", ep1.ID, episode.ID)
+		if foundEpisode.ID != ep1.ID {
+			t.Errorf("expected episode %s, got %s", ep1.ID, foundEpisode.ID)
 		}
 
 		// Record not in any episode
 		id3, _ := coll.Insert([]float32{0, 0, 1, 0}, nil)
-		episode, err = es.FindRecordEpisode(id3)
+		foundEpisode, err = es.FindRecordEpisode(id3)
 		if err != nil {
 			t.Fatalf("FindRecordEpisode failed: %v", err)
 		}
-		if episode != nil {
+		if foundEpisode != nil {
 			t.Error("expected no episode for unassigned record")
 		}
 	})
@@ -244,10 +244,10 @@ func TestSearchWithEpisodeExpansion(t *testing.T) {
 	id1, _ := coll.Insert([]float32{1, 0, 0, 0}, map[string]any{"content": "main"})
 	id2, _ := coll.Insert([]float32{0.9, 0.1, 0, 0}, map[string]any{"content": "related1"})
 	id3, _ := coll.Insert([]float32{0.8, 0.2, 0, 0}, map[string]any{"content": "related2"})
-	coll.Insert([]float32{0, 0, 1, 0}, map[string]any{"content": "unrelated"})
+	_, _ = coll.Insert([]float32{0, 0, 1, 0}, map[string]any{"content": "unrelated"})
 
 	es, _ := db.CreateEpisodeStore("memories")
-	es.CreateEpisode([]uint64{id1, id2, id3}, "Test Episode")
+	_, _ = es.CreateEpisode([]uint64{id1, id2, id3}, "Test Episode")
 
 	t.Run("search with expansion", func(t *testing.T) {
 		results, err := es.SearchWithEpisodeExpansion([]float32{1, 0, 0, 0}, WithLimit(5))
@@ -291,8 +291,8 @@ func TestSearchEpisodes(t *testing.T) {
 	id2, _ := coll.Insert([]float32{0, 1, 0, 0}, nil)
 
 	es, _ := db.CreateEpisodeStore("memories")
-	es.CreateEpisode([]uint64{id1}, "X-direction episode")
-	es.CreateEpisode([]uint64{id2}, "Y-direction episode")
+	_, _ = es.CreateEpisode([]uint64{id1}, "X-direction episode")
+	_, _ = es.CreateEpisode([]uint64{id2}, "Y-direction episode")
 
 	t.Run("search episodes by vector", func(t *testing.T) {
 		episodes, err := es.SearchEpisodes([]float32{0.9, 0.1, 0, 0}, 5)

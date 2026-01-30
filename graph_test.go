@@ -81,8 +81,8 @@ func TestKnowledgeGraphEntity(t *testing.T) {
 	})
 
 	t.Run("list entities", func(t *testing.T) {
-		kg.AddEntity(Entity{ID: "company-1", Type: "company", Name: "Acme Corp"})
-		kg.AddEntity(Entity{ID: "person-2", Type: "person", Name: "Bob"})
+		_ = kg.AddEntity(Entity{ID: "company-1", Type: "company", Name: "Acme Corp"})
+		_ = kg.AddEntity(Entity{ID: "person-2", Type: "person", Name: "Bob"})
 
 		all := kg.ListEntities("")
 		if len(all) != 3 {
@@ -118,9 +118,9 @@ func TestKnowledgeGraphRelationship(t *testing.T) {
 	kg, _ := db.CreateKnowledgeGraph("test")
 
 	// Add entities
-	kg.AddEntity(Entity{ID: "alice", Type: "person", Name: "Alice"})
-	kg.AddEntity(Entity{ID: "bob", Type: "person", Name: "Bob"})
-	kg.AddEntity(Entity{ID: "acme", Type: "company", Name: "Acme Corp"})
+	_ = kg.AddEntity(Entity{ID: "alice", Type: "person", Name: "Alice"})
+	_ = kg.AddEntity(Entity{ID: "bob", Type: "person", Name: "Bob"})
+	_ = kg.AddEntity(Entity{ID: "acme", Type: "company", Name: "Acme Corp"})
 
 	t.Run("add relationship", func(t *testing.T) {
 		err := kg.AddRelationship(Relationship{
@@ -230,15 +230,15 @@ func TestKnowledgeGraphTraversal(t *testing.T) {
 	// Create a graph:
 	// alice -> bob -> charlie
 	//       -> acme <- bob
-	kg.AddEntity(Entity{ID: "alice", Type: "person", Name: "Alice"})
-	kg.AddEntity(Entity{ID: "bob", Type: "person", Name: "Bob"})
-	kg.AddEntity(Entity{ID: "charlie", Type: "person", Name: "Charlie"})
-	kg.AddEntity(Entity{ID: "acme", Type: "company", Name: "Acme"})
+	_ = kg.AddEntity(Entity{ID: "alice", Type: "person", Name: "Alice"})
+	_ = kg.AddEntity(Entity{ID: "bob", Type: "person", Name: "Bob"})
+	_ = kg.AddEntity(Entity{ID: "charlie", Type: "person", Name: "Charlie"})
+	_ = kg.AddEntity(Entity{ID: "acme", Type: "company", Name: "Acme"})
 
-	kg.AddRelationship(Relationship{ID: "r1", SourceID: "alice", TargetID: "bob", Type: "knows", Weight: 0.9})
-	kg.AddRelationship(Relationship{ID: "r2", SourceID: "bob", TargetID: "charlie", Type: "knows", Weight: 0.8})
-	kg.AddRelationship(Relationship{ID: "r3", SourceID: "alice", TargetID: "acme", Type: "works_at", Weight: 0.95})
-	kg.AddRelationship(Relationship{ID: "r4", SourceID: "bob", TargetID: "acme", Type: "works_at", Weight: 0.9})
+	_ = kg.AddRelationship(Relationship{ID: "r1", SourceID: "alice", TargetID: "bob", Type: "knows", Weight: 0.9})
+	_ = kg.AddRelationship(Relationship{ID: "r2", SourceID: "bob", TargetID: "charlie", Type: "knows", Weight: 0.8})
+	_ = kg.AddRelationship(Relationship{ID: "r3", SourceID: "alice", TargetID: "acme", Type: "works_at", Weight: 0.95})
+	_ = kg.AddRelationship(Relationship{ID: "r4", SourceID: "bob", TargetID: "acme", Type: "works_at", Weight: 0.9})
 
 	t.Run("basic traversal", func(t *testing.T) {
 		result, err := kg.Traverse([]string{"alice"}, TraversalConfig{
@@ -349,12 +349,12 @@ func TestKnowledgeGraphSearchWithExpansion(t *testing.T) {
 	kg, _ := db.CreateKnowledgeGraph("test")
 
 	// Add entities with vectors
-	kg.AddEntity(Entity{ID: "alice", Type: "person", Name: "Alice", Vector: []float32{1, 0, 0, 0}})
-	kg.AddEntity(Entity{ID: "bob", Type: "person", Name: "Bob", Vector: []float32{0.9, 0.1, 0, 0}})
-	kg.AddEntity(Entity{ID: "acme", Type: "company", Name: "Acme", Vector: []float32{0, 1, 0, 0}})
+	_ = kg.AddEntity(Entity{ID: "alice", Type: "person", Name: "Alice", Vector: []float32{1, 0, 0, 0}})
+	_ = kg.AddEntity(Entity{ID: "bob", Type: "person", Name: "Bob", Vector: []float32{0.9, 0.1, 0, 0}})
+	_ = kg.AddEntity(Entity{ID: "acme", Type: "company", Name: "Acme", Vector: []float32{0, 1, 0, 0}})
 
-	kg.AddRelationship(Relationship{ID: "r1", SourceID: "alice", TargetID: "bob", Type: "knows", Weight: 0.9})
-	kg.AddRelationship(Relationship{ID: "r2", SourceID: "alice", TargetID: "acme", Type: "works_at", Weight: 0.8})
+	_ = kg.AddRelationship(Relationship{ID: "r1", SourceID: "alice", TargetID: "bob", Type: "knows", Weight: 0.9})
+	_ = kg.AddRelationship(Relationship{ID: "r2", SourceID: "alice", TargetID: "acme", Type: "works_at", Weight: 0.8})
 
 	t.Run("search with expansion", func(t *testing.T) {
 		results, err := kg.SearchWithExpansion(
@@ -396,12 +396,12 @@ func TestKnowledgeGraphStats(t *testing.T) {
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 
-	kg.AddEntity(Entity{ID: "p1", Type: "person", Name: "Person 1"})
-	kg.AddEntity(Entity{ID: "p2", Type: "person", Name: "Person 2"})
-	kg.AddEntity(Entity{ID: "c1", Type: "company", Name: "Company 1"})
+	_ = kg.AddEntity(Entity{ID: "p1", Type: "person", Name: "Person 1"})
+	_ = kg.AddEntity(Entity{ID: "p2", Type: "person", Name: "Person 2"})
+	_ = kg.AddEntity(Entity{ID: "c1", Type: "company", Name: "Company 1"})
 
-	kg.AddRelationship(Relationship{ID: "r1", SourceID: "p1", TargetID: "p2", Type: "knows"})
-	kg.AddRelationship(Relationship{ID: "r2", SourceID: "p1", TargetID: "c1", Type: "works_at"})
+	_ = kg.AddRelationship(Relationship{ID: "r1", SourceID: "p1", TargetID: "p2", Type: "knows"})
+	_ = kg.AddRelationship(Relationship{ID: "r2", SourceID: "p1", TargetID: "c1", Type: "works_at"})
 
 	stats := kg.Stats()
 
@@ -504,8 +504,8 @@ func TestAddRelationshipNoID(t *testing.T) {
 	defer db.Close()
 
 	kg, _ := db.CreateKnowledgeGraph("test")
-	kg.AddEntity(Entity{ID: "a"})
-	kg.AddEntity(Entity{ID: "b"})
+	_ = kg.AddEntity(Entity{ID: "a"})
+	_ = kg.AddEntity(Entity{ID: "b"})
 
 	err = kg.AddRelationship(Relationship{SourceID: "a", TargetID: "b"})
 	if err == nil {

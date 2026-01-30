@@ -270,13 +270,13 @@ func TestFiltersWithCollection(t *testing.T) {
 
 	// Insert records with different properties
 	// High importance, no TTL
-	coll.InsertWithOptions(vec, map[string]any{"name": "high"}, WithImportance(0.9))
+	_, _ = coll.InsertWithOptions(vec, map[string]any{"name": "high"}, WithImportance(0.9))
 
 	// Low importance, with TTL
-	coll.InsertWithOptions(vec, map[string]any{"name": "low"}, WithImportance(0.2), WithTTL(time.Hour))
+	_, _ = coll.InsertWithOptions(vec, map[string]any{"name": "low"}, WithImportance(0.2), WithTTL(time.Hour))
 
 	// Medium importance, expired
-	coll.InsertWithOptions(vec, map[string]any{"name": "expired"}, WithImportance(0.5), WithExpiresAt(time.Now().Add(-time.Hour)))
+	_, _ = coll.InsertWithOptions(vec, map[string]any{"name": "expired"}, WithImportance(0.5), WithExpiresAt(time.Now().Add(-time.Hour)))
 
 	// Search with NotExpired filter
 	t.Run("Find with NotExpired", func(t *testing.T) {

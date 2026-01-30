@@ -156,9 +156,9 @@ func TestMemoryFilters(t *testing.T) {
 	defer mem.Close()
 
 	// Create memories with different properties
-	mem.Remember("High importance memory", RememberOptions{Importance: 0.9, Tags: []string{"important"}})
-	mem.Remember("Low importance memory", RememberOptions{Importance: 0.1, Tags: []string{"trivial"}})
-	mem.Remember("Tagged memory", RememberOptions{Tags: []string{"specific"}})
+	_, _ = mem.Remember("High importance memory", RememberOptions{Importance: 0.9, Tags: []string{"important"}})
+	_, _ = mem.Remember("Low importance memory", RememberOptions{Importance: 0.1, Tags: []string{"trivial"}})
+	_, _ = mem.Remember("Tagged memory", RememberOptions{Tags: []string{"specific"}})
 
 	t.Run("filter by min importance", func(t *testing.T) {
 		entries, err := mem.Recall("memory", RecallOptions{
@@ -200,9 +200,9 @@ func TestMemoryForget(t *testing.T) {
 	defer mem.Close()
 
 	// Create some memories
-	mem.Remember("To forget by tag", RememberOptions{Tags: []string{"delete-me"}})
-	mem.Remember("To keep", RememberOptions{Tags: []string{"keep"}})
-	mem.Remember("Low importance to forget", RememberOptions{Importance: 0.1})
+	_, _ = mem.Remember("To forget by tag", RememberOptions{Tags: []string{"delete-me"}})
+	_, _ = mem.Remember("To keep", RememberOptions{Tags: []string{"keep"}})
+	_, _ = mem.Remember("Low importance to forget", RememberOptions{Importance: 0.1})
 
 	t.Run("forget by tags", func(t *testing.T) {
 		deleted, err := mem.Forget(ForgetOptions{
@@ -247,11 +247,11 @@ func TestMemoryExportMarkdown(t *testing.T) {
 	defer mem.Close()
 
 	// Create some memories
-	mem.Remember("First memory", RememberOptions{
+	_, _ = mem.Remember("First memory", RememberOptions{
 		Importance: 0.8,
 		Tags:       []string{"export", "test"},
 	})
-	mem.Remember("Second memory", RememberOptions{
+	_, _ = mem.Remember("Second memory", RememberOptions{
 		TTL: time.Hour,
 	})
 
@@ -293,7 +293,7 @@ func TestMemoryRecallRecent(t *testing.T) {
 
 	// Create memories
 	for i := 0; i < 5; i++ {
-		mem.Remember("Memory content", RememberOptions{})
+		_, _ = mem.Remember("Memory content", RememberOptions{})
 		time.Sleep(time.Millisecond) // Ensure different timestamps
 	}
 
@@ -325,8 +325,8 @@ func TestMemoryStats(t *testing.T) {
 	defer mem.Close()
 
 	// Create some memories
-	mem.Remember("Memory 1", RememberOptions{Importance: 0.8})
-	mem.Remember("Memory 2", RememberOptions{Importance: 0.6})
+	_, _ = mem.Remember("Memory 1", RememberOptions{Importance: 0.8})
+	_, _ = mem.Remember("Memory 2", RememberOptions{Importance: 0.6})
 
 	stats := mem.Stats()
 
