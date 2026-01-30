@@ -302,7 +302,7 @@ func TestMemoryLimiterSkipsArchived(t *testing.T) {
 	var archivedIDs []uint64
 	for i := 0; i < 5; i++ {
 		id, _ := coll.Insert([]float32{float32(i), 0, 0}, nil)
-		coll.ArchiveRecord(id)
+		_ = coll.ArchiveRecord(id)
 		archivedIDs = append(archivedIDs, id)
 	}
 

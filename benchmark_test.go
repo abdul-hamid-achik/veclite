@@ -130,7 +130,7 @@ func BenchmarkSearchWithFilters(b *testing.B) {
 			"category": categories[i%len(categories)],
 			"score":    float64(i % 100),
 		}
-		coll.Insert(vec, payload)
+		_, _ = coll.Insert(vec, payload)
 	}
 
 	query := generateRandomVector(dim)
@@ -138,21 +138,21 @@ func BenchmarkSearchWithFilters(b *testing.B) {
 	b.Run("no_filter", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			coll.Search(query, TopK(10))
+			_, _ = coll.Search(query, TopK(10))
 		}
 	})
 
 	b.Run("one_filter", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			coll.Search(query, TopK(10), WithFilter(Equal("category", "cat_a")))
+			_, _ = coll.Search(query, TopK(10), WithFilter(Equal("category", "cat_a")))
 		}
 	})
 
 	b.Run("two_filters", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			coll.Search(query, TopK(10),
+			_, _ = coll.Search(query, TopK(10),
 				WithFilter(Equal("category", "cat_a")),
 				WithFilter(GreaterThan("score", 50.0)),
 			)
@@ -172,7 +172,7 @@ func BenchmarkInsertSingle(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			vec := generateRandomVector(dim)
-			coll.Insert(vec, nil)
+			_, _ = coll.Insert(vec, nil)
 		}
 	})
 
@@ -187,7 +187,7 @@ func BenchmarkInsertSingle(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			vec := generateRandomVector(dim)
-			coll.Insert(vec, nil)
+			_, _ = coll.Insert(vec, nil)
 		}
 	})
 }
@@ -208,7 +208,7 @@ func BenchmarkBatchInsert(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				db, _ := Open(":memory:")
 				coll, _ := db.CreateCollection("bench", WithDimension(dim))
-				coll.InsertBatch(vectors, nil)
+				_, _ = coll.InsertBatch(vectors, nil)
 				db.Close()
 			}
 		})
@@ -226,7 +226,7 @@ func BenchmarkBatchInsert(b *testing.B) {
 					WithDimension(dim),
 					WithHNSW(16, 100),
 				)
-				coll.InsertBatch(vectors, nil)
+				_, _ = coll.InsertBatch(vectors, nil)
 				db.Close()
 			}
 		})
@@ -257,7 +257,7 @@ func BenchmarkHybridSearch(b *testing.B) {
 		for j := 0; j < 10; j++ {
 			content += words[rand.Intn(len(words))] + " "
 		}
-		coll.InsertDocument(vec, content, nil)
+		_, _ = coll.InsertDocument(vec, content, nil)
 	}
 
 	query := generateRandomVector(dim)
@@ -266,21 +266,21 @@ func BenchmarkHybridSearch(b *testing.B) {
 	b.Run("vector_only", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			coll.Search(query, TopK(10))
+			_, _ = coll.Search(query, TopK(10))
 		}
 	})
 
 	b.Run("text_only", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			coll.TextSearch(textQuery, TopK(10))
+			_, _ = coll.TextSearch(textQuery, TopK(10))
 		}
 	})
 
 	b.Run("hybrid", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			coll.HybridSearch(query, textQuery, TopK(10))
+			_, _ = coll.HybridSearch(query, textQuery, TopK(10))
 		}
 	})
 }
@@ -295,7 +295,7 @@ func BenchmarkGraphTraverse(b *testing.B) {
 	// Create a graph with entities and relationships
 	numEntities := 500
 	for i := 0; i < numEntities; i++ {
-		kg.AddEntity(Entity{
+		_ = kg.AddEntity(Entity{
 			ID:   fmt.Sprintf("e%d", i),
 			Type: "entity",
 			Name: fmt.Sprintf("Entity %d", i),
@@ -308,7 +308,7 @@ func BenchmarkGraphTraverse(b *testing.B) {
 		for j := 0; j < 5; j++ {
 			target := rand.Intn(numEntities)
 			if target != i {
-				kg.AddRelationship(Relationship{
+				_ = kg.AddRelationship(Relationship{
 					ID:       fmt.Sprintf("r%d", relID),
 					SourceID: fmt.Sprintf("e%d", i),
 					TargetID: fmt.Sprintf("e%d", target),
@@ -325,21 +325,21 @@ func BenchmarkGraphTraverse(b *testing.B) {
 	b.Run("depth_1", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			kg.Traverse(startIDs, TraversalConfig{MaxDepth: 1, MaxNodes: 100})
+			_, _ = kg.Traverse(startIDs, TraversalConfig{MaxDepth: 1, MaxNodes: 100})
 		}
 	})
 
 	b.Run("depth_2", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			kg.Traverse(startIDs, TraversalConfig{MaxDepth: 2, MaxNodes: 100})
+			_, _ = kg.Traverse(startIDs, TraversalConfig{MaxDepth: 2, MaxNodes: 100})
 		}
 	})
 
 	b.Run("depth_3", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			kg.Traverse(startIDs, TraversalConfig{MaxDepth: 3, MaxNodes: 100})
+			_, _ = kg.Traverse(startIDs, TraversalConfig{MaxDepth: 3, MaxNodes: 100})
 		}
 	})
 }
@@ -360,7 +360,7 @@ func BenchmarkMemoryOperations(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
 			vec := generateRandomVector(dim)
-			coll.InsertWithOptions(vec, nil, WithContentOption("test memory content"), WithImportance(0.5))
+			_, _ = coll.InsertWithOptions(vec, nil, WithContentOption("test memory content"), WithImportance(0.5))
 		}
 	})
 
@@ -376,7 +376,7 @@ func BenchmarkMemoryOperations(b *testing.B) {
 		// Pre-populate
 		for i := 0; i < 5000; i++ {
 			vec := generateRandomVector(dim)
-			coll.InsertWithOptions(vec, nil, WithContentOption("test memory"), WithImportance(rand.Float32()))
+			_, _ = coll.InsertWithOptions(vec, nil, WithContentOption("test memory"), WithImportance(rand.Float32()))
 		}
 
 		query := generateRandomVector(dim)
@@ -410,14 +410,14 @@ func BenchmarkConsolidation(b *testing.B) {
 			for k := range vec {
 				vec[k] = base[k] + (rand.Float32()-0.5)*0.1
 			}
-			coll.Insert(vec, map[string]any{"group": i})
+			_, _ = coll.Insert(vec, map[string]any{"group": i})
 		}
 	}
 
 	b.Run("find_clusters", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			coll.FindSimilarClusters(ConsolidationConfig{
+			_, _ = coll.FindSimilarClusters(ConsolidationConfig{
 				SimilarityThreshold: 0.9,
 				MinGroupSize:        2,
 				MaxGroupSize:        10,
@@ -441,7 +441,7 @@ func BenchmarkEpisodeDetection(b *testing.B) {
 	// Insert records
 	for i := 0; i < size; i++ {
 		vec := generateRandomVector(dim)
-		coll.Insert(vec, nil)
+		_, _ = coll.Insert(vec, nil)
 	}
 
 	es, _ := db.CreateEpisodeStore("memories")
@@ -449,7 +449,7 @@ func BenchmarkEpisodeDetection(b *testing.B) {
 	b.Run("detect", func(b *testing.B) {
 		b.ResetTimer()
 		for i := 0; i < b.N; i++ {
-			es.DetectEpisodes(EpisodeConfig{
+			_, _ = es.DetectEpisodes(EpisodeConfig{
 				MinRecords: 2,
 			})
 		}

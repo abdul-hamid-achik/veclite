@@ -49,7 +49,7 @@ func TestKnowledgeGraphDuplicateEntity(t *testing.T) {
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 
-	kg.AddEntity(Entity{ID: "e1", Type: "test"})
+	_ = kg.AddEntity(Entity{ID: "e1", Type: "test"})
 
 	err := kg.AddEntity(Entity{ID: "e1", Type: "test"})
 	if err == nil {
@@ -64,8 +64,8 @@ func TestKnowledgeGraphAddRelationship(t *testing.T) {
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 
-	kg.AddEntity(Entity{ID: "alice", Type: "person", Name: "Alice"})
-	kg.AddEntity(Entity{ID: "bob", Type: "person", Name: "Bob"})
+	_ = kg.AddEntity(Entity{ID: "alice", Type: "person", Name: "Alice"})
+	_ = kg.AddEntity(Entity{ID: "bob", Type: "person", Name: "Bob"})
 
 	err := kg.AddRelationship(Relationship{
 		ID:       "rel1",
@@ -94,7 +94,7 @@ func TestKnowledgeGraphRelationshipMissingEntity(t *testing.T) {
 	defer db.Close()
 
 	kg, _ := db.CreateKnowledgeGraph("test")
-	kg.AddEntity(Entity{ID: "alice", Type: "person"})
+	_ = kg.AddEntity(Entity{ID: "alice", Type: "person"})
 
 	err := kg.AddRelationship(Relationship{
 		ID:       "rel1",
@@ -116,14 +116,14 @@ func TestKnowledgeGraphTraversalBFS(t *testing.T) {
 	kg, _ := db.CreateKnowledgeGraph("test")
 
 	// Create a chain: A -> B -> C -> D
-	kg.AddEntity(Entity{ID: "a", Type: "node"})
-	kg.AddEntity(Entity{ID: "b", Type: "node"})
-	kg.AddEntity(Entity{ID: "c", Type: "node"})
-	kg.AddEntity(Entity{ID: "d", Type: "node"})
+	_ = kg.AddEntity(Entity{ID: "a", Type: "node"})
+	_ = kg.AddEntity(Entity{ID: "b", Type: "node"})
+	_ = kg.AddEntity(Entity{ID: "c", Type: "node"})
+	_ = kg.AddEntity(Entity{ID: "d", Type: "node"})
 
-	kg.AddRelationship(Relationship{ID: "r1", SourceID: "a", TargetID: "b", Type: "link"})
-	kg.AddRelationship(Relationship{ID: "r2", SourceID: "b", TargetID: "c", Type: "link"})
-	kg.AddRelationship(Relationship{ID: "r3", SourceID: "c", TargetID: "d", Type: "link"})
+	_ = kg.AddRelationship(Relationship{ID: "r1", SourceID: "a", TargetID: "b", Type: "link"})
+	_ = kg.AddRelationship(Relationship{ID: "r2", SourceID: "b", TargetID: "c", Type: "link"})
+	_ = kg.AddRelationship(Relationship{ID: "r3", SourceID: "c", TargetID: "d", Type: "link"})
 
 	// Traverse from A with depth 2
 	result, err := kg.Traverse([]string{"a"}, TraversalConfig{
@@ -205,10 +205,10 @@ func TestConversationListSessions(t *testing.T) {
 	coll, _ := db.CreateCollection("conv", WithDimension(3))
 
 	// Add turns to different sessions
-	coll.InsertTurn(ConversationTurn{SessionID: "s1", Content: "msg1", Vector: []float32{1, 0, 0}})
-	coll.InsertTurn(ConversationTurn{SessionID: "s2", Content: "msg2", Vector: []float32{0, 1, 0}})
-	coll.InsertTurn(ConversationTurn{SessionID: "s3", Content: "msg3", Vector: []float32{0, 0, 1}})
-	coll.InsertTurn(ConversationTurn{SessionID: "s1", Content: "msg4", Vector: []float32{1, 1, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "s1", Content: "msg1", Vector: []float32{1, 0, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "s2", Content: "msg2", Vector: []float32{0, 1, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "s3", Content: "msg3", Vector: []float32{0, 0, 1}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "s1", Content: "msg4", Vector: []float32{1, 1, 0}})
 
 	sessions := coll.ListSessions()
 
@@ -225,9 +225,9 @@ func TestConversationSearchInSession(t *testing.T) {
 	coll, _ := db.CreateCollection("conv", WithDimension(3))
 
 	// Add turns to different sessions
-	coll.InsertTurn(ConversationTurn{SessionID: "s1", Content: "apple", Vector: []float32{1, 0, 0}})
-	coll.InsertTurn(ConversationTurn{SessionID: "s1", Content: "banana", Vector: []float32{0.9, 0.1, 0}})
-	coll.InsertTurn(ConversationTurn{SessionID: "s2", Content: "cherry", Vector: []float32{0.8, 0.2, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "s1", Content: "apple", Vector: []float32{1, 0, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "s1", Content: "banana", Vector: []float32{0.9, 0.1, 0}})
+	_, _ = coll.InsertTurn(ConversationTurn{SessionID: "s2", Content: "cherry", Vector: []float32{0.8, 0.2, 0}})
 
 	// Search in s1 only
 	results, err := coll.SearchInSession("s1", []float32{1, 0, 0}, TopK(10))
@@ -316,9 +316,9 @@ func TestEpisodeList(t *testing.T) {
 	id3, _ := coll.Insert([]float32{0, 0, 1}, nil)
 
 	es, _ := db.CreateEpisodeStore("memories")
-	es.CreateEpisode([]uint64{id1}, "Episode 1")
-	es.CreateEpisode([]uint64{id2}, "Episode 2")
-	es.CreateEpisode([]uint64{id3}, "Episode 3")
+	_, _ = es.CreateEpisode([]uint64{id1}, "Episode 1")
+	_, _ = es.CreateEpisode([]uint64{id2}, "Episode 2")
+	_, _ = es.CreateEpisode([]uint64{id3}, "Episode 3")
 
 	episodes := es.ListEpisodes()
 	if len(episodes) != 3 {

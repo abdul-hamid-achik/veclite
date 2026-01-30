@@ -83,23 +83,6 @@ func (s *MCPServer) getOrCreateEpisodeStore(collectionName string) (*veclite.Epi
 	return es, nil
 }
 
-// embedText attempts to embed text using the configured embedder.
-// Returns error if no embedder is configured.
-func (s *MCPServer) embedText(text string) ([]float32, error) {
-	if s.embedder == nil {
-		return nil, fmt.Errorf("no embedder configured; provide vector directly or configure ONNX embedder")
-	}
-	return s.embedder.Embed(text)
-}
-
-// embedTextBatch attempts to embed multiple texts using the configured embedder.
-func (s *MCPServer) embedTextBatch(texts []string) ([][]float32, error) {
-	if s.embedder == nil {
-		return nil, fmt.Errorf("no embedder configured; provide vectors directly or configure ONNX embedder")
-	}
-	return s.embedder.EmbedBatch(texts)
-}
-
 func (s *MCPServer) run() {
 	// Create MCP server with implementation info
 	s.server = mcp.NewServer(&mcp.Implementation{
@@ -316,13 +299,6 @@ type memoryFindClustersInput struct {
 	SimilarityThreshold float64 `json:"similarity_threshold,omitempty" jsonschema:"description=Minimum similarity for grouping (default 0.85)"`
 	MinSize             int     `json:"min_size,omitempty" jsonschema:"description=Minimum cluster size (default 2)"`
 	MaxSize             int     `json:"max_size,omitempty" jsonschema:"description=Maximum cluster size (default 10)"`
-}
-
-type memoryConsolidateInput struct {
-	Collection       string   `json:"collection" jsonschema:"description=Collection name (default: memories),required"`
-	ClusterIDs       []string `json:"cluster_ids,omitempty" jsonschema:"description=Specific cluster IDs to consolidate (empty = all)"`
-	Summary          string   `json:"summary,omitempty" jsonschema:"description=Manual summary for consolidation"`
-	ArchiveOriginals bool     `json:"archive_originals,omitempty" jsonschema:"description=Archive original records after consolidation"`
 }
 
 type memoryArchiveInput struct {
