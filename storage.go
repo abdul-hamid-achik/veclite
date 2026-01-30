@@ -90,6 +90,18 @@ type RecordSnapshot struct {
 
 	// UpdatedAt is when the record was last updated.
 	UpdatedAt time.Time
+
+	// ExpiresAt is when this record expires. Zero value means never expires.
+	ExpiresAt time.Time
+
+	// Importance is a score from 0.0 to 1.0.
+	Importance float32
+
+	// AccessCount tracks how many times this record has been accessed.
+	AccessCount uint64
+
+	// LastAccessedAt is when this record was last accessed.
+	LastAccessedAt time.Time
 }
 
 // NewDatabaseSnapshot creates a new empty database snapshot.

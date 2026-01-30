@@ -29,6 +29,16 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
   - [HNSW Configuration](#hnsw-configuration)
   - [Observability](#observability)
   - [Statistics](#statistics)
+- [Agent Memory Features](#agent-memory-features)
+  - [TTL and Expiration](#ttl-and-expiration)
+  - [Importance and Decay Scoring](#importance-and-decay-scoring)
+  - [Timestamp Filters](#timestamp-filters)
+  - [Conversation Memory](#conversation-memory)
+  - [Subscriptions (Real-time Notifications)](#subscriptions-real-time-notifications)
+  - [Memory Consolidation](#memory-consolidation)
+  - [Episodic Memory](#episodic-memory)
+  - [Knowledge Graph](#knowledge-graph)
+- [OpenClaw Integration](#openclaw-integration)
 - [CLI Usage](#cli-usage)
 - [HTTP Server](#http-server)
 - [MCP Tool Server](#mcp-tool-server)
@@ -57,6 +67,18 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
 - **In-memory mode** -- Use `:memory:` for testing
 - **CLI and HTTP server** -- Manage databases from the command line or over REST
 - **MCP server** -- Expose VecLite as tools for AI agents via Model Context Protocol
+
+### Agent Memory Features
+
+- **TTL and expiration** -- Records can expire automatically after a duration
+- **Importance scoring** -- Assign importance (0.0-1.0) to records for prioritized retrieval
+- **Temporal decay** -- Search scores decay based on record age (exponential, linear, gaussian)
+- **Access tracking** -- Track when records are accessed and how often
+- **Conversation memory** -- Session-based conversation turns with threading support
+- **Real-time subscriptions** -- Get notified when new records match a query
+- **Memory consolidation** -- Cluster and consolidate similar memories
+- **Episodic memory** -- Group related memories into coherent episodes
+- **Knowledge graph** -- Entity-relationship graph with traversal and vector search
 
 ## Quick Start
 
@@ -756,6 +778,432 @@ fmt.Printf("Count: %d, Dimension: %d, Index: %s\n",
     collStats.Count, collStats.Dimension, collStats.IndexType)
 ```
 
+## Agent Memory Features
+
+VecLite includes features designed for AI agent memory systems, enabling intelligent storage, retrieval, and management of memories with temporal awareness, importance scoring, and relationship tracking.
+
+### TTL and Expiration
+
+Records can have a time-to-live (TTL) and expire automatically:
+
+```go
+// Insert with TTL
+id, err := coll.InsertWithOptions(vector, payload,
+    veclite.WithTTL(24 * time.Hour),  // Expires in 24 hours
+)
+
+// Insert with explicit expiration time
+id, err := coll.InsertWithOptions(vector, payload,
+    veclite.WithExpiresAt(time.Now().Add(7 * 24 * time.Hour)),
+)
+
+// Check if record is expired
+record, _ := coll.Get(id)
+if record.IsExpired() {
+    fmt.Println("Record has expired")
+}
+if record.HasTTL() {
+    fmt.Printf("TTL remaining: %v\n", record.TTL())
+}
+
+// Clean up expired records
+count, err := coll.CleanupExpired()
+fmt.Printf("Removed %d expired records\n", count)
+
+// Count expired without removing
+expiredCount := coll.CountExpired()
+```
+
+### Importance and Decay Scoring
+
+Assign importance scores to records and apply temporal decay to search results:
+
+```go
+// Insert with importance score (0.0 to 1.0)
+id, err := coll.InsertWithOptions(vector, payload,
+    veclite.WithImportance(0.9),  // High importance
+)
+
+// Search with importance boost
+results, err := coll.Search(query,
+    veclite.TopK(10),
+    veclite.WithImportanceBoost(1.5),  // Multiply score by importance * factor
+)
+
+// Apply temporal decay to search results
+results, err := coll.Search(query,
+    veclite.TopK(10),
+    veclite.WithDecay(veclite.DecayExponential, 24*time.Hour),  // Half-life of 24 hours
+)
+
+// Enable access tracking (updates LastAccessedAt and AccessCount)
+results, err := coll.Search(query,
+    veclite.TopK(10),
+    veclite.WithAccessTracking(true),
+)
+```
+
+**Decay types:**
+
+| Type | Behavior |
+|------|----------|
+| `DecayNone` | No decay applied |
+| `DecayExponential` | Score halves every half-life period |
+| `DecayLinear` | Score decreases linearly over time |
+| `DecayGaussian` | Bell curve decay centered at creation time |
+
+### Timestamp Filters
+
+Filter records by creation time, update time, access time, and expiration:
+
+```go
+// Time-based filters
+results, _ := coll.Search(query,
+    veclite.WithFilter(veclite.CreatedAfter(time.Now().Add(-24*time.Hour))),
+)
+
+records, _ := coll.Find(
+    veclite.AgeNewerThan(1 * time.Hour),      // Created within last hour
+    veclite.UpdatedAfter(yesterday),           // Modified since yesterday
+)
+
+// TTL and expiration filters
+activeRecords, _ := coll.Find(veclite.NotExpired())
+expiringRecords, _ := coll.Find(veclite.ExpiredBefore(time.Now().Add(time.Hour)))
+hasExpiration, _ := coll.Find(veclite.HasTTLFilter())
+
+// Importance filters
+important, _ := coll.Find(veclite.ImportanceAbove(0.7))
+lowPriority, _ := coll.Find(veclite.ImportanceBelow(0.3))
+midRange, _ := coll.Find(veclite.ImportanceBetween(0.4, 0.6))
+
+// Access tracking filters
+recentlyAccessed, _ := coll.Find(veclite.AccessedAfter(time.Now().Add(-time.Hour)))
+neverAccessed, _ := coll.Find(veclite.NeverAccessed())
+frequentlyAccessed, _ := coll.Find(veclite.AccessCountAbove(10))
+```
+
+### Conversation Memory
+
+Track conversation turns with session and thread support:
+
+```go
+// Insert a conversation turn
+id, err := coll.InsertTurn(veclite.ConversationTurn{
+    SessionID:  "session-123",
+    TurnNumber: 1,
+    Role:       "user",
+    Content:    "Hello, how are you?",
+    Vector:     vector,  // Or use embedder
+    Importance: 0.5,
+    TTL:        24 * time.Hour,
+})
+
+// Insert a reply (threaded)
+replyID, err := coll.InsertTurn(veclite.ConversationTurn{
+    SessionID:     "session-123",
+    TurnNumber:    2,
+    Role:          "assistant",
+    Content:       "I'm doing well, thank you!",
+    Vector:        vector,
+    ParentChunkID: id,  // Links to parent
+})
+
+// Get all turns in a session (ordered by turn number)
+turns, err := coll.GetSession("session-123")
+
+// Get a conversation thread (follows parent-child links)
+thread, err := coll.GetThread(id)
+
+// Search within a specific session
+results, err := coll.SearchInSession("session-123", query, veclite.TopK(5))
+
+// List all sessions and get stats
+sessions := coll.ListSessions()
+stats, err := coll.GetSessionStats("session-123")
+fmt.Printf("Turns: %d, Roles: %v\n", stats.TurnCount, stats.Roles)
+```
+
+### Subscriptions (Real-time Notifications)
+
+Subscribe to be notified when new records match a query:
+
+```go
+// Subscribe to matching records
+sub, err := coll.Subscribe(
+    queryVector,
+    veclite.WithSubscriptionThreshold(0.8),    // Minimum similarity
+    veclite.WithSubscriptionFilter(veclite.Equal("type", "important")),
+    veclite.WithSubscriptionBufferSize(100),   // Event buffer size
+)
+defer sub.Close()
+
+// Listen for matching records (non-blocking)
+go func() {
+    for event := range sub.Events() {
+        fmt.Printf("New match: ID=%d, Score=%.4f\n",
+            event.Record.ID, event.Score)
+    }
+}()
+
+// Insert triggers notifications automatically
+coll.Insert(similarVector, map[string]any{"type": "important"})
+
+// Unsubscribe when done
+coll.Unsubscribe(sub.ID)
+```
+
+### Memory Consolidation
+
+Cluster similar memories and consolidate them into summaries:
+
+```go
+// Find clusters of similar memories
+clusters, err := coll.FindSimilarClusters(veclite.ConsolidationConfig{
+    SimilarityThreshold: 0.9,   // How similar records must be
+    MinGroupSize:        3,     // Minimum cluster size
+    MaxGroupSize:        10,    // Maximum cluster size
+    Filters:             []veclite.Filter{veclite.NotExpired()},
+})
+
+for _, cluster := range clusters {
+    fmt.Printf("Cluster %s: %d records, avg importance: %.2f\n",
+        cluster.ID, len(cluster.Records), cluster.AverageImportance)
+}
+
+// Consolidate clusters into summary records
+result, err := coll.Consolidate(veclite.ConsolidationConfig{
+    SimilarityThreshold: 0.9,
+    MinGroupSize:        3,
+    ArchiveOriginals:    true,  // Archive source records
+    Embedder:            embedder,
+    SummaryGenerator: func(records []*veclite.Record) (string, map[string]any, error) {
+        // Generate summary from records (e.g., using LLM)
+        summary := "Summary of " + strconv.Itoa(len(records)) + " memories"
+        return summary, map[string]any{"source": "consolidation"}, nil
+    },
+})
+
+fmt.Printf("Consolidated %d records into %d summaries\n",
+    result.RecordsConsolidated, len(result.ConsolidatedRecordIDs))
+
+// Archive/unarchive records manually
+coll.ArchiveRecord(id)
+coll.UnarchiveRecord(id)
+archived, _ := coll.GetArchived()
+
+// Get all consolidation records
+consolidations, _ := coll.GetConsolidations()
+
+// Expand a consolidation to see original records
+originals, _ := coll.ExpandConsolidation(consolidationID)
+```
+
+### Episodic Memory
+
+Group related memories into coherent episodes:
+
+```go
+// Create an episode store for a collection
+episodeStore, err := db.CreateEpisodeStore("memories")
+
+// Manually create an episode from record IDs
+episode, err := episodeStore.CreateEpisode(
+    []uint64{id1, id2, id3},
+    "Morning standup meeting",
+)
+
+// Automatically detect episodes based on time gaps
+episodes, err := episodeStore.DetectEpisodes(veclite.EpisodeConfig{
+    TimeGapThreshold: 30 * time.Minute,  // Gap between episodes
+    MinRecords:       2,                  // Minimum records per episode
+    MaxRecords:       100,                // Maximum records per episode
+})
+
+// Get episode details
+episode, _ := episodeStore.GetEpisode(episodeID)
+fmt.Printf("Episode: %s, Duration: %v, Records: %d\n",
+    episode.Title, episode.Duration(), episode.RecordCount())
+
+// Expand an episode to get all its records
+records, _ := episodeStore.ExpandEpisode(episodeID)
+
+// Search with episode expansion (includes context from same episode)
+results, err := episodeStore.SearchWithEpisodeExpansion(query, veclite.TopK(10))
+for _, r := range results {
+    if r.Episode != nil {
+        fmt.Printf("Match in episode: %s (%d related records)\n",
+            r.Episode.Title, len(r.EpisodeRecords))
+    }
+}
+
+// Search for similar episodes
+episodes, _ := episodeStore.SearchEpisodes(query, 5)
+
+// Find which episode contains a record
+episode, _ := episodeStore.FindRecordEpisode(recordID)
+
+// List and delete episodes
+allEpisodes := episodeStore.ListEpisodes()
+episodeStore.DeleteEpisode(episodeID)
+```
+
+### Knowledge Graph
+
+Build entity-relationship graphs with vector search:
+
+```go
+// Create a knowledge graph
+kg, err := db.CreateKnowledgeGraph("knowledge")
+
+// Add entities with vectors
+kg.AddEntity(veclite.Entity{
+    ID:     "alice",
+    Type:   "person",
+    Name:   "Alice Smith",
+    Vector: aliceVector,
+    Properties: map[string]any{
+        "role": "engineer",
+        "team": "backend",
+    },
+})
+
+kg.AddEntity(veclite.Entity{
+    ID:     "acme",
+    Type:   "company",
+    Name:   "Acme Corp",
+    Vector: acmeVector,
+})
+
+// Add relationships
+kg.AddRelationship(veclite.Relationship{
+    ID:       "rel-1",
+    SourceID: "alice",
+    TargetID: "acme",
+    Type:     "works_at",
+    Weight:   0.9,
+})
+
+kg.AddRelationship(veclite.Relationship{
+    ID:            "rel-2",
+    SourceID:      "alice",
+    TargetID:      "bob",
+    Type:          "knows",
+    Weight:        0.8,
+    Bidirectional: true,  // Creates edges in both directions
+})
+
+// Traverse the graph
+result, err := kg.Traverse([]string{"alice"}, veclite.TraversalConfig{
+    MaxDepth:          2,                       // How far to traverse
+    MaxNodes:          100,                     // Maximum nodes to visit
+    MinWeight:         0.5,                     // Minimum relationship weight
+    RelationshipTypes: []string{"knows"},       // Filter by relationship type
+    EntityTypes:       []string{"person"},      // Filter by entity type
+    Direction:         "both",                  // "outgoing", "incoming", or "both"
+})
+
+for _, entity := range result.Entities {
+    fmt.Printf("Found: %s (depth %d)\n", entity.Name, result.Depths[entity.ID])
+}
+
+// Search with graph expansion
+results, err := kg.SearchWithExpansion(query,
+    veclite.TraversalConfig{MaxDepth: 1},
+    veclite.TopK(10),
+)
+
+for _, r := range results {
+    fmt.Printf("Entity: %s (score: %.4f)\n", r.Entity.Name, r.Score)
+    fmt.Printf("  Related: %d entities via %d relationships\n",
+        len(r.RelatedEntities), len(r.Relationships))
+}
+
+// Get graph statistics
+stats := kg.Stats()
+fmt.Printf("Entities: %d, Relationships: %d\n",
+    stats.EntityCount, stats.RelationshipCount)
+fmt.Printf("Entity types: %v\n", stats.EntityTypes)
+fmt.Printf("Relationship types: %v\n", stats.RelationshipTypes)
+
+// Entity and relationship management
+entity, _ := kg.GetEntity("alice")
+kg.UpdateEntity(updatedEntity)
+kg.DeleteEntity("alice")  // Also removes relationships
+
+rel, _ := kg.GetRelationship("rel-1")
+kg.DeleteRelationship("rel-1")
+
+// Get relationships for an entity
+outgoing := kg.GetRelationships("alice", "outgoing")
+incoming := kg.GetRelationships("alice", "incoming")
+all := kg.GetRelationships("alice", "both")
+```
+
+## OpenClaw Integration
+
+VecLite includes a dedicated integration package for AI assistant memory systems like OpenClaw:
+
+```go
+import "github.com/abdul-hamid-achik/veclite/integrations/openclaw"
+
+// Create a memory store
+mem, err := openclaw.New(openclaw.Config{
+    DBPath:   "agent-memory.veclite",
+    Embedder: embedder,  // Your embedder implementation
+})
+defer mem.Close()
+
+// Remember something
+id, err := mem.Remember("The user prefers dark mode", openclaw.RememberOptions{
+    Importance: 0.8,
+    Tags:       []string{"preference", "ui"},
+    TTL:        30 * 24 * time.Hour,  // Remember for 30 days
+    Metadata:   map[string]any{"source": "settings"},
+})
+
+// Recall memories by semantic similarity
+entries, err := mem.Recall("user interface preferences", openclaw.RecallOptions{
+    Limit:         10,
+    MinImportance: 0.5,
+    Tags:          []string{"preference"},
+})
+
+for _, entry := range entries {
+    fmt.Printf("Memory: %s (importance: %.2f)\n", entry.Content, entry.Importance)
+}
+
+// Recall recent memories
+recent, err := mem.RecallRecent(5, openclaw.RecallOptions{})
+
+// Forget memories by criteria
+deleted, err := mem.Forget(openclaw.ForgetOptions{
+    Tags:            []string{"temporary"},
+    BelowImportance: 0.3,
+    OlderThan:       7 * 24 * time.Hour,
+})
+
+// Get memory statistics
+stats := mem.Stats()
+fmt.Printf("Total: %d, Avg Importance: %.2f\n",
+    stats.TotalMemories, stats.AverageImportance)
+
+// Export memories to markdown files
+err = mem.ExportMarkdown("./memory-export")
+
+// Import from session files (JSON or JSONL)
+imported, err := mem.ImportSession("session.json", openclaw.ImportOptions{
+    DefaultImportance: 0.5,
+    Tags:              []string{"imported"},
+    FilterRole:        "assistant",  // Only import assistant messages
+})
+
+// Import plain text (splits into chunks)
+imported, err = mem.ImportText(longDocument, 1000, openclaw.ImportOptions{
+    DefaultImportance: 0.6,
+})
+```
+
 ## CLI Usage
 
 ```bash
@@ -1029,6 +1477,9 @@ The server communicates over stdio using JSON-RPC 2.0. It exposes these tools:
 | `veclite_hybrid_search` | Combined vector + text search |
 | `veclite_find` | Find records by filter |
 | `veclite_insert` | Insert a vector |
+| `memory_remember` | Store a memory with importance, tags, and TTL |
+| `memory_recall` | Semantic search for memories with filters |
+| `memory_forget` | Remove memories by criteria |
 
 ### MCP Configuration
 

@@ -162,7 +162,144 @@ func (c *Collection) Insert(vector []float32, payload map[string]any) (uint64, e
 		c.db.metrics.recordInsert()
 	}
 	c.syncIfNeeded()
+
+	// Notify subscribers about the new record
+	if record, err := c.Get(id); err == nil {
+		c.notifySubscribers(record)
+	}
+
 	return id, nil
+}
+
+// InsertWithOptions adds a vector with optional payload and insert options.
+// Use this method to set TTL, importance, and other options.
+func (c *Collection) InsertWithOptions(vector []float32, payload map[string]any, opts ...InsertOption) (uint64, error) {
+	if err := c.checkReadOnly(); err != nil {
+		return 0, err
+	}
+	if len(vector) == 0 {
+		return 0, ErrEmptyVector
+	}
+
+	config := defaultInsertConfig()
+	for _, opt := range opts {
+		opt.apply(config)
+	}
+
+	id, err := c.insertWithOptionsLocked(vector, payload, config)
+	if err != nil {
+		return 0, err
+	}
+
+	if c.db != nil && c.db.metrics != nil {
+		c.db.metrics.recordInsert()
+	}
+	c.syncIfNeeded()
+
+	// Notify subscribers about the new record
+	if record, err := c.Get(id); err == nil {
+		c.notifySubscribers(record)
+	}
+
+	return id, nil
+}
+
+// insertWithOptionsLocked performs the insert with options while holding the collection lock.
+func (c *Collection) insertWithOptionsLocked(vector []float32, payload map[string]any, config *insertConfig) (uint64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Check/set dimension
+	if c.dimension == 0 {
+		c.dimension = len(vector)
+		c.initHNSWIfNeeded()
+	} else if len(vector) != c.dimension {
+		return 0, &DimensionError{Expected: c.dimension, Got: len(vector)}
+	}
+
+	// Create record
+	now := time.Now()
+	id := c.nextID
+	c.nextID++
+
+	record := &Record{
+		ID:         id,
+		Vector:     make([]float32, len(vector)),
+		Payload:    payload,
+		Content:    config.content,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		ExpiresAt:  config.computeExpiresAt(),
+		Importance: config.importance,
+	}
+	copy(record.Vector, vector)
+
+	c.records[id] = record
+
+	// Insert into index if enabled
+	if c.index != nil {
+		if err := c.index.Insert(id, vector); err != nil {
+			// Rollback record insertion on index failure
+			delete(c.records, id)
+			c.nextID--
+			return 0, err
+		}
+	}
+
+	// Index for text search
+	if c.textIndex != nil {
+		c.textIndex.indexRecord(id, payload, record.Content)
+	}
+
+	return id, nil
+}
+
+// CleanupExpired removes all expired records from the collection.
+// Returns the number of records removed.
+func (c *Collection) CleanupExpired() (int, error) {
+	if err := c.checkReadOnly(); err != nil {
+		return 0, err
+	}
+
+	c.mu.Lock()
+
+	deleted := 0
+	now := time.Now()
+	for id, record := range c.records {
+		if !record.ExpiresAt.IsZero() && now.After(record.ExpiresAt) {
+			// Delete from index first
+			if c.index != nil {
+				_ = c.index.Delete(id)
+			}
+			if c.textIndex != nil {
+				c.textIndex.removeRecord(id)
+			}
+			delete(c.records, id)
+			deleted++
+		}
+	}
+
+	c.mu.Unlock()
+
+	if deleted > 0 {
+		c.syncIfNeeded()
+	}
+	return deleted, nil
+}
+
+// CountExpired returns the number of expired records in the collection.
+func (c *Collection) CountExpired() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	count := 0
+	now := time.Now()
+	for _, record := range c.records {
+		if !record.ExpiresAt.IsZero() && now.After(record.ExpiresAt) {
+			count++
+		}
+	}
+	return count
 }
 
 // insertLocked performs the insert while holding the collection lock.
@@ -715,9 +852,9 @@ func (c *Collection) Search(query []float32, opts ...SearchOption) ([]Result, er
 	}()
 
 	c.mu.RLock()
-	defer c.mu.RUnlock()
 
 	if c.dimension > 0 && len(query) != c.dimension {
+		c.mu.RUnlock()
 		return nil, &DimensionError{Expected: c.dimension, Got: len(query)}
 	}
 
@@ -727,25 +864,84 @@ func (c *Collection) Search(query []float32, opts ...SearchOption) ([]Result, er
 		opt.apply(config)
 	}
 
+	var results []Result
+	var err error
+
 	// Use HNSW index if available
 	if c.index != nil {
-		results, err := c.searchWithIndex(query, config)
+		results, err = c.searchWithIndex(query, config)
 		if err != nil {
+			c.mu.RUnlock()
 			return nil, err
 		}
-		// If we got enough results (or no filters were applied), return them.
+		// If we got enough results (or no filters were applied), continue.
 		// Otherwise, fall back to brute force for completeness.
-		if len(results) >= config.effectiveTopK() || len(config.filters) == 0 {
-			return config.applyPagination(results), nil
+		if len(results) < config.effectiveTopK() && len(config.filters) > 0 {
+			results, err = c.searchBruteForce(query, config)
 		}
+	} else {
+		// Brute force search
+		results, err = c.searchBruteForce(query, config)
 	}
 
-	// Fall back to brute force search (no index, or insufficient filtered results from HNSW)
-	results, err := c.searchBruteForce(query, config)
 	if err != nil {
+		c.mu.RUnlock()
 		return nil, err
 	}
+
+	// Apply score modifiers (decay and importance boost)
+	if config.decay != nil || config.importanceBoost > 0 {
+		results = c.applyScoreModifiersToResults(results, config)
+	}
+
+	c.mu.RUnlock()
+
+	// Track access for returned results if enabled
+	if config.accessTracking && len(results) > 0 {
+		c.trackAccess(results)
+	}
+
 	return config.applyPagination(results), nil
+}
+
+// applyScoreModifiersToResults applies decay and importance boost to search results.
+func (c *Collection) applyScoreModifiersToResults(results []Result, config *searchConfig) []Result {
+	for i := range results {
+		results[i].Score = applyScoreModifiers(results[i].Score, results[i].Record, config)
+	}
+
+	// Re-sort after applying modifiers
+	if c.higherBetter {
+		sort.SliceStable(results, func(i, j int) bool {
+			if results[i].Score != results[j].Score {
+				return results[i].Score > results[j].Score
+			}
+			return results[i].Record.ID < results[j].Record.ID
+		})
+	} else {
+		sort.SliceStable(results, func(i, j int) bool {
+			if results[i].Score != results[j].Score {
+				return results[i].Score < results[j].Score
+			}
+			return results[i].Record.ID < results[j].Record.ID
+		})
+	}
+
+	return results
+}
+
+// trackAccess updates access tracking for the given results.
+func (c *Collection) trackAccess(results []Result) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+	for _, r := range results {
+		if record, ok := c.records[r.Record.ID]; ok {
+			record.AccessCount++
+			record.LastAccessedAt = now
+		}
+	}
 }
 
 // searchWithIndex performs search using the HNSW index.
@@ -956,12 +1152,16 @@ func (c *Collection) snapshot() *CollectionSnapshot {
 
 	for _, record := range c.records {
 		snapshot.Records = append(snapshot.Records, &RecordSnapshot{
-			ID:        record.ID,
-			Vector:    record.Vector,
-			Payload:   record.Payload,
-			Content:   record.Content,
-			CreatedAt: record.CreatedAt,
-			UpdatedAt: record.UpdatedAt,
+			ID:             record.ID,
+			Vector:         record.Vector,
+			Payload:        record.Payload,
+			Content:        record.Content,
+			CreatedAt:      record.CreatedAt,
+			UpdatedAt:      record.UpdatedAt,
+			ExpiresAt:      record.ExpiresAt,
+			Importance:     record.Importance,
+			AccessCount:    record.AccessCount,
+			LastAccessedAt: record.LastAccessedAt,
 		})
 	}
 
@@ -996,12 +1196,16 @@ func (c *Collection) loadFromSnapshot(snapshot *CollectionSnapshot) {
 
 	for _, rs := range snapshot.Records {
 		c.records[rs.ID] = &Record{
-			ID:        rs.ID,
-			Vector:    rs.Vector,
-			Payload:   rs.Payload,
-			Content:   rs.Content,
-			CreatedAt: rs.CreatedAt,
-			UpdatedAt: rs.UpdatedAt,
+			ID:             rs.ID,
+			Vector:         rs.Vector,
+			Payload:        rs.Payload,
+			Content:        rs.Content,
+			CreatedAt:      rs.CreatedAt,
+			UpdatedAt:      rs.UpdatedAt,
+			ExpiresAt:      rs.ExpiresAt,
+			Importance:     rs.Importance,
+			AccessCount:    rs.AccessCount,
+			LastAccessedAt: rs.LastAccessedAt,
 		}
 	}
 

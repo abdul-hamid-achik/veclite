@@ -22,6 +22,19 @@ type Record struct {
 
 	// UpdatedAt is when the record was last updated.
 	UpdatedAt time.Time
+
+	// ExpiresAt is when this record expires. Zero value means never expires.
+	ExpiresAt time.Time
+
+	// Importance is a score from 0.0 to 1.0 indicating how important this record is.
+	// Higher values make the record more likely to be returned in search results.
+	Importance float32
+
+	// AccessCount tracks how many times this record has been accessed via search.
+	AccessCount uint64
+
+	// LastAccessedAt is when this record was last accessed via search.
+	LastAccessedAt time.Time
 }
 
 // Clone creates a deep copy of the record.
@@ -31,11 +44,15 @@ func (r *Record) Clone() *Record {
 	}
 
 	clone := &Record{
-		ID:        r.ID,
-		Vector:    make([]float32, len(r.Vector)),
-		Content:   r.Content,
-		CreatedAt: r.CreatedAt,
-		UpdatedAt: r.UpdatedAt,
+		ID:             r.ID,
+		Vector:         make([]float32, len(r.Vector)),
+		Content:        r.Content,
+		CreatedAt:      r.CreatedAt,
+		UpdatedAt:      r.UpdatedAt,
+		ExpiresAt:      r.ExpiresAt,
+		Importance:     r.Importance,
+		AccessCount:    r.AccessCount,
+		LastAccessedAt: r.LastAccessedAt,
 	}
 
 	copy(clone.Vector, r.Vector)
@@ -48,6 +65,32 @@ func (r *Record) Clone() *Record {
 	}
 
 	return clone
+}
+
+// IsExpired returns true if the record has a TTL set and has expired.
+func (r *Record) IsExpired() bool {
+	if r.ExpiresAt.IsZero() {
+		return false
+	}
+	return time.Now().After(r.ExpiresAt)
+}
+
+// HasTTL returns true if the record has an expiration time set.
+func (r *Record) HasTTL() bool {
+	return !r.ExpiresAt.IsZero()
+}
+
+// TTL returns the remaining time until expiration.
+// Returns 0 if no TTL is set or if the record has already expired.
+func (r *Record) TTL() time.Duration {
+	if r.ExpiresAt.IsZero() {
+		return 0
+	}
+	remaining := time.Until(r.ExpiresAt)
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
 }
 
 // Result represents a search result with its similarity score.

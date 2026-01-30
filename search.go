@@ -7,15 +7,18 @@ type SearchOption interface {
 
 // searchConfig holds the search configuration.
 type searchConfig struct {
-	topK         int
-	threshold    *float32
-	filters      []Filter
-	efSearch     int
-	offset       int
-	limit        int
-	includeContent bool
-	vectorWeight float64
-	textWeight   float64
+	topK            int
+	threshold       *float32
+	filters         []Filter
+	efSearch        int
+	offset          int
+	limit           int
+	includeContent  bool
+	vectorWeight    float64
+	textWeight      float64
+	decay           *DecayConfig
+	importanceBoost float32
+	accessTracking  bool
 }
 
 // defaultSearchConfig returns the default search configuration.

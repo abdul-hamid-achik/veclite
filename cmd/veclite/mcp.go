@@ -1,54 +1,20 @@
 package main
 
 import (
-	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/abdul-hamid-achik/veclite"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// MCP JSON-RPC types
-type jsonrpcRequest struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      any             `json:"id"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
-}
-
-type jsonrpcResponse struct {
-	JSONRPC string      `json:"jsonrpc"`
-	ID      any         `json:"id"`
-	Result  any         `json:"result,omitempty"`
-	Error   *rpcError   `json:"error,omitempty"`
-}
-
-type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-// MCP protocol types
-type mcpToolInfo struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	InputSchema map[string]any `json:"inputSchema"`
-}
-
-type mcpContent struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
-
-type mcpToolResult struct {
-	Content []mcpContent `json:"content"`
-	IsError bool         `json:"isError,omitempty"`
-}
-
-// MCPServer handles MCP protocol over stdio.
+// MCPServer handles MCP protocol using the official Go SDK.
 type MCPServer struct {
-	db *veclite.DB
+	db     *veclite.DB
+	server *mcp.Server
 }
 
 func cmdMCP(args []string) {
@@ -65,240 +31,178 @@ func cmdMCP(args []string) {
 	}
 	defer db.Close()
 
-	server := &MCPServer{db: db}
-	server.run()
+	srv := &MCPServer{db: db}
+	srv.run()
 }
 
 func (s *MCPServer) run() {
-	scanner := bufio.NewScanner(os.Stdin)
-	// Increase buffer size for large messages
-	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
+	// Create MCP server with implementation info
+	s.server = mcp.NewServer(&mcp.Implementation{
+		Name:    "veclite",
+		Version: veclite.Version,
+	}, nil)
 
-	enc := json.NewEncoder(os.Stdout)
+	// Register tools
+	s.registerTools()
 
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-
-		var req jsonrpcRequest
-		if err := json.Unmarshal(line, &req); err != nil {
-			_ = enc.Encode(jsonrpcResponse{
-				JSONRPC: "2.0",
-				ID:      nil,
-				Error:   &rpcError{Code: -32700, Message: "Parse error"},
-			})
-			continue
-		}
-
-		resp := s.handleRequest(req)
-		_ = enc.Encode(resp)
+	// Run with stdio transport
+	transport := &mcp.StdioTransport{}
+	if err := s.server.Run(context.Background(), transport); err != nil {
+		fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
+		os.Exit(1)
 	}
 }
 
-func (s *MCPServer) handleRequest(req jsonrpcRequest) jsonrpcResponse {
-	switch req.Method {
-	case "initialize":
-		return jsonrpcResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result: map[string]any{
-				"protocolVersion": "2024-11-05",
-				"capabilities": map[string]any{
-					"tools": map[string]any{},
-				},
-				"serverInfo": map[string]any{
-					"name":    "veclite",
-					"version": veclite.Version,
-				},
-			},
-		}
+// Input/output types for tools
 
-	case "notifications/initialized":
-		// No response needed for notifications
-		return jsonrpcResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]any{}}
+type emptyInput struct{}
 
-	case "tools/list":
-		return jsonrpcResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result:  map[string]any{"tools": s.listTools()},
-		}
-
-	case "tools/call":
-		return s.handleToolCall(req)
-
-	default:
-		return jsonrpcResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error:   &rpcError{Code: -32601, Message: "Method not found: " + req.Method},
-		}
-	}
+type searchInput struct {
+	Collection string    `json:"collection" jsonschema:"description=Collection name,required"`
+	Query      []float64 `json:"query" jsonschema:"description=Query vector,required"`
+	TopK       int       `json:"top_k,omitempty" jsonschema:"description=Number of results (default 10)"`
 }
 
-func (s *MCPServer) listTools() []mcpToolInfo {
-	return []mcpToolInfo{
-		{
-			Name:        "veclite_collections",
-			Description: "List all collections in the database with their stats",
-			InputSchema: map[string]any{
-				"type":       "object",
-				"properties": map[string]any{},
-			},
-		},
-		{
-			Name:        "veclite_stats",
-			Description: "Get database statistics including collection details",
-			InputSchema: map[string]any{
-				"type":       "object",
-				"properties": map[string]any{},
-			},
-		},
-		{
-			Name:        "veclite_search",
-			Description: "Search for similar vectors in a collection",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"collection": map[string]any{"type": "string", "description": "Collection name"},
-					"query":      map[string]any{"type": "array", "items": map[string]any{"type": "number"}, "description": "Query vector"},
-					"top_k":      map[string]any{"type": "integer", "description": "Number of results (default 10)"},
-				},
-				"required": []string{"collection", "query"},
-			},
-		},
-		{
-			Name:        "veclite_text_search",
-			Description: "Search for records by text using BM25 full-text search",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"collection": map[string]any{"type": "string", "description": "Collection name"},
-					"query":      map[string]any{"type": "string", "description": "Text query"},
-					"top_k":      map[string]any{"type": "integer", "description": "Number of results (default 10)"},
-				},
-				"required": []string{"collection", "query"},
-			},
-		},
-		{
-			Name:        "veclite_hybrid_search",
-			Description: "Search using both vector similarity and text matching with RRF fusion",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"collection":    map[string]any{"type": "string", "description": "Collection name"},
-					"vector":        map[string]any{"type": "array", "items": map[string]any{"type": "number"}, "description": "Query vector"},
-					"text":          map[string]any{"type": "string", "description": "Text query"},
-					"top_k":         map[string]any{"type": "integer", "description": "Number of results (default 10)"},
-					"vector_weight": map[string]any{"type": "number", "description": "Weight for vector results (default 1.0)"},
-					"text_weight":   map[string]any{"type": "number", "description": "Weight for text results (default 1.0)"},
-				},
-				"required": []string{"collection", "vector", "text"},
-			},
-		},
-		{
-			Name:        "veclite_find",
-			Description: "Find records matching filters (no vector needed)",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"collection": map[string]any{"type": "string", "description": "Collection name"},
-					"filters": map[string]any{
-						"type": "array",
-						"items": map[string]any{
-							"type": "object",
-							"properties": map[string]any{
-								"key":   map[string]any{"type": "string"},
-								"op":    map[string]any{"type": "string", "enum": []string{"eq", "neq", "glob", "prefix", "suffix", "contains", "exists"}},
-								"value": map[string]any{},
-							},
-						},
-						"description": "Filter conditions",
-					},
-					"limit": map[string]any{"type": "integer", "description": "Maximum results"},
-				},
-				"required": []string{"collection"},
-			},
-		},
-		{
-			Name:        "veclite_insert",
-			Description: "Insert a vector with optional payload and content into a collection",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"collection": map[string]any{"type": "string", "description": "Collection name"},
-					"vector":     map[string]any{"type": "array", "items": map[string]any{"type": "number"}, "description": "Vector to insert"},
-					"payload":    map[string]any{"type": "object", "description": "Optional metadata"},
-					"content":    map[string]any{"type": "string", "description": "Optional text content"},
-				},
-				"required": []string{"collection", "vector"},
-			},
-		},
-	}
+type textSearchInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+	Query      string `json:"query" jsonschema:"description=Text query,required"`
+	TopK       int    `json:"top_k,omitempty" jsonschema:"description=Number of results (default 10)"`
 }
 
-func (s *MCPServer) handleToolCall(req jsonrpcRequest) jsonrpcResponse {
-	var params struct {
-		Name      string          `json:"name"`
-		Arguments json.RawMessage `json:"arguments"`
-	}
-	if err := json.Unmarshal(req.Params, &params); err != nil {
-		return jsonrpcResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Error:   &rpcError{Code: -32602, Message: "Invalid params"},
-		}
-	}
-
-	result := s.executeTool(params.Name, params.Arguments)
-	return jsonrpcResponse{
-		JSONRPC: "2.0",
-		ID:      req.ID,
-		Result:  result,
-	}
+type hybridSearchInput struct {
+	Collection   string    `json:"collection" jsonschema:"description=Collection name,required"`
+	Vector       []float64 `json:"vector" jsonschema:"description=Query vector,required"`
+	Text         string    `json:"text" jsonschema:"description=Text query,required"`
+	TopK         int       `json:"top_k,omitempty" jsonschema:"description=Number of results (default 10)"`
+	VectorWeight float64   `json:"vector_weight,omitempty" jsonschema:"description=Weight for vector results (default 1.0)"`
+	TextWeight   float64   `json:"text_weight,omitempty" jsonschema:"description=Weight for text results (default 1.0)"`
 }
 
-func (s *MCPServer) executeTool(name string, argsJSON json.RawMessage) mcpToolResult {
-	switch name {
-	case "veclite_collections":
+type findInput struct {
+	Collection string          `json:"collection" jsonschema:"description=Collection name,required"`
+	Filters    []filterRequest `json:"filters,omitempty" jsonschema:"description=Filter conditions"`
+	Limit      int             `json:"limit,omitempty" jsonschema:"description=Maximum results"`
+}
+
+type insertInput struct {
+	Collection string         `json:"collection" jsonschema:"description=Collection name,required"`
+	Vector     []float64      `json:"vector" jsonschema:"description=Vector to insert,required"`
+	Payload    map[string]any `json:"payload,omitempty" jsonschema:"description=Optional metadata"`
+	Content    string         `json:"content,omitempty" jsonschema:"description=Optional text content"`
+}
+
+type memoryRememberInput struct {
+	Text       string         `json:"text" jsonschema:"description=The text content to remember,required"`
+	Vector     []float64      `json:"vector" jsonschema:"description=Vector embedding of the text,required"`
+	Importance float64        `json:"importance,omitempty" jsonschema:"description=Importance score from 0.0 to 1.0 (default 0.5)"`
+	Tags       []string       `json:"tags,omitempty" jsonschema:"description=Optional tags for categorization"`
+	TTLHours   float64        `json:"ttl_hours,omitempty" jsonschema:"description=Optional time-to-live in hours (0 = never expires)"`
+	Metadata   map[string]any `json:"metadata,omitempty" jsonschema:"description=Additional metadata to store"`
+}
+
+type memoryRecallInput struct {
+	Query          []float64 `json:"query" jsonschema:"description=Query vector for semantic search,required"`
+	Limit          int       `json:"limit,omitempty" jsonschema:"description=Maximum number of memories to return (default 10)"`
+	MinImportance  float64   `json:"min_importance,omitempty" jsonschema:"description=Minimum importance score (0.0-1.0)"`
+	Tags           []string  `json:"tags,omitempty" jsonschema:"description=Filter by tags (any match)"`
+	SinceHours     float64   `json:"since_hours,omitempty" jsonschema:"description=Only memories created within this many hours"`
+	IncludeExpired bool      `json:"include_expired,omitempty" jsonschema:"description=Include expired memories (default false)"`
+}
+
+type memoryForgetInput struct {
+	OlderThanHours  float64  `json:"older_than_hours,omitempty" jsonschema:"description=Delete memories older than this many hours"`
+	Tags            []string `json:"tags,omitempty" jsonschema:"description=Delete memories with any of these tags"`
+	ExpiredOnly     bool     `json:"expired_only,omitempty" jsonschema:"description=Only delete expired memories"`
+	BelowImportance float64  `json:"below_importance,omitempty" jsonschema:"description=Delete memories with importance below this threshold"`
+}
+
+func (s *MCPServer) registerTools() {
+	// veclite_collections - List all collections
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_collections",
+		Description: "List all collections in the database with their stats",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input emptyInput) (*mcp.CallToolResult, any, error) {
 		return s.toolCollections()
-	case "veclite_stats":
+	})
+
+	// veclite_stats - Get database statistics
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_stats",
+		Description: "Get database statistics including collection details",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input emptyInput) (*mcp.CallToolResult, any, error) {
 		return s.toolStats()
-	case "veclite_search":
-		return s.toolSearch(argsJSON)
-	case "veclite_text_search":
-		return s.toolTextSearch(argsJSON)
-	case "veclite_hybrid_search":
-		return s.toolHybridSearch(argsJSON)
-	case "veclite_find":
-		return s.toolFind(argsJSON)
-	case "veclite_insert":
-		return s.toolInsert(argsJSON)
-	default:
-		return mcpToolResult{
-			Content: []mcpContent{{Type: "text", Text: "Unknown tool: " + name}},
-			IsError: true,
-		}
-	}
+	})
+
+	// veclite_search - Vector similarity search
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_search",
+		Description: "Search for similar vectors in a collection",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input searchInput) (*mcp.CallToolResult, any, error) {
+		return s.toolSearch(input)
+	})
+
+	// veclite_text_search - BM25 text search
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_text_search",
+		Description: "Search for records by text using BM25 full-text search",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input textSearchInput) (*mcp.CallToolResult, any, error) {
+		return s.toolTextSearch(input)
+	})
+
+	// veclite_hybrid_search - Combined vector + text search
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_hybrid_search",
+		Description: "Search using both vector similarity and text matching with RRF fusion",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input hybridSearchInput) (*mcp.CallToolResult, any, error) {
+		return s.toolHybridSearch(input)
+	})
+
+	// veclite_find - Filter-based record retrieval
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_find",
+		Description: "Find records matching filters (no vector needed)",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input findInput) (*mcp.CallToolResult, any, error) {
+		return s.toolFind(input)
+	})
+
+	// veclite_insert - Insert a vector
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_insert",
+		Description: "Insert a vector with optional payload and content into a collection",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input insertInput) (*mcp.CallToolResult, any, error) {
+		return s.toolInsert(input)
+	})
+
+	// Memory tools
+
+	// memory_remember - Store a memory
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "memory_remember",
+		Description: "Store a memory with text content, importance score, tags, and optional TTL. Uses the 'memories' collection for agent memory.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input memoryRememberInput) (*mcp.CallToolResult, any, error) {
+		return s.toolMemoryRemember(input)
+	})
+
+	// memory_recall - Recall memories via semantic search
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "memory_recall",
+		Description: "Recall memories using semantic search with optional filters for time, tags, and importance",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input memoryRecallInput) (*mcp.CallToolResult, any, error) {
+		return s.toolMemoryRecall(input)
+	})
+
+	// memory_forget - Remove memories
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "memory_forget",
+		Description: "Remove memories by age, tags, or expired status",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input memoryForgetInput) (*mcp.CallToolResult, any, error) {
+		return s.toolMemoryForget(input)
+	})
 }
 
-func (s *MCPServer) textResult(data any) mcpToolResult {
-	b, _ := json.MarshalIndent(data, "", "  ")
-	return mcpToolResult{
-		Content: []mcpContent{{Type: "text", Text: string(b)}},
-	}
-}
+// Tool implementations
 
-func (s *MCPServer) errorResult(msg string) mcpToolResult {
-	return mcpToolResult{
-		Content: []mcpContent{{Type: "text", Text: msg}},
-		IsError: true,
-	}
-}
-
-func (s *MCPServer) toolCollections() mcpToolResult {
+func (s *MCPServer) toolCollections() (*mcp.CallToolResult, any, error) {
 	names := s.db.Collections()
 	type collInfo struct {
 		Name      string `json:"name"`
@@ -323,146 +227,101 @@ func (s *MCPServer) toolCollections() mcpToolResult {
 			IndexType: stats.IndexType,
 		})
 	}
-	return s.textResult(result)
+	return textResult(result)
 }
 
-func (s *MCPServer) toolStats() mcpToolResult {
-	return s.textResult(s.db.Stats())
+func (s *MCPServer) toolStats() (*mcp.CallToolResult, any, error) {
+	return textResult(s.db.Stats())
 }
 
-func (s *MCPServer) toolSearch(argsJSON json.RawMessage) mcpToolResult {
-	var args struct {
-		Collection string    `json:"collection"`
-		Query      []float64 `json:"query"`
-		TopK       int       `json:"top_k"`
-	}
-	if err := json.Unmarshal(argsJSON, &args); err != nil {
-		return s.errorResult("Invalid arguments: " + err.Error())
-	}
-
-	coll, err := s.db.GetCollection(args.Collection)
+func (s *MCPServer) toolSearch(input searchInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return s.errorResult("Collection not found: " + args.Collection)
+		return errorResult("Collection not found: " + input.Collection)
 	}
 
-	query := make([]float32, len(args.Query))
-	for i, v := range args.Query {
-		query[i] = float32(v)
+	queryVec := float64ToFloat32(input.Query)
+
+	opts := []veclite.SearchOption{}
+	if input.TopK > 0 {
+		opts = append(opts, veclite.TopK(input.TopK))
+	}
+
+	results, err := coll.Search(queryVec, opts...)
+	if err != nil {
+		return errorResult("Search error: " + err.Error())
+	}
+
+	return textResult(formatResults(results))
+}
+
+func (s *MCPServer) toolTextSearch(input textSearchInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(input.Collection)
+	if err != nil {
+		return errorResult("Collection not found: " + input.Collection)
 	}
 
 	opts := []veclite.SearchOption{}
-	if args.TopK > 0 {
-		opts = append(opts, veclite.TopK(args.TopK))
+	if input.TopK > 0 {
+		opts = append(opts, veclite.TopK(input.TopK))
 	}
 
-	results, err := coll.Search(query, opts...)
+	results, err := coll.TextSearch(input.Query, opts...)
 	if err != nil {
-		return s.errorResult("Search error: " + err.Error())
+		return errorResult("Text search error: " + err.Error())
 	}
 
-	return s.textResult(formatResults(results))
+	return textResult(formatResults(results))
 }
 
-func (s *MCPServer) toolTextSearch(argsJSON json.RawMessage) mcpToolResult {
-	var args struct {
-		Collection string `json:"collection"`
-		Query      string `json:"query"`
-		TopK       int    `json:"top_k"`
-	}
-	if err := json.Unmarshal(argsJSON, &args); err != nil {
-		return s.errorResult("Invalid arguments: " + err.Error())
+func (s *MCPServer) toolHybridSearch(input hybridSearchInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(input.Collection)
+	if err != nil {
+		return errorResult("Collection not found: " + input.Collection)
 	}
 
-	coll, err := s.db.GetCollection(args.Collection)
-	if err != nil {
-		return s.errorResult("Collection not found: " + args.Collection)
-	}
+	queryVec := float64ToFloat32(input.Vector)
 
 	opts := []veclite.SearchOption{}
-	if args.TopK > 0 {
-		opts = append(opts, veclite.TopK(args.TopK))
+	if input.TopK > 0 {
+		opts = append(opts, veclite.TopK(input.TopK))
+	}
+	if input.VectorWeight > 0 {
+		opts = append(opts, veclite.WithVectorWeight(input.VectorWeight))
+	}
+	if input.TextWeight > 0 {
+		opts = append(opts, veclite.WithTextWeight(input.TextWeight))
 	}
 
-	results, err := coll.TextSearch(args.Query, opts...)
+	results, err := coll.HybridSearch(queryVec, input.Text, opts...)
 	if err != nil {
-		return s.errorResult("Text search error: " + err.Error())
+		return errorResult("Hybrid search error: " + err.Error())
 	}
 
-	return s.textResult(formatResults(results))
+	return textResult(formatResults(results))
 }
 
-func (s *MCPServer) toolHybridSearch(argsJSON json.RawMessage) mcpToolResult {
-	var args struct {
-		Collection   string    `json:"collection"`
-		Vector       []float64 `json:"vector"`
-		Text         string    `json:"text"`
-		TopK         int       `json:"top_k"`
-		VectorWeight float64   `json:"vector_weight"`
-		TextWeight   float64   `json:"text_weight"`
-	}
-	if err := json.Unmarshal(argsJSON, &args); err != nil {
-		return s.errorResult("Invalid arguments: " + err.Error())
-	}
-
-	coll, err := s.db.GetCollection(args.Collection)
+func (s *MCPServer) toolFind(input findInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return s.errorResult("Collection not found: " + args.Collection)
+		return errorResult("Collection not found: " + input.Collection)
 	}
 
-	query := make([]float32, len(args.Vector))
-	for i, v := range args.Vector {
-		query[i] = float32(v)
-	}
-
-	opts := []veclite.SearchOption{}
-	if args.TopK > 0 {
-		opts = append(opts, veclite.TopK(args.TopK))
-	}
-	if args.VectorWeight > 0 {
-		opts = append(opts, veclite.WithVectorWeight(args.VectorWeight))
-	}
-	if args.TextWeight > 0 {
-		opts = append(opts, veclite.WithTextWeight(args.TextWeight))
-	}
-
-	results, err := coll.HybridSearch(query, args.Text, opts...)
-	if err != nil {
-		return s.errorResult("Hybrid search error: " + err.Error())
-	}
-
-	return s.textResult(formatResults(results))
-}
-
-func (s *MCPServer) toolFind(argsJSON json.RawMessage) mcpToolResult {
-	var args struct {
-		Collection string          `json:"collection"`
-		Filters    []filterRequest `json:"filters"`
-		Limit      int             `json:"limit"`
-	}
-	if err := json.Unmarshal(argsJSON, &args); err != nil {
-		return s.errorResult("Invalid arguments: " + err.Error())
-	}
-
-	coll, err := s.db.GetCollection(args.Collection)
-	if err != nil {
-		return s.errorResult("Collection not found: " + args.Collection)
-	}
-
-	var filters []veclite.Filter
-	for _, f := range args.Filters {
+	var vecliteFilters []veclite.Filter
+	for _, f := range input.Filters {
 		filter := parseFilterRequest(f)
 		if filter != nil {
-			filters = append(filters, filter)
+			vecliteFilters = append(vecliteFilters, filter)
 		}
 	}
 
-	records, err := coll.Find(filters...)
+	records, err := coll.Find(vecliteFilters...)
 	if err != nil {
-		return s.errorResult("Find error: " + err.Error())
+		return errorResult("Find error: " + err.Error())
 	}
 
-	if args.Limit > 0 && len(records) > args.Limit {
-		records = records[:args.Limit]
+	if input.Limit > 0 && len(records) > input.Limit {
+		records = records[:input.Limit]
 	}
 
 	type recordOut struct {
@@ -475,41 +334,251 @@ func (s *MCPServer) toolFind(argsJSON json.RawMessage) mcpToolResult {
 		out[i] = recordOut{ID: r.ID, Payload: r.Payload, Content: r.Content}
 	}
 
-	return s.textResult(out)
+	return textResult(out)
 }
 
-func (s *MCPServer) toolInsert(argsJSON json.RawMessage) mcpToolResult {
-	var args struct {
-		Collection string         `json:"collection"`
-		Vector     []float64      `json:"vector"`
-		Payload    map[string]any `json:"payload"`
-		Content    string         `json:"content"`
-	}
-	if err := json.Unmarshal(argsJSON, &args); err != nil {
-		return s.errorResult("Invalid arguments: " + err.Error())
-	}
+func (s *MCPServer) toolInsert(input insertInput) (*mcp.CallToolResult, any, error) {
+	coll := s.db.Collection(input.Collection)
 
-	coll := s.db.Collection(args.Collection)
-
-	vector := make([]float32, len(args.Vector))
-	for i, v := range args.Vector {
-		vector[i] = float32(v)
-	}
+	vec := float64ToFloat32(input.Vector)
 
 	var id uint64
 	var err error
-	if args.Content != "" {
-		id, err = coll.InsertDocument(vector, args.Content, args.Payload)
+	if input.Content != "" {
+		id, err = coll.InsertDocument(vec, input.Content, input.Payload)
 	} else {
-		id, err = coll.Insert(vector, args.Payload)
+		id, err = coll.Insert(vec, input.Payload)
 	}
 	if err != nil {
-		return s.errorResult("Insert error: " + err.Error())
+		return errorResult("Insert error: " + err.Error())
 	}
 
 	_ = s.db.Sync()
 
-	return s.textResult(map[string]any{"id": id, "status": "inserted"})
+	return textResult(map[string]any{"id": id, "status": "inserted"})
+}
+
+// Memory tools implementations
+
+const memoriesCollection = "memories"
+
+func (s *MCPServer) toolMemoryRemember(input memoryRememberInput) (*mcp.CallToolResult, any, error) {
+	if input.Text == "" {
+		return errorResult("Text is required")
+	}
+	if len(input.Vector) == 0 {
+		return errorResult("Vector is required")
+	}
+
+	coll := s.db.Collection(memoriesCollection)
+	vec := float64ToFloat32(input.Vector)
+
+	// Build payload
+	payload := make(map[string]any)
+	if input.Metadata != nil {
+		for k, v := range input.Metadata {
+			payload[k] = v
+		}
+	}
+	if len(input.Tags) > 0 {
+		payload["_tags"] = input.Tags
+	}
+
+	// Build insert options
+	opts := []veclite.InsertOption{
+		veclite.WithContentOption(input.Text),
+	}
+
+	// Set importance (default 0.5)
+	imp := float32(0.5)
+	if input.Importance > 0 {
+		imp = float32(input.Importance)
+	}
+	opts = append(opts, veclite.WithImportance(imp))
+
+	// Set TTL if specified
+	if input.TTLHours > 0 {
+		ttl := time.Duration(input.TTLHours * float64(time.Hour))
+		opts = append(opts, veclite.WithTTL(ttl))
+	}
+
+	id, err := coll.InsertWithOptions(vec, payload, opts...)
+	if err != nil {
+		return errorResult("Failed to store memory: " + err.Error())
+	}
+
+	_ = s.db.Sync()
+
+	return textResult(map[string]any{
+		"id":         id,
+		"status":     "remembered",
+		"importance": imp,
+		"has_ttl":    input.TTLHours > 0,
+	})
+}
+
+func (s *MCPServer) toolMemoryRecall(input memoryRecallInput) (*mcp.CallToolResult, any, error) {
+	if len(input.Query) == 0 {
+		return errorResult("Query vector is required")
+	}
+
+	coll, err := s.db.GetCollection(memoriesCollection)
+	if err != nil {
+		return errorResult("Memories collection not found. Use memory_remember first.")
+	}
+
+	queryVec := float64ToFloat32(input.Query)
+
+	// Build search options
+	limit := 10
+	if input.Limit > 0 {
+		limit = input.Limit
+	}
+	opts := []veclite.SearchOption{veclite.TopK(limit)}
+
+	// Build filters
+	var filters []veclite.Filter
+
+	if input.MinImportance > 0 {
+		filters = append(filters, veclite.ImportanceAbove(float32(input.MinImportance)))
+	}
+
+	if input.SinceHours > 0 {
+		since := time.Duration(input.SinceHours * float64(time.Hour))
+		filters = append(filters, veclite.AgeNewerThan(since))
+	}
+
+	if !input.IncludeExpired {
+		filters = append(filters, veclite.NotExpired())
+	}
+
+	for _, f := range filters {
+		opts = append(opts, veclite.WithFilter(f))
+	}
+
+	results, err := coll.Search(queryVec, opts...)
+	if err != nil {
+		return errorResult("Recall error: " + err.Error())
+	}
+
+	// Post-filter by tags if specified
+	if len(input.Tags) > 0 {
+		filtered := make([]veclite.Result, 0, len(results))
+		for _, r := range results {
+			if hasAnyTag(r.Record.Payload, input.Tags) {
+				filtered = append(filtered, r)
+			}
+		}
+		results = filtered
+	}
+
+	// Format results with memory-specific fields
+	memories := make([]map[string]any, len(results))
+	for i, r := range results {
+		memory := map[string]any{
+			"id":         r.Record.ID,
+			"score":      r.Score,
+			"text":       r.Record.Content,
+			"importance": r.Record.Importance,
+			"created_at": r.Record.CreatedAt.Format(time.RFC3339),
+		}
+		if r.Record.Payload != nil {
+			if t, ok := r.Record.Payload["_tags"]; ok {
+				memory["tags"] = t
+			}
+			for k, v := range r.Record.Payload {
+				if k != "_tags" {
+					memory[k] = v
+				}
+			}
+		}
+		if r.Record.HasTTL() {
+			memory["expires_at"] = r.Record.ExpiresAt.Format(time.RFC3339)
+			memory["ttl_remaining"] = r.Record.TTL().String()
+		}
+		memories[i] = memory
+	}
+
+	return textResult(map[string]any{
+		"count":    len(memories),
+		"memories": memories,
+	})
+}
+
+func (s *MCPServer) toolMemoryForget(input memoryForgetInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(memoriesCollection)
+	if err != nil {
+		return errorResult("Memories collection not found")
+	}
+
+	var filters []veclite.Filter
+
+	if input.ExpiredOnly {
+		filters = append(filters, veclite.FilterFunc(func(r *veclite.Record) bool {
+			return r.IsExpired()
+		}))
+	}
+
+	if input.OlderThanHours > 0 {
+		age := time.Duration(input.OlderThanHours * float64(time.Hour))
+		filters = append(filters, veclite.AgeOlderThan(age))
+	}
+
+	if input.BelowImportance > 0 {
+		filters = append(filters, veclite.ImportanceBelow(float32(input.BelowImportance)))
+	}
+
+	if len(input.Tags) > 0 {
+		filters = append(filters, veclite.FilterFunc(func(r *veclite.Record) bool {
+			return hasAnyTag(r.Payload, input.Tags)
+		}))
+	}
+
+	if len(filters) == 0 {
+		return errorResult("At least one filter criteria is required to forget memories")
+	}
+
+	deleted, err := coll.DeleteWhere(filters...)
+	if err != nil {
+		return errorResult("Forget error: " + err.Error())
+	}
+
+	if deleted > 0 {
+		_ = s.db.Sync()
+	}
+
+	return textResult(map[string]any{
+		"status":  "forgotten",
+		"deleted": deleted,
+	})
+}
+
+// Helper functions
+
+func textResult(data any) (*mcp.CallToolResult, any, error) {
+	b, _ := json.MarshalIndent(data, "", "  ")
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: string(b)},
+		},
+	}, nil, nil
+}
+
+func errorResult(msg string) (*mcp.CallToolResult, any, error) {
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: msg},
+		},
+		IsError: true,
+	}, nil, nil
+}
+
+func float64ToFloat32(v []float64) []float32 {
+	result := make([]float32, len(v))
+	for i, f := range v {
+		result[i] = float32(f)
+	}
+	return result
 }
 
 func formatResults(results []veclite.Result) []map[string]any {
@@ -526,4 +595,36 @@ func formatResults(results []veclite.Result) []map[string]any {
 		out[i] = entry
 	}
 	return out
+}
+
+func hasAnyTag(payload map[string]any, tags []string) bool {
+	if payload == nil {
+		return false
+	}
+	tagsVal, ok := payload["_tags"]
+	if !ok {
+		return false
+	}
+
+	switch t := tagsVal.(type) {
+	case []string:
+		for _, pt := range t {
+			for _, tag := range tags {
+				if pt == tag {
+					return true
+				}
+			}
+		}
+	case []any:
+		for _, pt := range t {
+			if ptStr, ok := pt.(string); ok {
+				for _, tag := range tags {
+					if ptStr == tag {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
 }

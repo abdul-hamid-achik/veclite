@@ -102,6 +102,49 @@ go build -o bin/veclite ./cmd/veclite
    go test -bench=BenchmarkSearch -benchmem ./...
    ```
 
+## Iterative Development Workflow
+
+**Run linter and tests frequently in a loop** as you make changes. This is critical for validating your work:
+
+```bash
+# After every meaningful change, run this cycle:
+task lint && task test
+
+# Or using Go directly:
+go vet ./... && go test -race ./...
+```
+
+### Why This Matters
+- **Catch issues early**: Linter errors and test failures are easier to fix when caught immediately after the change that caused them
+- **Maintain quality**: Frequent validation prevents accumulation of technical debt
+- **Build confidence**: Passing tests confirm your changes work as intended
+
+### The Validation Loop
+1. Make a small, focused change
+2. Run `task lint` to catch static analysis issues
+3. Run `task test` to verify functionality
+4. Fix any issues before moving on
+5. Repeat
+
+### Keep README.md Up to Date
+The README.md is the primary documentation for users. **Update it frequently** as you make changes:
+
+- **New features**: Document them immediately after implementation
+- **API changes**: Update usage examples and API reference sections
+- **CLI changes**: Update command documentation and examples
+- **Configuration options**: Document new options as they're added
+- **Breaking changes**: Clearly note what changed and migration steps
+
+```bash
+# After completing a feature, always check if README needs updates:
+# 1. Does this change affect how users use the library?
+# 2. Are there new public APIs?
+# 3. Did CLI commands change?
+# 4. Are examples still accurate?
+```
+
+Keeping documentation synchronized with code ensures the project remains useful and accessible to new users.
+
 ## Code Style Guidelines
 
 1. **Zero dependencies**: Do not add external modules. Use standard library only.
