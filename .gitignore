@@ -40,3 +40,5 @@ bin/
 # ONNX embedder dependencies (download separately)
 models/
 lib/
+
+.env

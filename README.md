@@ -25,7 +25,11 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
   - [Updating Records](#updating-records)
   - [Deleting Records](#deleting-records)
   - [Auto-Embedding](#auto-embedding)
+  - [Embedding Providers](#embedding-providers)
+  - [OpenAI Embedder](#openai-embedder)
+  - [Ollama Embedder](#ollama-embedder)
   - [Local ONNX Embedder](#local-onnx-embedder)
+  - [Config-Based Embedding](#config-based-embedding)
   - [HNSW Configuration](#hnsw-configuration)
   - [Observability](#observability)
   - [Statistics](#statistics)
@@ -481,7 +485,117 @@ id, err := coll.InsertText("Go is a programming language", payload)
 results, err := coll.SearchText("programming languages", veclite.TopK(10))
 ```
 
-The `Embedder` interface lives in the core library (zero dependencies). Implementations wrapping OpenAI, Ollama, or other providers belong in separate modules.
+The `Embedder` interface lives in the core library (zero dependencies). VecLite provides built-in implementations for OpenAI, Ollama, and ONNX.
+
+### Embedding Providers
+
+VecLite supports multiple embedding providers out of the box:
+
+| Provider | Package | Dimensions | Notes |
+|----------|---------|------------|-------|
+| OpenAI | `embed/openai` | 1536/3072 | API key required, best quality |
+| Ollama | `embed/ollama` | 768/1024/384 | Local, no API key needed |
+| ONNX | `embed/onnx` | 384 | Local, offline capable, build with `-tags onnx` |
+
+### OpenAI Embedder
+
+Use OpenAI's embedding API for high-quality embeddings:
+
+```go
+import "github.com/abdul-hamid-achik/veclite/embed/openai"
+
+// Create embedder (uses OPENAI_API_KEY env var by default)
+embedder, err := openai.NewEmbedder()
+
+// Or with explicit options
+embedder, err := openai.NewEmbedder(
+    openai.WithAPIKey("sk-..."),
+    openai.WithModel("text-embedding-3-small"),  // or text-embedding-3-large
+    openai.WithDimension(512),                    // Reduced dimensions (optional)
+)
+if err != nil {
+    log.Fatal(err)
+}
+defer embedder.Close()
+
+// Use with veclite
+db, _ := veclite.Open("data.veclite")
+coll, _ := db.CreateCollection("docs",
+    veclite.WithDimension(embedder.Dimension()),
+    veclite.WithEmbedder(embedder),
+)
+
+coll.InsertText("Hello world", nil)
+results, _ := coll.SearchText("greeting", veclite.TopK(5))
+```
+
+**OpenAI Models:**
+
+| Model | Default Dimensions | Notes |
+|-------|-------------------|-------|
+| `text-embedding-3-small` | 1536 | Cheapest, good quality (default) |
+| `text-embedding-3-large` | 3072 | Best quality |
+| `text-embedding-ada-002` | 1536 | Legacy |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `WithAPIKey(key)` | Set API key (default: `OPENAI_API_KEY` env) |
+| `WithModel(model)` | Set model (default: `text-embedding-3-small`) |
+| `WithBaseURL(url)` | Custom API endpoint (Azure, proxies) |
+| `WithDimension(dim)` | Reduced dimensions for v3 models |
+| `WithTimeout(dur)` | Request timeout (default: 30s) |
+
+### Ollama Embedder
+
+Use Ollama for local embeddings with no API key required:
+
+```go
+import "github.com/abdul-hamid-achik/veclite/embed/ollama"
+
+// Create embedder with defaults (localhost:11434, nomic-embed-text)
+embedder, err := ollama.NewEmbedder()
+
+// Or with options
+embedder, err := ollama.NewEmbedder(
+    ollama.WithBaseURL("http://localhost:11434"),
+    ollama.WithModel("nomic-embed-text"),
+)
+if err != nil {
+    log.Fatal(err)
+}
+defer embedder.Close()
+
+// Use with veclite
+db, _ := veclite.Open("data.veclite")
+coll, _ := db.CreateCollection("docs",
+    veclite.WithDimension(embedder.Dimension()),
+    veclite.WithEmbedder(embedder),
+)
+```
+
+**Prerequisites:** Pull the model first:
+
+```bash
+ollama pull nomic-embed-text
+```
+
+**Popular Ollama Models:**
+
+| Model | Dimensions | Notes |
+|-------|------------|-------|
+| `nomic-embed-text` | 768 | Good general purpose (default) |
+| `mxbai-embed-large` | 1024 | High quality |
+| `all-minilm` | 384 | Fast, lightweight |
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `WithBaseURL(url)` | Ollama API endpoint (default: `http://localhost:11434`) |
+| `WithModel(model)` | Embedding model (default: `nomic-embed-text`) |
+| `WithTimeout(dur)` | Request timeout (default: 30s) |
 
 ### Local ONNX Embedder
 
@@ -695,6 +809,75 @@ export ONNXRUNTIME_LIB=/opt/homebrew/lib/libonnxruntime.dylib
 # Ensure VECLITE_ONNX_MODEL_DIR points to the models directory
 VECLITE_ONNX_MODEL_DIR=/full/path/to/models go test -tags onnx ./embed/onnx/...
 ```
+
+### Config-Based Embedding
+
+Configure embedding providers via `veclite.yaml` for easy switching between providers:
+
+```yaml
+# veclite.yaml
+embedder:
+  provider: openai  # openai | ollama | onnx
+
+  openai:
+    api_key: ${OPENAI_API_KEY}  # Supports env var expansion
+    model: text-embedding-3-small
+    dimension: 1536
+    timeout: 30s
+
+  ollama:
+    base_url: http://localhost:11434
+    model: nomic-embed-text
+    timeout: 30s
+
+  onnx:
+    model_dir: ~/.veclite/models
+```
+
+**Usage:**
+
+```go
+import "github.com/abdul-hamid-achik/veclite"
+
+// Load config (searches ./veclite.yaml, ~/.veclite/config.yaml)
+cfg, err := veclite.LoadConfig("")
+
+// Or from explicit path
+cfg, err := veclite.LoadConfig("/path/to/veclite.yaml")
+
+// Create embedder from config
+embedder, err := veclite.NewEmbedderFromConfig(cfg.Embedder)
+if err != nil {
+    log.Fatal(err)
+}
+defer embedder.(interface{ Close() error }).Close()
+
+// Use with veclite
+db, _ := veclite.Open("data.veclite")
+coll, _ := db.CreateCollection("docs",
+    veclite.WithDimension(embedder.Dimension()),
+    veclite.WithEmbedder(embedder),
+)
+```
+
+**Environment Variable Expansion:**
+
+The config supports `${VAR}` and `${VAR:-default}` syntax:
+
+```yaml
+embedder:
+  provider: openai
+  openai:
+    api_key: ${OPENAI_API_KEY}           # Required env var
+    base_url: ${OPENAI_BASE_URL:-https://api.openai.com/v1}  # With default
+```
+
+**Config Search Order:**
+
+1. Explicit path provided to `LoadConfig()`
+2. `./veclite.yaml` (current directory)
+3. `~/.veclite/config.yaml` (home directory)
+4. Returns default configuration if no file found
 
 ### HNSW Configuration
 
