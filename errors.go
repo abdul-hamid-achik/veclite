@@ -27,12 +27,6 @@ var (
 	// ErrInvalidPath is returned when an invalid file path is provided.
 	ErrInvalidPath = errors.New("veclite: invalid path")
 
-	// ErrCorruptedFile is returned when the database file is corrupted.
-	ErrCorruptedFile = errors.New("veclite: corrupted file")
-
-	// ErrInvalidVersion is returned when the file version is not supported.
-	ErrInvalidVersion = errors.New("veclite: unsupported file version")
-
 	// ErrBatchSizeMismatch is returned when batch operation input sizes don't match.
 	ErrBatchSizeMismatch = errors.New("veclite: batch size mismatch")
 
@@ -78,4 +72,10 @@ var (
 
 	// ErrChecksumMismatch is returned when the file checksum does not match.
 	ErrChecksumMismatch = storage.ErrChecksumMismatch
+
+	// ErrCorruptedFile is returned when the database file is corrupted.
+	ErrCorruptedFile = storage.ErrCorruptedFile
+
+	// ErrInvalidVersion is returned when the file version is not supported.
+	ErrInvalidVersion = storage.ErrInvalidVersion
 )

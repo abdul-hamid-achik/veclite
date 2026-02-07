@@ -236,6 +236,10 @@ func (c *Collection) Subscribe(query []float32, opts ...SubscriptionOption) (*Su
 		return nil, ErrEmptyVector
 	}
 
+	if c.db == nil {
+		return nil, ErrDatabaseClosed
+	}
+
 	c.mu.RLock()
 	if c.dimension > 0 && len(query) != c.dimension {
 		c.mu.RUnlock()
@@ -259,6 +263,10 @@ func (c *Collection) Subscribe(query []float32, opts ...SubscriptionOption) (*Su
 
 // Unsubscribe removes a subscription by ID.
 func (c *Collection) Unsubscribe(subscriptionID string) error {
+	if c.db == nil {
+		return ErrDatabaseClosed
+	}
+
 	sm := c.db.getSubscriptionManager(c)
 	if !sm.unsubscribe(subscriptionID) {
 		return &NotFoundError{Type: "subscription", ID: subscriptionID}

@@ -1,6 +1,7 @@
 package veclite
 
 import (
+	"github.com/abdul-hamid-achik/veclite/internal/floats"
 	"github.com/abdul-hamid-achik/veclite/internal/storage"
 )
 
@@ -25,7 +26,11 @@ type (
 )
 
 // NewDatabaseSnapshot creates a new empty database snapshot.
-var NewDatabaseSnapshot = storage.NewDatabaseSnapshot
+func NewDatabaseSnapshot() *DatabaseSnapshot {
+	return storage.NewDatabaseSnapshot()
+}
 
 // NewCollectionSnapshot creates a new empty collection snapshot.
-var NewCollectionSnapshot = storage.NewCollectionSnapshot
+func NewCollectionSnapshot(name string, dimension int, distanceType floats.DistanceType) *CollectionSnapshot {
+	return storage.NewCollectionSnapshot(name, dimension, distanceType)
+}
