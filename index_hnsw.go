@@ -20,13 +20,6 @@ func newHNSWIndex(dimension int, distanceType floats.DistanceType, m, efConstruc
 	}
 }
 
-// newHNSWIndexWithConfig creates a new HNSW index with a custom configuration.
-func newHNSWIndexWithConfig(dimension int, distanceType floats.DistanceType, config hnsw.Config) *hnswIndex {
-	return &hnswIndex{
-		idx: hnsw.New(config, dimension, distanceType),
-	}
-}
-
 // Insert adds a vector with the given ID to the index.
 func (h *hnswIndex) Insert(id uint64, vector []float32) error {
 	return h.idx.Insert(id, vector)
@@ -79,11 +72,6 @@ func (h *hnswIndex) stats() hnsw.IndexStats {
 // internal returns the underlying HNSW index (for serialization).
 func (h *hnswIndex) internal() *hnsw.Index {
 	return h.idx
-}
-
-// setInternal sets the underlying HNSW index (for deserialization).
-func (h *hnswIndex) setInternal(idx *hnsw.Index) {
-	h.idx = idx
 }
 
 // convertHNSWResults converts HNSW search results to IndexResults.
