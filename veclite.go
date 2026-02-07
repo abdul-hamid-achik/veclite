@@ -18,6 +18,8 @@ package veclite
 import (
 	"sync"
 	"time"
+
+	"github.com/abdul-hamid-achik/veclite/internal/storage"
 )
 
 // Version is the library version.
@@ -26,7 +28,7 @@ const Version = "0.2.0"
 // DB represents a VecLite database.
 type DB struct {
 	path        string
-	storage     Storage
+	storage     storage.Backend
 	config      *dbConfig
 	collections map[string]*Collection
 	mu          sync.RWMutex
@@ -35,6 +37,10 @@ type DB struct {
 	updatedAt   time.Time
 	metrics     *Metrics
 	logger      Logger
+
+	// subscriptions manages per-collection subscription managers.
+	subscriptions map[string]*subscriptionManager
+	subMu         sync.Mutex
 }
 
 // Open opens or creates a VecLite database at the given path.
@@ -45,16 +51,16 @@ func Open(path string, opts ...Option) (*DB, error) {
 		opt.apply(config)
 	}
 
-	var storage Storage
+	var store storage.Backend
 	if path == ":memory:" {
-		storage = NewMemoryStorage()
+		store = storage.NewMemory()
 	} else {
-		fs := NewFileStorage(path)
+		fs := storage.NewFile(path)
 		// Acquire file lock to prevent concurrent access
 		if err := fs.Lock(); err != nil {
 			return nil, err
 		}
-		storage = fs
+		store = fs
 	}
 
 	logger := config.logger
@@ -63,20 +69,21 @@ func Open(path string, opts ...Option) (*DB, error) {
 	}
 
 	db := &DB{
-		path:        path,
-		storage:     storage,
-		config:      config,
-		collections: make(map[string]*Collection),
-		createdAt:   time.Now(),
-		updatedAt:   time.Now(),
-		metrics:     newMetrics(),
-		logger:      logger,
+		path:          path,
+		storage:       store,
+		config:        config,
+		collections:   make(map[string]*Collection),
+		createdAt:     time.Now(),
+		updatedAt:     time.Now(),
+		metrics:       newMetrics(),
+		logger:        logger,
+		subscriptions: make(map[string]*subscriptionManager),
 	}
 
 	// Load existing data
-	snapshot, err := storage.Load()
+	snapshot, err := store.Load()
 	if err != nil {
-		_ = storage.Close()
+		_ = store.Close()
 		return nil, err
 	}
 
@@ -236,10 +243,10 @@ func (db *DB) syncLocked() error {
 }
 
 // snapshotLocked creates a snapshot while holding the lock.
-func (db *DB) snapshotLocked() *DatabaseSnapshot {
-	snapshot := &DatabaseSnapshot{
+func (db *DB) snapshotLocked() *storage.DatabaseSnapshot {
+	snapshot := &storage.DatabaseSnapshot{
 		Version:     1,
-		Collections: make(map[string]*CollectionSnapshot, len(db.collections)),
+		Collections: make(map[string]*storage.CollectionSnapshot, len(db.collections)),
 		CreatedAt:   db.createdAt,
 		UpdatedAt:   time.Now(),
 	}
@@ -252,7 +259,7 @@ func (db *DB) snapshotLocked() *DatabaseSnapshot {
 }
 
 // loadFromSnapshot restores the database from a snapshot.
-func (db *DB) loadFromSnapshot(snapshot *DatabaseSnapshot) {
+func (db *DB) loadFromSnapshot(snapshot *storage.DatabaseSnapshot) {
 	db.createdAt = snapshot.CreatedAt
 	db.updatedAt = snapshot.UpdatedAt
 
@@ -293,4 +300,19 @@ func (db *DB) IsClosed() bool {
 // Metrics returns the current metrics snapshot.
 func (db *DB) Metrics() MetricsSnapshot {
 	return db.metrics.Snapshot()
+}
+
+// getSubscriptionManager returns or creates a subscription manager for the given collection.
+func (db *DB) getSubscriptionManager(c *Collection) *subscriptionManager {
+	db.subMu.Lock()
+	defer db.subMu.Unlock()
+
+	key := c.name
+	if sm, ok := db.subscriptions[key]; ok {
+		return sm
+	}
+
+	sm := newSubscriptionManager(c.distanceType)
+	db.subscriptions[key] = sm
+	return sm
 }

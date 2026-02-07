@@ -1,6 +1,6 @@
 //go:build windows
 
-package veclite
+package storage
 
 import "os"
 

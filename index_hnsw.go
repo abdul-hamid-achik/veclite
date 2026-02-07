@@ -5,44 +5,46 @@ import (
 	"github.com/abdul-hamid-achik/veclite/internal/hnsw"
 )
 
-// HNSWIndex wraps the HNSW index to implement the Index interface.
-type HNSWIndex struct {
+// hnswIndex wraps the internal HNSW index to implement the Index interface.
+// This type is unexported because consumers never create indexes directly;
+// use WithHNSW or WithHNSWConfig collection options instead.
+type hnswIndex struct {
 	idx *hnsw.Index
 }
 
-// NewHNSWIndex creates a new HNSW index with the given parameters.
-func NewHNSWIndex(dimension int, distanceType floats.DistanceType, m, efConstruction int) *HNSWIndex {
+// newHNSWIndex creates a new HNSW index with the given parameters.
+func newHNSWIndex(dimension int, distanceType floats.DistanceType, m, efConstruction int) *hnswIndex {
 	config := hnsw.NewConfig(m, efConstruction)
-	return &HNSWIndex{
+	return &hnswIndex{
 		idx: hnsw.New(config, dimension, distanceType),
 	}
 }
 
-// NewHNSWIndexWithConfig creates a new HNSW index with a custom configuration.
-func NewHNSWIndexWithConfig(dimension int, distanceType floats.DistanceType, config hnsw.Config) *HNSWIndex {
-	return &HNSWIndex{
+// newHNSWIndexWithConfig creates a new HNSW index with a custom configuration.
+func newHNSWIndexWithConfig(dimension int, distanceType floats.DistanceType, config hnsw.Config) *hnswIndex {
+	return &hnswIndex{
 		idx: hnsw.New(config, dimension, distanceType),
 	}
 }
 
 // Insert adds a vector with the given ID to the index.
-func (h *HNSWIndex) Insert(id uint64, vector []float32) error {
+func (h *hnswIndex) Insert(id uint64, vector []float32) error {
 	return h.idx.Insert(id, vector)
 }
 
 // Delete removes a vector from the index (soft delete).
-func (h *HNSWIndex) Delete(id uint64) error {
+func (h *hnswIndex) Delete(id uint64) error {
 	return h.idx.Delete(id)
 }
 
-// HardDelete removes a vector completely from the index.
-// This is needed for update operations where we re-insert with the same ID.
-func (h *HNSWIndex) HardDelete(id uint64) error {
+// hardDelete removes a vector completely from the index.
+// Needed for update operations where we re-insert with the same ID.
+func (h *hnswIndex) hardDelete(id uint64) error {
 	return h.idx.HardDelete(id)
 }
 
 // Search finds the k nearest neighbors to the query vector.
-func (h *HNSWIndex) Search(query []float32, k int) ([]IndexResult, error) {
+func (h *hnswIndex) Search(query []float32, k int) ([]IndexResult, error) {
 	results, err := h.idx.Search(query, k)
 	if err != nil {
 		return nil, err
@@ -51,7 +53,7 @@ func (h *HNSWIndex) Search(query []float32, k int) ([]IndexResult, error) {
 }
 
 // SearchWithEf searches with a custom ef parameter.
-func (h *HNSWIndex) SearchWithEf(query []float32, k int, ef int) ([]IndexResult, error) {
+func (h *hnswIndex) SearchWithEf(query []float32, k int, ef int) ([]IndexResult, error) {
 	results, err := h.idx.SearchWithEf(query, k, ef)
 	if err != nil {
 		return nil, err
@@ -60,27 +62,27 @@ func (h *HNSWIndex) SearchWithEf(query []float32, k int, ef int) ([]IndexResult,
 }
 
 // Count returns the number of vectors in the index.
-func (h *HNSWIndex) Count() int {
+func (h *hnswIndex) Count() int {
 	return h.idx.Count()
 }
 
 // Type returns "hnsw".
-func (h *HNSWIndex) Type() string {
+func (h *hnswIndex) Type() string {
 	return string(IndexTypeHNSW)
 }
 
-// Stats returns statistics about the index.
-func (h *HNSWIndex) Stats() hnsw.IndexStats {
+// stats returns statistics about the index.
+func (h *hnswIndex) stats() hnsw.IndexStats {
 	return h.idx.Stats()
 }
 
-// Internal returns the underlying HNSW index (for serialization).
-func (h *HNSWIndex) Internal() *hnsw.Index {
+// internal returns the underlying HNSW index (for serialization).
+func (h *hnswIndex) internal() *hnsw.Index {
 	return h.idx
 }
 
-// SetInternal sets the underlying HNSW index (for deserialization).
-func (h *HNSWIndex) SetInternal(idx *hnsw.Index) {
+// setInternal sets the underlying HNSW index (for deserialization).
+func (h *hnswIndex) setInternal(idx *hnsw.Index) {
 	h.idx = idx
 }
 
@@ -96,5 +98,5 @@ func convertHNSWResults(results []hnsw.SearchResult) []IndexResult {
 	return out
 }
 
-// Ensure HNSWIndex implements Index.
-var _ Index = (*HNSWIndex)(nil)
+// Ensure hnswIndex implements Index.
+var _ Index = (*hnswIndex)(nil)

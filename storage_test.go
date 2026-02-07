@@ -7,13 +7,14 @@ import (
 	"time"
 
 	"github.com/abdul-hamid-achik/veclite/internal/floats"
+	"github.com/abdul-hamid-achik/veclite/internal/storage"
 )
 
 func TestMemoryStorage(t *testing.T) {
-	storage := NewMemoryStorage()
+	store := storage.NewMemory()
 
 	// Initially empty
-	snapshot, err := storage.Load()
+	snapshot, err := store.Load()
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -25,12 +26,12 @@ func TestMemoryStorage(t *testing.T) {
 	data := NewDatabaseSnapshot()
 	data.Collections["test"] = NewCollectionSnapshot("test", 3, floats.DistanceCosine)
 
-	if err := storage.Save(data); err != nil {
+	if err := store.Save(data); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
 	// Load it back
-	loaded, err := storage.Load()
+	loaded, err := store.Load()
 	if err != nil {
 		t.Fatalf("Load after save failed: %v", err)
 	}
@@ -42,7 +43,7 @@ func TestMemoryStorage(t *testing.T) {
 	}
 
 	// Close is a no-op
-	if err := storage.Close(); err != nil {
+	if err := store.Close(); err != nil {
 		t.Fatalf("Close failed: %v", err)
 	}
 }
@@ -51,10 +52,10 @@ func TestFileStorage(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "test.veclite")
 
-	storage := NewFileStorage(path)
+	store := storage.NewFile(path)
 
 	// Initially file doesn't exist
-	snapshot, err := storage.Load()
+	snapshot, err := store.Load()
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -89,17 +90,17 @@ func TestFileStorage(t *testing.T) {
 		UpdatedAt: time.Now(),
 	}
 
-	if err := storage.Save(data); err != nil {
+	if err := store.Save(data); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
 	// Verify file exists
-	if !storage.Exists() {
+	if !store.Exists() {
 		t.Error("File should exist after save")
 	}
 
 	// Load it back
-	loaded, err := storage.Load()
+	loaded, err := store.Load()
 	if err != nil {
 		t.Fatalf("Load after save failed: %v", err)
 	}
@@ -125,7 +126,7 @@ func TestFileStorage(t *testing.T) {
 	}
 
 	// Close
-	if err := storage.Close(); err != nil {
+	if err := store.Close(); err != nil {
 		t.Fatalf("Close failed: %v", err)
 	}
 }
@@ -134,24 +135,24 @@ func TestFileStorageAtomicWrite(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "test.veclite")
 
-	storage := NewFileStorage(path)
+	store := storage.NewFile(path)
 
 	// First save
 	data1 := NewDatabaseSnapshot()
 	data1.Collections["v1"] = NewCollectionSnapshot("v1", 3, floats.DistanceCosine)
-	if err := storage.Save(data1); err != nil {
+	if err := store.Save(data1); err != nil {
 		t.Fatalf("First save failed: %v", err)
 	}
 
 	// Second save (overwrites)
 	data2 := NewDatabaseSnapshot()
 	data2.Collections["v2"] = NewCollectionSnapshot("v2", 3, floats.DistanceCosine)
-	if err := storage.Save(data2); err != nil {
+	if err := store.Save(data2); err != nil {
 		t.Fatalf("Second save failed: %v", err)
 	}
 
 	// Load should get v2
-	loaded, err := storage.Load()
+	loaded, err := store.Load()
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
@@ -173,14 +174,14 @@ func TestFileStorageNestedPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "nested", "dir", "test.veclite")
 
-	storage := NewFileStorage(path)
+	store := storage.NewFile(path)
 
 	data := NewDatabaseSnapshot()
-	if err := storage.Save(data); err != nil {
+	if err := store.Save(data); err != nil {
 		t.Fatalf("Save to nested path failed: %v", err)
 	}
 
-	if !storage.Exists() {
+	if !store.Exists() {
 		t.Error("File should exist in nested directory")
 	}
 }
@@ -189,20 +190,20 @@ func TestFileStorageDelete(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "test.veclite")
 
-	storage := NewFileStorage(path)
-	if err := storage.Save(NewDatabaseSnapshot()); err != nil {
+	store := storage.NewFile(path)
+	if err := store.Save(NewDatabaseSnapshot()); err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	if !storage.Exists() {
+	if !store.Exists() {
 		t.Fatal("File should exist before delete")
 	}
 
-	if err := storage.Delete(); err != nil {
+	if err := store.Delete(); err != nil {
 		t.Fatalf("Delete failed: %v", err)
 	}
 
-	if storage.Exists() {
+	if store.Exists() {
 		t.Error("File should not exist after delete")
 	}
 }
@@ -216,8 +217,8 @@ func TestFileStorageCorruptedFile(t *testing.T) {
 		t.Fatalf("Failed to create corrupted file: %v", err)
 	}
 
-	storage := NewFileStorage(path)
-	_, err := storage.Load()
+	store := storage.NewFile(path)
+	_, err := store.Load()
 	if err == nil {
 		t.Error("Load should fail on corrupted file")
 	}
@@ -234,8 +235,8 @@ func TestFileStorageInvalidMagic(t *testing.T) {
 		t.Fatalf("Failed to create invalid file: %v", err)
 	}
 
-	storage := NewFileStorage(path)
-	_, err := storage.Load()
+	store := storage.NewFile(path)
+	_, err := store.Load()
 	if err == nil {
 		t.Error("Load should fail on invalid magic")
 	}
@@ -282,10 +283,10 @@ func TestNewCollectionSnapshot(t *testing.T) {
 }
 
 func TestFileStoragePath(t *testing.T) {
-	storage := NewFileStorage("/path/to/db.veclite")
+	store := storage.NewFile("/path/to/db.veclite")
 
-	if storage.Path() != "/path/to/db.veclite" {
-		t.Errorf("Path() = %v, want /path/to/db.veclite", storage.Path())
+	if store.Path() != "/path/to/db.veclite" {
+		t.Errorf("Path() = %v, want /path/to/db.veclite", store.Path())
 	}
 }
 
@@ -293,7 +294,7 @@ func BenchmarkFileStorageSave(b *testing.B) {
 	tmpDir := b.TempDir()
 	path := filepath.Join(tmpDir, "bench.veclite")
 
-	storage := NewFileStorage(path)
+	store := storage.NewFile(path)
 
 	// Create snapshot with some data
 	snapshot := NewDatabaseSnapshot()
@@ -315,7 +316,7 @@ func BenchmarkFileStorageSave(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = storage.Save(snapshot)
+		_ = store.Save(snapshot)
 	}
 }
 
@@ -323,7 +324,7 @@ func BenchmarkFileStorageLoad(b *testing.B) {
 	tmpDir := b.TempDir()
 	path := filepath.Join(tmpDir, "bench.veclite")
 
-	storage := NewFileStorage(path)
+	store := storage.NewFile(path)
 
 	// Create and save snapshot with some data
 	snapshot := NewDatabaseSnapshot()
@@ -342,12 +343,12 @@ func BenchmarkFileStorageLoad(b *testing.B) {
 		})
 	}
 	snapshot.Collections["test"] = coll
-	if err := storage.Save(snapshot); err != nil {
+	if err := store.Save(snapshot); err != nil {
 		b.Fatalf("Save failed: %v", err)
 	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = storage.Load()
+		_, _ = store.Load()
 	}
 }

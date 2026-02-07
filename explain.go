@@ -6,6 +6,17 @@ import (
 	"github.com/abdul-hamid-achik/veclite/internal/hnsw"
 )
 
+// HNSWStats contains statistics about an HNSW index.
+// This is the public wrapper for internal index statistics.
+type HNSWStats struct {
+	// NodeCount is the number of vectors in the index.
+	NodeCount int `json:"node_count"`
+	// MaxLevel is the highest level in the HNSW graph.
+	MaxLevel int `json:"max_level"`
+	// EntryPointID is the ID of the entry point node.
+	EntryPointID uint64 `json:"entry_point_id"`
+}
+
 // SearchExplanation provides details about how a search was performed.
 type SearchExplanation struct {
 	// Results contains the search results.
@@ -79,7 +90,7 @@ func (c *Collection) SearchExplain(query []float32, opts ...SearchOption) (*Sear
 
 // searchWithIndexExplain performs HNSW search with statistics.
 func (c *Collection) searchWithIndexExplain(query []float32, config *searchConfig) ([]Result, hnsw.SearchStats, error) {
-	hnswIdx, ok := c.index.(*HNSWIndex)
+	hi, ok := c.index.(*hnswIndex)
 	if !ok {
 		results, err := c.searchBruteForce(query, config)
 		return results, hnsw.SearchStats{}, err
@@ -94,7 +105,7 @@ func (c *Collection) searchWithIndexExplain(query []float32, config *searchConfi
 		ef = 100
 	}
 
-	indexResults, stats, err := hnswIdx.Internal().SearchWithStats(query, config.topK, ef)
+	indexResults, stats, err := hi.internal().SearchWithStats(query, config.topK, ef)
 	if err != nil {
 		return nil, stats, err
 	}
@@ -115,9 +126,9 @@ func (c *Collection) searchWithIndexExplain(query []float32, config *searchConfi
 	return results, stats, nil
 }
 
-// IndexStats returns statistics about the collection's index.
-// Returns nil if no index is configured.
-func (c *Collection) IndexStats() *hnsw.IndexStats {
+// IndexStats returns statistics about the collection's HNSW index.
+// Returns nil if no HNSW index is configured.
+func (c *Collection) IndexStats() *HNSWStats {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -125,11 +136,15 @@ func (c *Collection) IndexStats() *hnsw.IndexStats {
 		return nil
 	}
 
-	hnswIdx, ok := c.index.(*HNSWIndex)
+	hi, ok := c.index.(*hnswIndex)
 	if !ok {
 		return nil
 	}
 
-	stats := hnswIdx.Stats()
-	return &stats
+	stats := hi.stats()
+	return &HNSWStats{
+		NodeCount:    stats.NodeCount,
+		MaxLevel:     stats.MaxLevel,
+		EntryPointID: stats.EntryPoint,
+	}
 }

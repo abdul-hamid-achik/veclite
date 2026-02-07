@@ -229,31 +229,6 @@ func (sm *subscriptionManager) notifyInsert(record *Record) {
 
 // Collection subscription methods
 
-// Package-level subscription management.
-// We use a package-level map since the Collection struct is defined elsewhere.
-var (
-	collectionSubscriptions = make(map[string]*subscriptionManager)
-	subscriptionsMu         sync.Mutex
-)
-
-func getSubscriptionManager(c *Collection) *subscriptionManager {
-	subscriptionsMu.Lock()
-	defer subscriptionsMu.Unlock()
-
-	key := c.name
-	if c.db != nil {
-		key = c.db.path + ":" + c.name
-	}
-
-	if sm, ok := collectionSubscriptions[key]; ok {
-		return sm
-	}
-
-	sm := newSubscriptionManager(c.distanceType)
-	collectionSubscriptions[key] = sm
-	return sm
-}
-
 // Subscribe creates a subscription that receives events when new records match the query.
 // Returns the subscription which can be used to receive events and close the subscription.
 func (c *Collection) Subscribe(query []float32, opts ...SubscriptionOption) (*Subscription, error) {
@@ -276,7 +251,7 @@ func (c *Collection) Subscribe(query []float32, opts ...SubscriptionOption) (*Su
 	// Generate unique ID
 	id := generateSubscriptionID()
 
-	sm := getSubscriptionManager(c)
+	sm := c.db.getSubscriptionManager(c)
 	sub := sm.subscribe(id, query, config)
 
 	return sub, nil
@@ -284,7 +259,7 @@ func (c *Collection) Subscribe(query []float32, opts ...SubscriptionOption) (*Su
 
 // Unsubscribe removes a subscription by ID.
 func (c *Collection) Unsubscribe(subscriptionID string) error {
-	sm := getSubscriptionManager(c)
+	sm := c.db.getSubscriptionManager(c)
 	if !sm.unsubscribe(subscriptionID) {
 		return &NotFoundError{Type: "subscription", ID: subscriptionID}
 	}
@@ -294,7 +269,10 @@ func (c *Collection) Unsubscribe(subscriptionID string) error {
 // notifySubscribers notifies all subscriptions about a new record.
 // Called after successful insert operations.
 func (c *Collection) notifySubscribers(record *Record) {
-	sm := getSubscriptionManager(c)
+	if c.db == nil {
+		return
+	}
+	sm := c.db.getSubscriptionManager(c)
 	go sm.notifyInsert(record)
 }
 

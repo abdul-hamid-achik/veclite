@@ -3,6 +3,8 @@ package veclite
 import (
 	"errors"
 	"fmt"
+
+	"github.com/abdul-hamid-achik/veclite/internal/storage"
 )
 
 // Sentinel errors for common conditions.
@@ -67,15 +69,13 @@ func (e *NotFoundError) Unwrap() error {
 }
 
 // StorageError wraps storage-related errors with context.
-type StorageError struct {
-	Op  string // Operation that failed
-	Err error  // Underlying error
-}
+type StorageError = storage.Error
 
-func (e *StorageError) Error() string {
-	return fmt.Sprintf("veclite: storage %s: %v", e.Op, e.Err)
-}
+// Storage-level sentinel errors re-exported for consumer use.
+var (
+	// ErrFileLocked is returned when the database file is locked by another process.
+	ErrFileLocked = storage.ErrFileLocked
 
-func (e *StorageError) Unwrap() error {
-	return e.Err
-}
+	// ErrChecksumMismatch is returned when the file checksum does not match.
+	ErrChecksumMismatch = storage.ErrChecksumMismatch
+)
