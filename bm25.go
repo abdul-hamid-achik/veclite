@@ -201,15 +201,6 @@ func (idx *invertedIndex) search(query string, topK int) []textSearchResult {
 	return results
 }
 
-// InvertedIndexSnapshot is the serializable state of the inverted index.
-type InvertedIndexSnapshot struct {
-	Postings    map[string][]uint64
-	DocLengths  map[uint64]int
-	TotalDocLen int64
-	DocCount    int
-	Fields      []string
-}
-
 // snapshot creates a serializable snapshot of the inverted index.
 func (idx *invertedIndex) snapshot() *InvertedIndexSnapshot {
 	if idx == nil {

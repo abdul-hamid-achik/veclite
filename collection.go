@@ -8,6 +8,7 @@ import (
 
 	"github.com/abdul-hamid-achik/veclite/internal/floats"
 	"github.com/abdul-hamid-achik/veclite/internal/hnsw"
+	"github.com/abdul-hamid-achik/veclite/internal/storage"
 )
 
 // Collection represents a collection of vectors with the same dimension.
@@ -57,7 +58,7 @@ func newCollection(name string, config *collectionConfig, db *DB) *Collection {
 
 	// Initialize index if HNSW is configured
 	if config.indexType == IndexTypeHNSW && config.hnswConfig != nil {
-		c.index = NewHNSWIndex(
+		c.index = newHNSWIndex(
 			config.dimension,
 			config.distanceType,
 			config.hnswConfig.M,
@@ -73,7 +74,7 @@ func newCollection(name string, config *collectionConfig, db *DB) *Collection {
 // Must be called with the collection lock held.
 func (c *Collection) initHNSWIfNeeded() {
 	if c.indexType == IndexTypeHNSW && c.hnswConfig != nil && c.index == nil && c.dimension > 0 {
-		c.index = NewHNSWIndex(
+		c.index = newHNSWIndex(
 			c.dimension,
 			c.distanceType,
 			c.hnswConfig.M,
@@ -89,11 +90,11 @@ func (c *Collection) setupVectorProvider() {
 	if c.index == nil {
 		return
 	}
-	hnswIdx, ok := c.index.(*HNSWIndex)
+	hnswIdx, ok := c.index.(*hnswIndex)
 	if !ok {
 		return
 	}
-	hnswIdx.Internal().SetVectorProvider(func(id uint64) ([]float32, bool) {
+	hnswIdx.internal().SetVectorProvider(func(id uint64) ([]float32, bool) {
 		rec, ok := c.records[id]
 		if !ok {
 			return nil, false
@@ -617,8 +618,8 @@ func (c *Collection) hardDeleteFromIndex(id uint64) {
 		return
 	}
 	// Try hard delete for HNSW index
-	if hnswIdx, ok := c.index.(*HNSWIndex); ok {
-		_ = hnswIdx.HardDelete(id)
+	if hnswIdx, ok := c.index.(*hnswIndex); ok {
+		_ = hnswIdx.hardDelete(id)
 		return
 	}
 	// Fall back to regular delete for other index types
@@ -756,7 +757,7 @@ func (c *Collection) insertUnlocked(vector []float32, payload map[string]any) (u
 	if c.dimension == 0 {
 		c.dimension = len(vector)
 		if c.indexType == IndexTypeHNSW && c.hnswConfig != nil && c.index == nil {
-			c.index = NewHNSWIndex(
+			c.index = newHNSWIndex(
 				c.dimension,
 				c.distanceType,
 				c.hnswConfig.M,
@@ -800,7 +801,7 @@ func (c *Collection) insertWithIDUnlocked(id uint64, vector []float32, payload m
 	if c.dimension == 0 {
 		c.dimension = len(vector)
 		if c.indexType == IndexTypeHNSW && c.hnswConfig != nil && c.index == nil {
-			c.index = NewHNSWIndex(
+			c.index = newHNSWIndex(
 				c.dimension,
 				c.distanceType,
 				c.hnswConfig.M,
@@ -1134,24 +1135,24 @@ func (c *Collection) HasIndex() bool {
 }
 
 // snapshot creates a serializable snapshot of the collection.
-func (c *Collection) snapshot() *CollectionSnapshot {
+func (c *Collection) snapshot() *storage.CollectionSnapshot {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	snapshot := &CollectionSnapshot{
+	snapshot := &storage.CollectionSnapshot{
 		Name:         c.name,
 		Dimension:    c.dimension,
 		DistanceType: c.distanceType,
 		NextID:       c.nextID,
-		Records:      make([]*RecordSnapshot, 0, len(c.records)),
+		Records:      make([]*storage.RecordSnapshot, 0, len(c.records)),
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
-		IndexType:    c.indexType,
+		IndexType:    string(c.indexType),
 		HNSWConfig:   c.hnswConfig,
 	}
 
 	for _, record := range c.records {
-		snapshot.Records = append(snapshot.Records, &RecordSnapshot{
+		snapshot.Records = append(snapshot.Records, &storage.RecordSnapshot{
 			ID:             record.ID,
 			Vector:         record.Vector,
 			Payload:        record.Payload,
@@ -1167,8 +1168,8 @@ func (c *Collection) snapshot() *CollectionSnapshot {
 
 	// Snapshot HNSW index if present
 	if c.index != nil && c.indexType == IndexTypeHNSW {
-		if hnswIdx, ok := c.index.(*HNSWIndex); ok {
-			snapshot.HNSWSnapshot = hnswIdx.Internal().Snapshot()
+		if hnswIdx, ok := c.index.(*hnswIndex); ok {
+			snapshot.HNSWSnapshot = hnswIdx.internal().Snapshot()
 		}
 	}
 
@@ -1181,7 +1182,7 @@ func (c *Collection) snapshot() *CollectionSnapshot {
 }
 
 // loadFromSnapshot restores the collection from a snapshot.
-func (c *Collection) loadFromSnapshot(snapshot *CollectionSnapshot) {
+func (c *Collection) loadFromSnapshot(snapshot *storage.CollectionSnapshot) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -1190,7 +1191,7 @@ func (c *Collection) loadFromSnapshot(snapshot *CollectionSnapshot) {
 	c.distanceFunc = floats.GetDistanceFunc(snapshot.DistanceType)
 	c.higherBetter = floats.IsHigherBetter(snapshot.DistanceType)
 	c.nextID = snapshot.NextID
-	c.indexType = snapshot.IndexType
+	c.indexType = IndexType(snapshot.IndexType)
 	c.hnswConfig = snapshot.HNSWConfig
 	c.records = make(map[uint64]*Record, len(snapshot.Records))
 
@@ -1210,9 +1211,9 @@ func (c *Collection) loadFromSnapshot(snapshot *CollectionSnapshot) {
 	}
 
 	// Restore HNSW index if present
-	if snapshot.IndexType == IndexTypeHNSW && snapshot.HNSWSnapshot != nil {
+	if IndexType(snapshot.IndexType) == IndexTypeHNSW && snapshot.HNSWSnapshot != nil {
 		idx := hnsw.LoadFromSnapshot(snapshot.HNSWSnapshot, snapshot.DistanceType)
-		c.index = &HNSWIndex{idx: idx}
+		c.index = &hnswIndex{idx: idx}
 		c.setupVectorProvider()
 		// Clear the internal vectors map since the provider is now active
 		idx.ClearInternalVectors()

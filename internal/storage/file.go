@@ -1,4 +1,4 @@
-package veclite
+package storage
 
 import (
 	"bytes"
@@ -29,40 +29,46 @@ var ErrFileLocked = errors.New("veclite: database file is locked by another proc
 // ErrChecksumMismatch is returned when the file checksum does not match.
 var ErrChecksumMismatch = errors.New("veclite: checksum mismatch")
 
-// FileStorage is a file-based storage implementation.
+// ErrCorruptedFile is returned when the database file is corrupted.
+var ErrCorruptedFile = errors.New("veclite: corrupted file")
+
+// ErrInvalidVersion is returned when the file version is not supported.
+var ErrInvalidVersion = errors.New("veclite: unsupported file version")
+
+// File is a file-based storage implementation.
 // Uses gob encoding with atomic writes for durability.
 // Acquires an exclusive file lock to prevent concurrent access from multiple processes.
-type FileStorage struct {
+type File struct {
 	path     string
 	lockFile *os.File // held open for the duration to maintain the flock
 }
 
-// NewFileStorage creates a new file storage for the given path.
-func NewFileStorage(path string) *FileStorage {
-	return &FileStorage{path: path}
+// NewFile creates a new file storage for the given path.
+func NewFile(path string) *File {
+	return &File{path: path}
 }
 
 // Lock acquires an exclusive file lock on a .lock file adjacent to the database.
 // This prevents multiple processes from opening the same database.
-func (f *FileStorage) Lock() error {
+func (f *File) Lock() error {
 	lockPath := f.path + ".lock"
 
 	// Ensure parent directory exists
 	dir := filepath.Dir(lockPath)
 	if dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return &StorageError{Op: "mkdir for lock", Err: err}
+			return &Error{Op: "mkdir for lock", Err: err}
 		}
 	}
 
 	lf, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
-		return &StorageError{Op: "open lock file", Err: err}
+		return &Error{Op: "open lock file", Err: err}
 	}
 
 	if err := lockFile(lf); err != nil {
 		_ = lf.Close()
-		return &StorageError{Op: "acquire lock", Err: ErrFileLocked}
+		return &Error{Op: "acquire lock", Err: ErrFileLocked}
 	}
 
 	f.lockFile = lf
@@ -70,7 +76,7 @@ func (f *FileStorage) Lock() error {
 }
 
 // Unlock releases the file lock.
-func (f *FileStorage) Unlock() error {
+func (f *File) Unlock() error {
 	if f.lockFile == nil {
 		return nil
 	}
@@ -82,38 +88,38 @@ func (f *FileStorage) Unlock() error {
 	_ = os.Remove(lockPath)
 
 	if err != nil {
-		return &StorageError{Op: "release lock", Err: err}
+		return &Error{Op: "release lock", Err: err}
 	}
 	return nil
 }
 
 // Load reads the database from the file.
 // Returns nil, nil if the file doesn't exist yet.
-func (f *FileStorage) Load() (*DatabaseSnapshot, error) {
+func (f *File) Load() (*DatabaseSnapshot, error) {
 	file, err := os.Open(f.path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
-		return nil, &StorageError{Op: "open", Err: err}
+		return nil, &Error{Op: "open", Err: err}
 	}
 	defer func() { _ = file.Close() }()
 
 	// Read and validate header
 	header := make([]byte, headerSize)
 	if _, err := io.ReadFull(file, header); err != nil {
-		return nil, &StorageError{Op: "read header", Err: ErrCorruptedFile}
+		return nil, &Error{Op: "read header", Err: ErrCorruptedFile}
 	}
 
 	// Validate magic
 	if string(header[:8]) != fileMagic {
-		return nil, &StorageError{Op: "validate", Err: ErrCorruptedFile}
+		return nil, &Error{Op: "validate", Err: ErrCorruptedFile}
 	}
 
 	// Validate version
 	version := binary.LittleEndian.Uint32(header[8:12])
 	if version != fileVersion {
-		return nil, &StorageError{Op: "validate", Err: ErrInvalidVersion}
+		return nil, &Error{Op: "validate", Err: ErrInvalidVersion}
 	}
 
 	// Read stored checksum
@@ -122,14 +128,14 @@ func (f *FileStorage) Load() (*DatabaseSnapshot, error) {
 	// Read payload
 	payload, err := io.ReadAll(file)
 	if err != nil {
-		return nil, &StorageError{Op: "read payload", Err: err}
+		return nil, &Error{Op: "read payload", Err: err}
 	}
 
 	// Validate checksum (only if non-zero, for backward compatibility with v1 files without checksums)
 	if storedChecksum != 0 {
 		computedChecksum := crc32.ChecksumIEEE(payload)
 		if computedChecksum != storedChecksum {
-			return nil, &StorageError{Op: "validate checksum", Err: ErrChecksumMismatch}
+			return nil, &Error{Op: "validate checksum", Err: ErrChecksumMismatch}
 		}
 	}
 
@@ -137,7 +143,7 @@ func (f *FileStorage) Load() (*DatabaseSnapshot, error) {
 	var snapshot DatabaseSnapshot
 	decoder := gob.NewDecoder(bytes.NewReader(payload))
 	if err := decoder.Decode(&snapshot); err != nil {
-		return nil, &StorageError{Op: "decode", Err: err}
+		return nil, &Error{Op: "decode", Err: err}
 	}
 
 	return &snapshot, nil
@@ -145,12 +151,12 @@ func (f *FileStorage) Load() (*DatabaseSnapshot, error) {
 
 // Save writes the database to the file using atomic write pattern.
 // Writes to .tmp file, fsyncs, then renames old to .bak, then renames .tmp to final.
-func (f *FileStorage) Save(snapshot *DatabaseSnapshot) error {
+func (f *File) Save(snapshot *DatabaseSnapshot) error {
 	// Ensure parent directory exists
 	dir := filepath.Dir(f.path)
 	if dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0755); err != nil {
-			return &StorageError{Op: "mkdir", Err: err}
+			return &Error{Op: "mkdir", Err: err}
 		}
 	}
 
@@ -158,7 +164,7 @@ func (f *FileStorage) Save(snapshot *DatabaseSnapshot) error {
 	var payloadBuf bytes.Buffer
 	encoder := gob.NewEncoder(&payloadBuf)
 	if err := encoder.Encode(snapshot); err != nil {
-		return &StorageError{Op: "encode", Err: err}
+		return &Error{Op: "encode", Err: err}
 	}
 
 	payloadBytes := payloadBuf.Bytes()
@@ -186,7 +192,7 @@ func (f *FileStorage) Save(snapshot *DatabaseSnapshot) error {
 		if err := os.Rename(f.path, bakPath); err != nil {
 			// Clean up temp file
 			_ = os.Remove(tmpPath)
-			return &StorageError{Op: "backup", Err: err}
+			return &Error{Op: "backup", Err: err}
 		}
 	}
 
@@ -196,7 +202,7 @@ func (f *FileStorage) Save(snapshot *DatabaseSnapshot) error {
 		if _, bakErr := os.Stat(bakPath); bakErr == nil {
 			_ = os.Rename(bakPath, f.path)
 		}
-		return &StorageError{Op: "rename", Err: err}
+		return &Error{Op: "rename", Err: err}
 	}
 
 	// Fsync the directory to ensure the rename is durable
@@ -212,41 +218,41 @@ func (f *FileStorage) Save(snapshot *DatabaseSnapshot) error {
 }
 
 // writeFileSync writes data to a file and fsyncs before closing.
-func (f *FileStorage) writeFileSync(path string, header, payload []byte) error {
+func (f *File) writeFileSync(path string, header, payload []byte) error {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
-		return &StorageError{Op: "create temp", Err: err}
+		return &Error{Op: "create temp", Err: err}
 	}
 
 	if _, err := file.Write(header); err != nil {
 		_ = file.Close()
 		_ = os.Remove(path)
-		return &StorageError{Op: "write header", Err: err}
+		return &Error{Op: "write header", Err: err}
 	}
 
 	if _, err := file.Write(payload); err != nil {
 		_ = file.Close()
 		_ = os.Remove(path)
-		return &StorageError{Op: "write payload", Err: err}
+		return &Error{Op: "write payload", Err: err}
 	}
 
 	// Fsync to ensure data is flushed to disk
 	if err := file.Sync(); err != nil {
 		_ = file.Close()
 		_ = os.Remove(path)
-		return &StorageError{Op: "fsync", Err: err}
+		return &Error{Op: "fsync", Err: err}
 	}
 
 	if err := file.Close(); err != nil {
 		_ = os.Remove(path)
-		return &StorageError{Op: "close temp", Err: err}
+		return &Error{Op: "close temp", Err: err}
 	}
 
 	return nil
 }
 
 // syncDir fsyncs a directory to ensure rename durability.
-func (f *FileStorage) syncDir(dir string) error {
+func (f *File) syncDir(dir string) error {
 	if dir == "" || dir == "." {
 		dir = "."
 	}
@@ -260,23 +266,23 @@ func (f *FileStorage) syncDir(dir string) error {
 }
 
 // Close releases the file lock.
-func (f *FileStorage) Close() error {
+func (f *File) Close() error {
 	return f.Unlock()
 }
 
 // Path returns the file path.
-func (f *FileStorage) Path() string {
+func (f *File) Path() string {
 	return f.path
 }
 
 // Exists returns true if the database file exists.
-func (f *FileStorage) Exists() bool {
+func (f *File) Exists() bool {
 	_, err := os.Stat(f.path)
 	return err == nil
 }
 
 // Delete removes the database file and any backup/lock files.
-func (f *FileStorage) Delete() error {
+func (f *File) Delete() error {
 	var errs []error
 
 	if err := os.Remove(f.path); err != nil && !os.IsNotExist(err) {
@@ -293,10 +299,10 @@ func (f *FileStorage) Delete() error {
 	}
 
 	if len(errs) > 0 {
-		return &StorageError{Op: "delete", Err: errors.Join(errs...)}
+		return &Error{Op: "delete", Err: errors.Join(errs...)}
 	}
 	return nil
 }
 
-// Ensure FileStorage implements Storage.
-var _ Storage = (*FileStorage)(nil)
+// Ensure File implements Backend.
+var _ Backend = (*File)(nil)

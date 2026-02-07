@@ -2,6 +2,7 @@ package veclite
 
 import (
 	"github.com/abdul-hamid-achik/veclite/internal/floats"
+	"github.com/abdul-hamid-achik/veclite/internal/storage"
 )
 
 // Re-export distance types for external use.
@@ -29,14 +30,7 @@ type dbConfig struct {
 }
 
 // HNSWConfig holds HNSW index configuration.
-type HNSWConfig struct {
-	// M is the maximum number of connections per node.
-	M int
-	// EfConstruction is the size of the candidate list during index construction.
-	EfConstruction int
-	// EfSearch is the default size of the candidate list during search.
-	EfSearch int
-}
+type HNSWConfig = storage.HNSWConfig
 
 // defaultDBConfig returns the default database configuration.
 func defaultDBConfig() *dbConfig {

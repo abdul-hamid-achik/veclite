@@ -30,7 +30,7 @@ func TestSubscription(t *testing.T) {
 
 		// Manually trigger notification (in real use, this happens on insert)
 		record, _ := coll.Get(id)
-		sm := getSubscriptionManager(coll)
+		sm := db.getSubscriptionManager(coll)
 		sm.notifyInsert(record)
 
 		// Wait for event
@@ -48,7 +48,10 @@ func TestSubscription(t *testing.T) {
 	})
 
 	t.Run("threshold filtering", func(t *testing.T) {
-		sub, err := coll.Subscribe(
+		// Use a separate collection for isolation from goroutine races
+		threshColl := db.Collection("threshold_test")
+
+		sub, err := threshColl.Subscribe(
 			[]float32{1, 0, 0, 0},
 			WithSubscriptionThreshold(0.99), // Very high threshold
 		)
@@ -58,10 +61,10 @@ func TestSubscription(t *testing.T) {
 		defer sub.Close()
 
 		// Insert a record that doesn't meet threshold
-		id, _ := coll.Insert([]float32{0.5, 0.5, 0, 0}, nil)
-		record, _ := coll.Get(id)
+		id, _ := threshColl.Insert([]float32{0.5, 0.5, 0, 0}, nil)
+		record, _ := threshColl.Get(id)
 
-		sm := getSubscriptionManager(coll)
+		sm := db.getSubscriptionManager(threshColl)
 		sm.notifyInsert(record)
 
 		// Should not receive event
@@ -87,7 +90,7 @@ func TestSubscription(t *testing.T) {
 		id1, _ := coll.Insert([]float32{0.9, 0.1, 0, 0}, map[string]any{"type": "regular"})
 		record1, _ := coll.Get(id1)
 
-		sm := getSubscriptionManager(coll)
+		sm := db.getSubscriptionManager(coll)
 		sm.notifyInsert(record1)
 
 		// Should not receive event
@@ -189,7 +192,7 @@ func TestSubscriptionConcurrency(t *testing.T) {
 
 	// Insert records concurrently
 	var wg sync.WaitGroup
-	sm := getSubscriptionManager(coll)
+	sm := db.getSubscriptionManager(coll)
 
 	for i := 0; i < numInserts; i++ {
 		wg.Add(1)
@@ -244,7 +247,7 @@ func TestSubscriptionBufferSize(t *testing.T) {
 	}
 	defer sub.Close()
 
-	sm := getSubscriptionManager(coll)
+	sm := db.getSubscriptionManager(coll)
 
 	// Insert more records than buffer size
 	for i := 0; i < 5; i++ {
