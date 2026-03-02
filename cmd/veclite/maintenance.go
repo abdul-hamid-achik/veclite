@@ -11,7 +11,7 @@ import (
 	"github.com/abdul-hamid-achik/veclite"
 )
 
-func cmdCompact(args []string) {
+func cmdCompact(args []string) error {
 	fs := flag.NewFlagSet("compact", flag.ExitOnError)
 	jsonOutput := fs.Bool("json", false, "Output as JSON")
 	fs.Usage = func() {
@@ -25,7 +25,7 @@ func cmdCompact(args []string) {
 
 	if fs.NArg() < 1 {
 		fs.Usage()
-		os.Exit(1)
+		return fmt.Errorf("missing required argument: file")
 	}
 
 	path := fs.Arg(0)
@@ -33,8 +33,7 @@ func cmdCompact(args []string) {
 	// Get stats before compaction
 	db, err := veclite.Open(path, veclite.WithReadOnly(true))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("opening database: %w", err)
 	}
 	statsBefore := db.Stats()
 	db.Close()
@@ -42,22 +41,19 @@ func cmdCompact(args []string) {
 	// Get file size before
 	fileBefore, err := os.Stat(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting file stats: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("getting file stats: %w", err)
 	}
 	sizeBefore := fileBefore.Size()
 
 	// Open for write and sync to compact
 	db, err = veclite.Open(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("opening database for compaction: %w", err)
 	}
 
 	if err := db.Sync(); err != nil {
 		db.Close()
-		fmt.Fprintf(os.Stderr, "Error syncing database: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("syncing database: %w", err)
 	}
 
 	db.Close()
@@ -65,8 +61,7 @@ func cmdCompact(args []string) {
 	// Get file size after
 	fileAfter, err := os.Stat(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting file stats: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("getting file stats after compaction: %w", err)
 	}
 	sizeAfter := fileAfter.Size()
 
@@ -82,16 +77,17 @@ func cmdCompact(args []string) {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(result)
-		return
+		return nil
 	}
 
 	fmt.Printf("Database compacted: %s\n", path)
 	fmt.Printf("Size before: %s\n", formatBytes(sizeBefore))
 	fmt.Printf("Size after:  %s\n", formatBytes(sizeAfter))
 	fmt.Printf("Saved:       %s\n", formatBytes(sizeBefore-sizeAfter))
+	return nil
 }
 
-func cmdValidate(args []string) {
+func cmdValidate(args []string) error {
 	fs := flag.NewFlagSet("validate", flag.ExitOnError)
 	jsonOutput := fs.Bool("json", false, "Output as JSON")
 	fs.Usage = func() {
@@ -104,7 +100,7 @@ func cmdValidate(args []string) {
 
 	if fs.NArg() < 1 {
 		fs.Usage()
-		os.Exit(1)
+		return fmt.Errorf("missing required argument: file")
 	}
 
 	path := fs.Arg(0)
@@ -113,11 +109,9 @@ func cmdValidate(args []string) {
 	fileInfo, err := os.Stat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "Error: database file not found\n")
-		} else {
-			fmt.Fprintf(os.Stderr, "Error accessing file: %v\n", err)
+			return fmt.Errorf("database file not found")
 		}
-		os.Exit(1)
+		return fmt.Errorf("accessing file: %w", err)
 	}
 
 	issues := make([]string, 0)
@@ -128,7 +122,7 @@ func cmdValidate(args []string) {
 	if err != nil {
 		issues = append(issues, fmt.Sprintf("Failed to open database: %v", err))
 		outputValidation(*jsonOutput, path, fileInfo.Size(), issues, warnings, false)
-		os.Exit(1)
+		return fmt.Errorf("database validation failed")
 	}
 	defer db.Close()
 
@@ -179,8 +173,9 @@ func cmdValidate(args []string) {
 	outputValidation(*jsonOutput, path, fileInfo.Size(), issues, warnings, valid)
 
 	if !valid {
-		os.Exit(1)
+		return fmt.Errorf("database validation failed")
 	}
+	return nil
 }
 
 func outputValidation(jsonOutput bool, path string, size int64, issues, warnings []string, valid bool) {
@@ -225,7 +220,7 @@ func outputValidation(jsonOutput bool, path string, size int64, issues, warnings
 	}
 }
 
-func cmdBenchmark(args []string) {
+func cmdBenchmark(args []string) error {
 	fs := flag.NewFlagSet("benchmark", flag.ExitOnError)
 	collection := fs.String("collection", "", "Collection to benchmark (required)")
 	queries := fs.Int("queries", 100, "Number of search queries to run")
@@ -244,33 +239,29 @@ func cmdBenchmark(args []string) {
 
 	if fs.NArg() < 1 {
 		fs.Usage()
-		os.Exit(1)
+		return fmt.Errorf("missing required argument: file")
 	}
 
 	if *collection == "" {
-		fmt.Fprintln(os.Stderr, "Error: --collection is required")
-		os.Exit(1)
+		return fmt.Errorf("--collection is required")
 	}
 
 	path := fs.Arg(0)
 
 	db, err := veclite.Open(path, veclite.WithReadOnly(true))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("opening database: %w", err)
 	}
 	defer db.Close()
 
 	coll, err := db.GetCollection(*collection)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error getting collection: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("getting collection: %w", err)
 	}
 
 	stats := coll.Stats()
 	if stats.Count == 0 {
-		fmt.Fprintln(os.Stderr, "Error: collection is empty")
-		os.Exit(1)
+		return fmt.Errorf("collection is empty")
 	}
 
 	// Get all records to use as query vectors
@@ -307,8 +298,7 @@ func cmdBenchmark(args []string) {
 	for _, q := range queryVectors {
 		results, err := coll.Search(q, veclite.TopK(*topK))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error during search: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("during search: %w", err)
 		}
 		totalResults += len(results)
 	}
@@ -334,7 +324,7 @@ func cmdBenchmark(args []string) {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		_ = enc.Encode(result)
-		return
+		return nil
 	}
 
 	fmt.Println()
@@ -343,6 +333,7 @@ func cmdBenchmark(args []string) {
 	fmt.Printf("  Avg latency:   %s\n", avgLatency.Round(time.Microsecond))
 	fmt.Printf("  Queries/sec:   %.2f\n", qps)
 	fmt.Printf("  Total results: %d\n", totalResults)
+	return nil
 }
 
 // formatBytes formats bytes in human-readable format.

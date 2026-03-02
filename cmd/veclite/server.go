@@ -45,7 +45,7 @@ func writeError(w http.ResponseWriter, status int, message, code string) {
 	writeJSON(w, status, APIError{Error: message, Code: code})
 }
 
-func cmdServe(args []string) {
+func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	port := fs.Int("port", 8080, "HTTP port to listen on")
 	host := fs.String("host", "127.0.0.1", "Host to bind to")
@@ -83,7 +83,7 @@ func cmdServe(args []string) {
 
 	if fs.NArg() < 1 {
 		fs.Usage()
-		os.Exit(1)
+		return fmt.Errorf("missing required argument: file")
 	}
 
 	path := fs.Arg(0)
@@ -91,9 +91,9 @@ func cmdServe(args []string) {
 	// Open database
 	db, err := veclite.Open(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("opening database: %w", err)
 	}
+	defer db.Close()
 
 	server := &Server{
 		db:          db,
@@ -141,10 +141,6 @@ func cmdServe(args []string) {
 			log.Printf("Server shutdown error: %v\n", err)
 		}
 
-		if err := db.Close(); err != nil {
-			log.Printf("Database close error: %v\n", err)
-		}
-
 		close(done)
 	}()
 
@@ -157,12 +153,12 @@ func cmdServe(args []string) {
 	fmt.Println()
 
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("server error: %w", err)
 	}
 
 	<-done
 	fmt.Println("Server stopped")
+	return nil
 }
 
 // corsMiddleware adds CORS headers.

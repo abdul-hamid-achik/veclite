@@ -16,6 +16,7 @@
 package veclite
 
 import (
+	"errors"
 	"sync"
 	"time"
 
@@ -41,6 +42,10 @@ type DB struct {
 	// subscriptions manages per-collection subscription managers.
 	subscriptions map[string]*subscriptionManager
 	subMu         sync.Mutex
+
+	// stopFuncs holds stop functions for background workers (TTLCleaner, MemoryLimiter).
+	stopFuncs []func()
+	stopMu    sync.Mutex
 }
 
 // Open opens or creates a VecLite database at the given path.
@@ -103,13 +108,31 @@ func (db *DB) Close() error {
 		return ErrDatabaseClosed
 	}
 
-	// Sync before closing
-	if err := db.syncLocked(); err != nil {
-		return err
-	}
-
 	db.closed = true
-	return db.storage.Close()
+
+	// Stop all background workers first
+	db.stopMu.Lock()
+	for _, stop := range db.stopFuncs {
+		stop()
+	}
+	db.stopFuncs = nil
+	db.stopMu.Unlock()
+
+	// Sync before closing — capture error but don't abort
+	syncErr := db.syncLocked()
+
+	// Always release storage (and file lock), even if sync failed
+	closeErr := db.storage.Close()
+
+	return errors.Join(syncErr, closeErr)
+}
+
+// registerStopFunc registers a function to be called when the database is closed.
+// Used by background workers to ensure they are stopped on Close().
+func (db *DB) registerStopFunc(stop func()) {
+	db.stopMu.Lock()
+	defer db.stopMu.Unlock()
+	db.stopFuncs = append(db.stopFuncs, stop)
 }
 
 // Path returns the database file path.

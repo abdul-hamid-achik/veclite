@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/abdul-hamid-achik/veclite"
@@ -22,17 +24,15 @@ type MCPServer struct {
 	episodeStore map[string]*veclite.EpisodeStore
 }
 
-func cmdMCP(args []string) {
+func cmdMCP(args []string) error {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: veclite mcp <db-path>")
-		os.Exit(1)
+		return fmt.Errorf("usage: veclite mcp <db-path>")
 	}
 
 	dbPath := args[0]
 	db, err := veclite.Open(dbPath)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error opening database: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("opening database: %w", err)
 	}
 	defer db.Close()
 
@@ -45,7 +45,7 @@ func cmdMCP(args []string) {
 	// Try to load embedder if available
 	srv.initEmbedder()
 
-	srv.run()
+	return srv.run()
 }
 
 // initEmbedder tries to initialize an embedder for auto-embedding support.
@@ -83,7 +83,7 @@ func (s *MCPServer) getOrCreateEpisodeStore(collectionName string) (*veclite.Epi
 	return es, nil
 }
 
-func (s *MCPServer) run() {
+func (s *MCPServer) run() error {
 	// Create MCP server with implementation info
 	s.server = mcp.NewServer(&mcp.Implementation{
 		Name:    "veclite",
@@ -93,12 +93,22 @@ func (s *MCPServer) run() {
 	// Register tools
 	s.registerTools()
 
-	// Run with stdio transport
+	// Run with stdio transport and signal handling
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-quit
+		cancel()
+	}()
+
 	transport := &mcp.StdioTransport{}
-	if err := s.server.Run(context.Background(), transport); err != nil {
-		fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
-		os.Exit(1)
+	if err := s.server.Run(ctx, transport); err != nil {
+		return fmt.Errorf("MCP server error: %w", err)
 	}
+	return nil
 }
 
 // Input/output types for tools

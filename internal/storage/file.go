@@ -5,10 +5,14 @@ import (
 	"encoding/binary"
 	"encoding/gob"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 )
 
 const (
@@ -48,6 +52,43 @@ func NewFile(path string) *File {
 	return &File{path: path}
 }
 
+// writeLockInfo writes diagnostic info (PID and timestamp) to the lock file.
+func writeLockInfo(f *os.File) {
+	_ = f.Truncate(0)
+	_, _ = f.Seek(0, 0)
+	_, _ = fmt.Fprintf(f, "%d\n%d\n", os.Getpid(), time.Now().Unix())
+	_ = f.Sync()
+}
+
+// readLockInfo reads diagnostic info from a lock file and returns a human-readable string.
+// Returns empty string if the lock file cannot be read or parsed.
+func readLockInfo(f *os.File) string {
+	_, _ = f.Seek(0, 0)
+	buf := make([]byte, 128)
+	n, err := f.Read(buf)
+	if err != nil || n == 0 {
+		return ""
+	}
+
+	lines := strings.SplitN(strings.TrimSpace(string(buf[:n])), "\n", 3)
+	if len(lines) < 2 {
+		return ""
+	}
+
+	pid, err := strconv.Atoi(lines[0])
+	if err != nil {
+		return ""
+	}
+
+	ts, err := strconv.ParseInt(lines[1], 10, 64)
+	if err != nil {
+		return fmt.Sprintf("PID %d", pid)
+	}
+
+	age := time.Since(time.Unix(ts, 0)).Truncate(time.Second)
+	return fmt.Sprintf("PID %d, locked %s ago", pid, age)
+}
+
 // Lock acquires an exclusive file lock on a .lock file adjacent to the database.
 // This prevents multiple processes from opening the same database.
 func (f *File) Lock() error {
@@ -67,9 +108,16 @@ func (f *File) Lock() error {
 	}
 
 	if err := lockFile(lf); err != nil {
+		info := readLockInfo(lf)
 		_ = lf.Close()
+		if info != "" {
+			return &Error{Op: "acquire lock", Err: fmt.Errorf("%w (%s)", ErrFileLocked, info)}
+		}
 		return &Error{Op: "acquire lock", Err: ErrFileLocked}
 	}
+
+	// Write diagnostic info for other processes to read
+	writeLockInfo(lf)
 
 	f.lockFile = lf
 	return nil
@@ -82,6 +130,10 @@ func (f *File) Unlock() error {
 	}
 
 	lockPath := f.lockFile.Name()
+
+	// Clear diagnostic info
+	_ = f.lockFile.Truncate(0)
+
 	err := unlockFile(f.lockFile)
 	_ = f.lockFile.Close()
 	f.lockFile = nil

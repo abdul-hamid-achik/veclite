@@ -32,6 +32,7 @@ func (db *DB) StartTTLCleaner(interval time.Duration, callback TTLCleanerCallbac
 	}
 
 	cleaner.start()
+	db.registerStopFunc(cleaner.Stop)
 
 	return cleaner.Stop
 }
@@ -165,6 +166,7 @@ func (c *Collection) StartMemoryLimiter(config MemoryConfig) func() {
 	if config.CleanupInterval > 0 {
 		limiter.start()
 	}
+	c.db.registerStopFunc(limiter.Stop)
 
 	return limiter.Stop
 }
