@@ -1334,11 +1334,8 @@ func (c *Collection) searchStreamBruteForce(query []float32, fn SearchFunc, conf
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	dimension := c.dimension
-	if dimension == 0 {
-		dimension = len(query)
-	} else if len(query) != dimension {
-		return &DimensionError{Expected: dimension, Got: len(query)}
+	if c.dimension != 0 && len(query) != c.dimension {
+		return &DimensionError{Expected: c.dimension, Got: len(query)}
 	}
 
 	count := 0
