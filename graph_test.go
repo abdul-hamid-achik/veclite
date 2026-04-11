@@ -512,3 +512,87 @@ func TestAddRelationshipNoID(t *testing.T) {
 		t.Error("expected error for relationship without ID")
 	}
 }
+
+func TestKnowledgeGraphPersistence(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := tmpDir + "/test.veclite"
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+
+	kg, err := db.CreateKnowledgeGraph("persist-test")
+	if err != nil {
+		t.Fatalf("CreateKnowledgeGraph failed: %v", err)
+	}
+
+	err = kg.AddEntity(Entity{
+		ID:     "person-1",
+		Type:   "person",
+		Name:   "Alice",
+		Vector: []float32{1, 0, 0, 0},
+		Properties: map[string]any{
+			"age": 30,
+		},
+	})
+	if err != nil {
+		t.Fatalf("AddEntity failed: %v", err)
+	}
+
+	err = kg.AddEntity(Entity{
+		ID:     "person-2",
+		Type:   "person",
+		Name:   "Bob",
+		Vector: []float32{0, 1, 0, 0},
+	})
+	if err != nil {
+		t.Fatalf("AddEntity failed: %v", err)
+	}
+
+	err = kg.AddRelationship(Relationship{
+		ID:            "knows-1",
+		SourceID:      "person-1",
+		TargetID:      "person-2",
+		Type:          "knows",
+		Weight:        0.8,
+		Bidirectional: true,
+	})
+	if err != nil {
+		t.Fatalf("AddRelationship failed: %v", err)
+	}
+
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	db2, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open for restore failed: %v", err)
+	}
+	defer db2.Close()
+
+	kg2, err := db2.GetKnowledgeGraph("persist-test")
+	if err != nil {
+		t.Fatalf("GetKnowledgeGraph after restore failed: %v", err)
+	}
+
+	e, err := kg2.GetEntity("person-1")
+	if err != nil {
+		t.Fatalf("GetEntity failed: %v", err)
+	}
+	if e.Name != "Alice" {
+		t.Errorf("expected Name=Alice, got %s", e.Name)
+	}
+	if e.Properties["age"].(int) != 30 {
+		t.Errorf("expected age=30, got %v", e.Properties["age"])
+	}
+
+	rels := kg2.GetRelationships("person-1", "outgoing")
+	if len(rels) != 1 {
+		t.Errorf("expected 1 relationship, got %d", len(rels))
+	}
+	if rels[0].Type != "knows" {
+		t.Errorf("expected relationship type 'knows', got %s", rels[0].Type)
+	}
+}

@@ -1,6 +1,9 @@
 package hnsw
 
-import "container/heap"
+import (
+	"container/heap"
+	"sort"
+)
 
 // Item represents an item in the priority queue.
 type Item struct {
@@ -186,21 +189,14 @@ func (cs *CandidateSet) Results() []Item {
 	result := make([]Item, len(cs.results))
 	copy(result, cs.results)
 
-	// Sort by distance (best first)
-	for i := 0; i < len(result); i++ {
-		for j := i + 1; j < len(result); j++ {
-			if cs.higherBetter {
-				// Higher is better - sort descending
-				if result[i].Distance < result[j].Distance {
-					result[i], result[j] = result[j], result[i]
-				}
-			} else {
-				// Lower is better - sort ascending
-				if result[i].Distance > result[j].Distance {
-					result[i], result[j] = result[j], result[i]
-				}
-			}
-		}
+	if cs.higherBetter {
+		sort.Slice(result, func(i, j int) bool {
+			return result[i].Distance > result[j].Distance
+		})
+	} else {
+		sort.Slice(result, func(i, j int) bool {
+			return result[i].Distance < result[j].Distance
+		})
 	}
 	return result
 }

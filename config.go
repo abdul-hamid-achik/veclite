@@ -3,69 +3,32 @@ package veclite
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
-	"strings"
 	"time"
 
+	"github.com/abdul-hamid-achik/veclite/config"
 	"gopkg.in/yaml.v3"
 )
 
 // Config represents the full veclite configuration.
-type Config struct {
-	Embedder EmbedderConfig `yaml:"embedder"`
-}
+// YAML configuration loading is available via the veclite/config sub-package.
+type Config = config.Config
 
 // EmbedderConfig specifies which embedder provider to use and its settings.
-type EmbedderConfig struct {
-	Provider string       `yaml:"provider"`
-	OpenAI   OpenAIConfig `yaml:"openai"`
-	Ollama   OllamaConfig `yaml:"ollama"`
-	ONNX     ONNXConfig   `yaml:"onnx"`
-}
+type EmbedderConfig = config.EmbedderConfig
 
 // OpenAIConfig holds OpenAI embedder configuration.
-type OpenAIConfig struct {
-	APIKey    string `yaml:"api_key"`
-	Model     string `yaml:"model"`
-	BaseURL   string `yaml:"base_url"`
-	Dimension int    `yaml:"dimension"`
-	Timeout   string `yaml:"timeout"`
-}
+type OpenAIConfig = config.OpenAIConfig
 
 // OllamaConfig holds Ollama embedder configuration.
-type OllamaConfig struct {
-	BaseURL string `yaml:"base_url"`
-	Model   string `yaml:"model"`
-	Timeout string `yaml:"timeout"`
-}
+type OllamaConfig = config.OllamaConfig
 
 // ONNXConfig holds ONNX embedder configuration.
-type ONNXConfig struct {
-	ModelDir string `yaml:"model_dir"`
-	Model    string `yaml:"model"`
-}
+type ONNXConfig = config.ONNXConfig
 
 // DefaultConfig returns a configuration with sensible defaults.
 func DefaultConfig() *Config {
-	return &Config{
-		Embedder: EmbedderConfig{
-			Provider: "ollama",
-			OpenAI: OpenAIConfig{
-				Model:   "text-embedding-3-small",
-				BaseURL: "https://api.openai.com/v1",
-				Timeout: "30s",
-			},
-			Ollama: OllamaConfig{
-				BaseURL: "http://localhost:11434",
-				Model:   "nomic-embed-text",
-				Timeout: "30s",
-			},
-			ONNX: ONNXConfig{
-				Model: "minilm",
-			},
-		},
-	}
+	return config.DefaultConfig()
 }
 
 // LoadConfig loads configuration from a YAML file.
@@ -75,92 +38,45 @@ func DefaultConfig() *Config {
 // 3. ~/.veclite/config.yaml
 // If no config file is found, returns default configuration.
 func LoadConfig(path string) (*Config, error) {
-	paths := []string{}
-
-	if path != "" {
-		paths = append(paths, path)
-	}
-
-	// Add default search paths
-	paths = append(paths, "veclite.yaml")
-	if home, err := os.UserHomeDir(); err == nil {
-		paths = append(paths, filepath.Join(home, ".veclite", "config.yaml"))
-	}
-
-	for _, p := range paths {
-		if _, err := os.Stat(p); err == nil {
-			return loadConfigFile(p)
-		}
-	}
-
-	// Return defaults if no config file found
-	return DefaultConfig(), nil
+	return config.LoadConfig(path)
 }
 
-// loadConfigFile loads configuration from a specific file.
+// ExpandPath expands ~ and environment variables in a path.
+func ExpandPath(path string) string {
+	return config.ExpandPath(path)
+}
+
+// parseDuration parses a duration string with a default fallback.
+// Kept for internal use; prefer config.ParseDuration from the sub-package.
+func parseDuration(s string, defaultDur time.Duration) time.Duration {
+	return config.ParseDuration(s, defaultDur)
+}
+
+// The yaml.v3 import and env var expansion functions below are kept in this
+// file for backward compatibility. The config sub-package has the canonical
+// implementations.
+var envVarPattern = regexp.MustCompile(`\$\{([^}:]+)(?::-([^}]*))?\}`)
+
+func expandEnvVars(s string) string {
+	return config.ExpandEnvVars(s)
+}
+
+// loadConfigFile is kept for backward compatibility; prefer config.LoadConfig.
 func loadConfigFile(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("veclite: failed to read config file: %w", err)
 	}
 
-	cfg := DefaultConfig()
+	cfg := config.DefaultConfig()
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("veclite: failed to parse config file: %w", err)
 	}
 
-	// Expand environment variables
-	cfg.Embedder.OpenAI.APIKey = expandEnvVars(cfg.Embedder.OpenAI.APIKey)
-	cfg.Embedder.OpenAI.BaseURL = expandEnvVars(cfg.Embedder.OpenAI.BaseURL)
-	cfg.Embedder.Ollama.BaseURL = expandEnvVars(cfg.Embedder.Ollama.BaseURL)
-	cfg.Embedder.ONNX.ModelDir = expandEnvVars(cfg.Embedder.ONNX.ModelDir)
+	cfg.Embedder.OpenAI.APIKey = config.ExpandPath(cfg.Embedder.OpenAI.APIKey)
+	cfg.Embedder.OpenAI.BaseURL = config.ExpandPath(cfg.Embedder.OpenAI.BaseURL)
+	cfg.Embedder.Ollama.BaseURL = config.ExpandPath(cfg.Embedder.Ollama.BaseURL)
+	cfg.Embedder.ONNX.ModelDir = config.ExpandPath(cfg.Embedder.ONNX.ModelDir)
 
 	return cfg, nil
-}
-
-// envVarPattern matches ${VAR} and ${VAR:-default} patterns.
-var envVarPattern = regexp.MustCompile(`\$\{([^}:]+)(?::-([^}]*))?\}`)
-
-// expandEnvVars expands environment variable references in a string.
-// Supports ${VAR} and ${VAR:-default} syntax.
-func expandEnvVars(s string) string {
-	return envVarPattern.ReplaceAllStringFunc(s, func(match string) string {
-		parts := envVarPattern.FindStringSubmatch(match)
-		if len(parts) < 2 {
-			return match
-		}
-
-		varName := parts[1]
-		defaultValue := ""
-		if len(parts) >= 3 {
-			defaultValue = parts[2]
-		}
-
-		if value := os.Getenv(varName); value != "" {
-			return value
-		}
-		return defaultValue
-	})
-}
-
-// parseDuration parses a duration string with a default fallback.
-func parseDuration(s string, defaultDur time.Duration) time.Duration {
-	if s == "" {
-		return defaultDur
-	}
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		return defaultDur
-	}
-	return d
-}
-
-// ExpandPath expands ~ and environment variables in a path.
-func ExpandPath(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			path = filepath.Join(home, path[2:])
-		}
-	}
-	return expandEnvVars(path)
 }

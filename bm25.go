@@ -59,8 +59,8 @@ type textSearchResult struct {
 
 // invertedIndex is an in-memory inverted index for BM25 full-text search.
 type invertedIndex struct {
-	// postings maps term -> set of record IDs containing that term
-	postings map[string]map[uint64]struct{}
+	// postings maps term -> document ID -> term frequency
+	postings map[string]map[uint64]int
 	// docLengths maps record ID -> number of tokens in the document
 	docLengths map[uint64]int
 	// totalDocLen is the sum of all document lengths
@@ -75,7 +75,7 @@ type invertedIndex struct {
 
 func newInvertedIndex(fields []string) *invertedIndex {
 	return &invertedIndex{
-		postings:   make(map[string]map[uint64]struct{}),
+		postings:   make(map[string]map[uint64]int),
 		docLengths: make(map[uint64]int),
 		fields:     fields,
 		scorer:     newBM25Scorer(),
@@ -118,12 +118,12 @@ func (idx *invertedIndex) indexRecord(id uint64, payload map[string]any, content
 		tf[token]++
 	}
 
-	// Update postings
-	for term := range tf {
+	// Update postings with term frequencies
+	for term, freq := range tf {
 		if idx.postings[term] == nil {
-			idx.postings[term] = make(map[uint64]struct{})
+			idx.postings[term] = make(map[uint64]int)
 		}
-		idx.postings[term][id] = struct{}{}
+		idx.postings[term][id] = freq
 	}
 
 	// Update doc length
@@ -173,13 +173,8 @@ func (idx *invertedIndex) search(query string, topK int) []textSearchResult {
 
 		df := len(docs)
 
-		for docID := range docs {
-			// Count term frequency in this document
-			// We need to reconstruct TF from the postings; since we don't store per-doc TF,
-			// we track it as 1 (term is present). For better accuracy, we'd store TF.
-			// This is acceptable for the simple tokenizer approach.
+		for docID, tf := range docs {
 			docLen := idx.docLengths[docID]
-			tf := 1 // term is present at least once
 			score := idx.scorer.score(tf, docLen, avgDL, idx.docCount, df)
 			scores[docID] += score
 		}
@@ -207,13 +202,13 @@ func (idx *invertedIndex) snapshot() *InvertedIndexSnapshot {
 		return nil
 	}
 
-	postings := make(map[string][]uint64, len(idx.postings))
+	postings := make(map[string][]TFEntry, len(idx.postings))
 	for term, docs := range idx.postings {
-		ids := make([]uint64, 0, len(docs))
-		for id := range docs {
-			ids = append(ids, id)
+		entries := make([]TFEntry, 0, len(docs))
+		for id, count := range docs {
+			entries = append(entries, TFEntry{ID: id, Count: count})
 		}
-		postings[term] = ids
+		postings[term] = entries
 	}
 
 	docLengths := make(map[uint64]int, len(idx.docLengths))
@@ -240,7 +235,7 @@ func loadInvertedIndexFromSnapshot(snap *InvertedIndexSnapshot) *invertedIndex {
 	}
 
 	idx := &invertedIndex{
-		postings:    make(map[string]map[uint64]struct{}, len(snap.Postings)),
+		postings:    make(map[string]map[uint64]int, len(snap.Postings)),
 		docLengths:  make(map[uint64]int, len(snap.DocLengths)),
 		totalDocLen: snap.TotalDocLen,
 		docCount:    snap.DocCount,
@@ -248,10 +243,10 @@ func loadInvertedIndexFromSnapshot(snap *InvertedIndexSnapshot) *invertedIndex {
 		scorer:      newBM25Scorer(),
 	}
 
-	for term, ids := range snap.Postings {
-		docs := make(map[uint64]struct{}, len(ids))
-		for _, id := range ids {
-			docs[id] = struct{}{}
+	for term, entries := range snap.Postings {
+		docs := make(map[uint64]int, len(entries))
+		for _, entry := range entries {
+			docs[entry.ID] = entry.Count
 		}
 		idx.postings[term] = docs
 	}

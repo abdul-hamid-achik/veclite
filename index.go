@@ -22,6 +22,9 @@ type Index interface {
 
 	// Type returns the index type name.
 	Type() string
+
+	// Clear removes all vectors from the index.
+	Clear()
 }
 
 // IndexResult represents a search result from an index.

@@ -28,6 +28,12 @@ type Config struct {
 	// ML is the level multiplier used to determine node levels.
 	// Typically set to 1/ln(M). Smaller values create shallower graphs.
 	ML float64
+
+	// UseHeuristic enables the heuristic neighbor selection algorithm (Algorithm 4
+	// from the original HNSW paper) which promotes diversity in the neighbor set.
+	// This typically improves recall at the same M value compared to simple truncation.
+	// Default: true.
+	UseHeuristic bool
 }
 
 // DefaultConfig returns sensible defaults for HNSW.
@@ -39,6 +45,7 @@ func DefaultConfig() Config {
 		EfConstruction: 200,
 		EfSearch:       100,
 		ML:             1.0 / math.Log(float64(m)),
+		UseHeuristic:   true,
 	}
 }
 
@@ -57,6 +64,7 @@ func NewConfig(m, efConstruction int) Config {
 		EfConstruction: efConstruction,
 		EfSearch:       100,
 		ML:             1.0 / math.Log(float64(m)),
+		UseHeuristic:   true,
 	}
 }
 

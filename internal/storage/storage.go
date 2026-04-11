@@ -31,6 +31,12 @@ type DatabaseSnapshot struct {
 	// Collections maps collection names to their snapshots.
 	Collections map[string]*CollectionSnapshot
 
+	// KnowledgeGraphs maps graph names to their snapshots.
+	KnowledgeGraphs map[string]*GraphSnapshot
+
+	// EpisodeStores maps collection names to their episode store snapshots.
+	EpisodeStores map[string]*EpisodeStoreSnapshot
+
 	// CreatedAt is when the database was created.
 	CreatedAt time.Time
 
@@ -82,6 +88,8 @@ type HNSWConfig struct {
 	EfConstruction int
 	// EfSearch is the default size of the candidate list during search.
 	EfSearch int
+	// UseHeuristic enables diversity-preserving neighbor selection (recommended).
+	UseHeuristic bool
 }
 
 // RecordSnapshot is the serializable state of a record.
@@ -117,23 +125,83 @@ type RecordSnapshot struct {
 	LastAccessedAt time.Time
 }
 
+// TFEntry stores a document ID and its term frequency for a term.
+type TFEntry struct {
+	ID    uint64
+	Count int
+}
+
 // InvertedIndexSnapshot is the serializable state of the BM25 inverted index.
 type InvertedIndexSnapshot struct {
-	Postings    map[string][]uint64
+	Postings    map[string][]TFEntry
 	DocLengths  map[uint64]int
 	TotalDocLen int64
 	DocCount    int
 	Fields      []string
 }
 
+// EntitySnapshot is the serializable state of a knowledge graph entity.
+type EntitySnapshot struct {
+	ID         string
+	Type       string
+	Name       string
+	Vector     []float32
+	Properties map[string]any
+}
+
+// RelationshipSnapshot is the serializable state of a knowledge graph relationship.
+type RelationshipSnapshot struct {
+	ID            string
+	SourceID      string
+	TargetID      string
+	Type          string
+	Weight        float32
+	Properties    map[string]any
+	Bidirectional bool
+}
+
+// GraphSnapshot is the serializable state of a knowledge graph.
+type GraphSnapshot struct {
+	Name          string
+	Entities      []EntitySnapshot
+	Relationships []RelationshipSnapshot
+	Outgoing      map[string][]string
+	Incoming      map[string][]string
+}
+
+// EpisodeSnapshot is the serializable state of a single episode.
+type EpisodeSnapshot struct {
+	ID        string
+	Title     string
+	Vector    []float32
+	TimeRange TimeRangeSnapshot
+	RecordIDs []uint64
+	CreatedAt time.Time
+	Metadata  map[string]any
+}
+
+// TimeRangeSnapshot is the serializable state of a time range.
+type TimeRangeSnapshot struct {
+	Start time.Time
+	End   time.Time
+}
+
+// EpisodeStoreSnapshot is the serializable state of an episode store.
+type EpisodeStoreSnapshot struct {
+	CollectionName string
+	Episodes       []EpisodeSnapshot
+}
+
 // NewDatabaseSnapshot creates a new empty database snapshot.
 func NewDatabaseSnapshot() *DatabaseSnapshot {
 	now := time.Now()
 	return &DatabaseSnapshot{
-		Version:     1,
-		Collections: make(map[string]*CollectionSnapshot),
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		Version:         1,
+		Collections:     make(map[string]*CollectionSnapshot),
+		KnowledgeGraphs: make(map[string]*GraphSnapshot),
+		EpisodeStores:   make(map[string]*EpisodeStoreSnapshot),
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 }
 

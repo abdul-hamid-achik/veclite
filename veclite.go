@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/abdul-hamid-achik/veclite/internal/floats"
 	"github.com/abdul-hamid-achik/veclite/internal/storage"
 )
 
@@ -38,6 +39,11 @@ type DB struct {
 	updatedAt   time.Time
 	metrics     *Metrics
 	logger      Logger
+
+	// knowledgeGraphs tracks created knowledge graphs for persistence.
+	knowledgeGraphs map[string]*KnowledgeGraph
+	// episodeStores tracks created episode stores for persistence.
+	episodeStores map[string]*EpisodeStore
 
 	// subscriptions manages per-collection subscription managers.
 	subscriptions map[string]*subscriptionManager
@@ -74,15 +80,17 @@ func Open(path string, opts ...Option) (*DB, error) {
 	}
 
 	db := &DB{
-		path:          path,
-		storage:       store,
-		config:        config,
-		collections:   make(map[string]*Collection),
-		createdAt:     time.Now(),
-		updatedAt:     time.Now(),
-		metrics:       newMetrics(),
-		logger:        logger,
-		subscriptions: make(map[string]*subscriptionManager),
+		path:            path,
+		storage:         store,
+		config:          config,
+		collections:     make(map[string]*Collection),
+		knowledgeGraphs: make(map[string]*KnowledgeGraph),
+		episodeStores:   make(map[string]*EpisodeStore),
+		createdAt:       time.Now(),
+		updatedAt:       time.Now(),
+		metrics:         newMetrics(),
+		logger:          logger,
+		subscriptions:   make(map[string]*subscriptionManager),
 	}
 
 	// Load existing data
@@ -268,14 +276,24 @@ func (db *DB) syncLocked() error {
 // snapshotLocked creates a snapshot while holding the lock.
 func (db *DB) snapshotLocked() *storage.DatabaseSnapshot {
 	snapshot := &storage.DatabaseSnapshot{
-		Version:     1,
-		Collections: make(map[string]*storage.CollectionSnapshot, len(db.collections)),
-		CreatedAt:   db.createdAt,
-		UpdatedAt:   time.Now(),
+		Version:         2,
+		Collections:     make(map[string]*storage.CollectionSnapshot, len(db.collections)),
+		KnowledgeGraphs: make(map[string]*storage.GraphSnapshot, len(db.knowledgeGraphs)),
+		EpisodeStores:   make(map[string]*storage.EpisodeStoreSnapshot, len(db.episodeStores)),
+		CreatedAt:       db.createdAt,
+		UpdatedAt:       time.Now(),
 	}
 
 	for name, coll := range db.collections {
 		snapshot.Collections[name] = coll.snapshot()
+	}
+
+	for name, kg := range db.knowledgeGraphs {
+		snapshot.KnowledgeGraphs[name] = kg.snapshot()
+	}
+
+	for name, es := range db.episodeStores {
+		snapshot.EpisodeStores[name] = es.snapshot()
 	}
 
 	return snapshot
@@ -290,6 +308,36 @@ func (db *DB) loadFromSnapshot(snapshot *storage.DatabaseSnapshot) {
 		coll := newCollection(name, defaultCollectionConfig(), db)
 		coll.loadFromSnapshot(collSnapshot)
 		db.collections[name] = coll
+	}
+
+	for name, graphSnap := range snapshot.KnowledgeGraphs {
+		collName := "_kg_" + name
+		coll := db.Collection(collName)
+		kg := &KnowledgeGraph{
+			db:            db,
+			name:          name,
+			entities:      make(map[string]*Entity),
+			relationships: make(map[string]*Relationship),
+			outgoing:      make(map[string][]string),
+			incoming:      make(map[string][]string),
+			collection:    coll,
+			distanceFunc:  floats.GetDistanceFunc(coll.distanceType),
+			higherBetter:  floats.IsHigherBetter(coll.distanceType),
+		}
+		kg.loadFromSnapshot(graphSnap)
+		db.knowledgeGraphs[name] = kg
+	}
+
+	for name, epSnap := range snapshot.EpisodeStores {
+		coll := db.Collection(epSnap.CollectionName)
+		es := &EpisodeStore{
+			collection:   coll,
+			episodes:     make(map[string]*Episode),
+			distanceFunc: floats.GetDistanceFunc(coll.distanceType),
+			higherBetter: floats.IsHigherBetter(coll.distanceType),
+		}
+		es.loadFromSnapshot(epSnap)
+		db.episodeStores[name] = es
 	}
 }
 

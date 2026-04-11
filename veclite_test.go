@@ -1326,3 +1326,93 @@ func TestUpdateVectorNotFound(t *testing.T) {
 		t.Errorf("UpdateVector not found = %v, want ErrNotFound", err)
 	}
 }
+
+func TestCloneDeepCopy(t *testing.T) {
+	orig := &Record{
+		ID:      1,
+		Vector:  []float32{1, 2, 3},
+		Content: "hello",
+		Payload: map[string]any{
+			"str":    "value",
+			"num":    42,
+			"slice":  []string{"a", "b", "c"},
+			"ints":   []int{1, 2, 3},
+			"floats": []float64{1.1, 2.2},
+			"nested": map[string]any{"inner": []any{1, "two"}},
+		},
+	}
+
+	clone := orig.Clone()
+
+	if clone.ID != orig.ID {
+		t.Errorf("Clone ID mismatch")
+	}
+
+	clone.Vector[0] = 99
+	if orig.Vector[0] != 1 {
+		t.Error("Clone shares vector with original")
+	}
+
+	origSlice := orig.Payload["slice"].([]string)
+	cloneSlice := clone.Payload["slice"].([]string)
+	cloneSlice[0] = "X"
+	if origSlice[0] != "a" {
+		t.Error("Clone shares string slice with original (shallow copy)")
+	}
+
+	origNested := orig.Payload["nested"].(map[string]any)
+	cloneNested := clone.Payload["nested"].(map[string]any)
+	cloneNested["inner"].([]any)[0] = "modified"
+	if origNested["inner"].([]any)[0] != 1 {
+		t.Error("Clone shares nested map with original")
+	}
+}
+
+func TestCloneNilPayload(t *testing.T) {
+	orig := &Record{
+		ID:      1,
+		Vector:  []float32{1, 2, 3},
+		Payload: nil,
+	}
+	clone := orig.Clone()
+	if clone.Payload != nil {
+		t.Errorf("expected nil payload, got %v", clone.Payload)
+	}
+}
+
+func TestCloneNilRecord(t *testing.T) {
+	var r *Record
+	if r.Clone() != nil {
+		t.Error("expected nil clone for nil record")
+	}
+}
+
+func TestResetClearsNextID(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer db.Close()
+
+	coll := db.Collection("test")
+
+	_, err = coll.Insert([]float32{1, 0, 0}, nil)
+	if err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
+
+	err = coll.Reset()
+	if err != nil {
+		t.Fatalf("Reset failed: %v", err)
+	}
+
+	// After Reset, next ID should restart from 1
+	id2, err := coll.Insert([]float32{0, 1, 0}, nil)
+	if err != nil {
+		t.Fatalf("Insert after Reset failed: %v", err)
+	}
+
+	if id2 != 1 {
+		t.Errorf("After Reset, next ID should be 1, got %d", id2)
+	}
+}

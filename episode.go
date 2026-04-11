@@ -84,12 +84,29 @@ func (db *DB) CreateEpisodeStore(memoriesCollectionName string) (*EpisodeStore, 
 		return nil, fmt.Errorf("veclite: collection %q not found", memoriesCollectionName)
 	}
 
-	return &EpisodeStore{
+	es := &EpisodeStore{
 		collection:   coll,
 		episodes:     make(map[string]*Episode),
 		distanceFunc: floats.GetDistanceFunc(coll.distanceType),
 		higherBetter: floats.IsHigherBetter(coll.distanceType),
-	}, nil
+	}
+
+	// Register with DB for persistence
+	db.mu.Lock()
+	db.episodeStores[memoriesCollectionName] = es
+	db.mu.Unlock()
+
+	return es, nil
+}
+
+func (db *DB) GetEpisodeStore(name string) (*EpisodeStore, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	es, ok := db.episodeStores[name]
+	if !ok {
+		return nil, &NotFoundError{Type: "episode store", ID: name}
+	}
+	return es, nil
 }
 
 // CreateEpisode manually creates an episode from a set of record IDs.
@@ -441,12 +458,50 @@ func generateEpisodeID() string {
 
 // copyMap creates a shallow copy of a map.
 func copyMap(m map[string]any) map[string]any {
-	if m == nil {
-		return nil
+	return deepCopyMap(m)
+}
+
+// snapshot creates a serializable snapshot of the episode store.
+func (es *EpisodeStore) snapshot() *EpisodeStoreSnapshot {
+	es.mu.RLock()
+	defer es.mu.RUnlock()
+
+	snap := &EpisodeStoreSnapshot{
+		CollectionName: es.collection.name,
+		Episodes:       make([]EpisodeSnapshot, 0, len(es.episodes)),
 	}
-	result := make(map[string]any, len(m))
-	for k, v := range m {
-		result[k] = v
+
+	for _, ep := range es.episodes {
+		snap.Episodes = append(snap.Episodes, EpisodeSnapshot{
+			ID:        ep.ID,
+			Title:     ep.Title,
+			Vector:    append([]float32(nil), ep.Vector...),
+			TimeRange: TimeRangeSnapshot{Start: ep.TimeRange.Start, End: ep.TimeRange.End},
+			RecordIDs: append([]uint64(nil), ep.RecordIDs...),
+			CreatedAt: ep.CreatedAt,
+			Metadata:  copyMap(ep.Metadata),
+		})
 	}
-	return result
+
+	return snap
+}
+
+// loadFromSnapshot restores the episode store from a snapshot.
+func (es *EpisodeStore) loadFromSnapshot(snap *EpisodeStoreSnapshot) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	es.episodes = make(map[string]*Episode, len(snap.Episodes))
+
+	for _, ep := range snap.Episodes {
+		es.episodes[ep.ID] = &Episode{
+			ID:        ep.ID,
+			Title:     ep.Title,
+			Vector:    append([]float32(nil), ep.Vector...),
+			TimeRange: TimeRange{Start: ep.TimeRange.Start, End: ep.TimeRange.End},
+			RecordIDs: append([]uint64(nil), ep.RecordIDs...),
+			CreatedAt: ep.CreatedAt,
+			Metadata:  copyMap(ep.Metadata),
+		}
+	}
 }

@@ -255,3 +255,18 @@ All checks must pass before merging.
    hnswResults, _ := idx.Search(query, 10)
    bruteResults, _ := idx.KNNBruteForce(query, 10)
    ```
+
+## Concurrency and Lock Ordering
+
+VecLite uses `sync.RWMutex` for both `Collection` and `HNSW.Index`. The lock ordering convention is:
+
+1. **DB lock** (`db.mu`) — outermost
+2. **Collection lock** (`coll.mu`) — middle
+3. **HNSW Index lock** (`idx.mu`) — innermost
+4. **KnowledgeGraph/EpisodeStore locks** — innermost within their scope
+
+**Rules:**
+- Never acquire a higher-level lock while holding a lower-level one
+- Searches use `RLock()` on both Collection and HNSW — concurrent reads are safe
+- Writes (Insert, Delete) take `Lock()` on Collection, which also takes `Lock()` on HNSW internally
+- EpisodeStore and KnowledgeGraph hold their own `mu` locks and access Collection via `RLock()` — never hold EpisodeStore/Graph locks while acquiring Collection write lock

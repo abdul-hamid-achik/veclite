@@ -423,6 +423,114 @@ func TestEuclideanDistance(t *testing.T) {
 	}
 }
 
+func TestHeuristicNeighborSelection(t *testing.T) {
+	config := DefaultConfig()
+	config.UseHeuristic = true
+	idx := New(config, 128, floats.DistanceCosine)
+	rng := rand.New(rand.NewSource(42))
+
+	for i := 0; i < 500; i++ {
+		vec := generateRandomVector(128, rng)
+		err := idx.Insert(uint64(i+1), vec)
+		if err != nil {
+			t.Fatalf("insert %d failed: %v", i, err)
+		}
+	}
+
+	query := generateRandomVector(128, rng)
+	results, err := idx.Search(query, 10)
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("expected results from heuristic search")
+	}
+
+	brute, err := idx.KNNBruteForce(query, 10)
+	if err != nil {
+		t.Fatalf("brute force failed: %v", err)
+	}
+
+	hits := 0
+	bruteIDs := make(map[uint64]bool)
+	for _, r := range brute {
+		bruteIDs[r.ID] = true
+	}
+	for _, r := range results {
+		if bruteIDs[r.ID] {
+			hits++
+		}
+	}
+
+	recall := float64(hits) / float64(len(brute))
+	if recall < 0.7 {
+		t.Errorf("heuristic search recall too low: %.2f", recall)
+	}
+}
+
+func TestHeuristicDisabled(t *testing.T) {
+	config := DefaultConfig()
+	config.UseHeuristic = false
+	idx := New(config, 128, floats.DistanceCosine)
+	rng := rand.New(rand.NewSource(42))
+
+	for i := 0; i < 200; i++ {
+		vec := generateRandomVector(128, rng)
+		err := idx.Insert(uint64(i+1), vec)
+		if err != nil {
+			t.Fatalf("insert %d failed: %v", i, err)
+		}
+	}
+
+	query := generateRandomVector(128, rng)
+	results, err := idx.Search(query, 10)
+	if err != nil {
+		t.Fatalf("search failed: %v", err)
+	}
+
+	if len(results) == 0 {
+		t.Fatal("expected results from non-heuristic search")
+	}
+}
+
+func TestNoDuplicateNeighbors(t *testing.T) {
+	config := DefaultConfig()
+	config.M = 8
+	config.UseHeuristic = true
+	idx := New(config, 4, floats.DistanceCosine)
+
+	for i := 0; i < 50; i++ {
+		vec := []float32{float32(i % 5), float32(i / 5), float32(i), float32(i * 2)}
+		err := idx.Insert(uint64(i+1), vec)
+		if err != nil {
+			t.Fatalf("insert %d failed: %v", i, err)
+		}
+	}
+
+	dupCount := 0
+	for i := 0; i < idx.Count(); i++ {
+		node := idx.nodes[uint64(i+1)]
+		if node == nil {
+			continue
+		}
+		for layer, neighbors := range node.Neighbors {
+			seen := make(map[uint64]bool)
+			for _, neighbor := range neighbors {
+				if seen[neighbor] {
+					dupCount++
+					t.Errorf("duplicate neighbor %d in node %d layer %d", neighbor, node.ID, layer)
+				}
+				seen[neighbor] = true
+			}
+		}
+	}
+
+	if dupCount > 0 {
+		t.Errorf("found %d duplicate neighbors across all nodes", dupCount)
+	}
+}
+
 func BenchmarkInsert(b *testing.B) {
 	config := DefaultConfig()
 	idx := New(config, 128, floats.DistanceCosine)

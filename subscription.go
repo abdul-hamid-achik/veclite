@@ -1,6 +1,7 @@
 package veclite
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -86,9 +87,9 @@ type SubscriptionOption interface {
 }
 
 type subscriptionConfig struct {
-	threshold   float32
-	filters     []Filter
-	bufferSize  int
+	threshold  float32
+	filters    []Filter
+	bufferSize int
 }
 
 func defaultSubscriptionConfig() *subscriptionConfig {
@@ -294,5 +295,5 @@ func generateSubscriptionID() string {
 	id := subscriptionCounter
 	subscriptionCounterMu.Unlock()
 
-	return time.Now().Format("20060102150405") + "-" + string(rune(id%26+'a')) + string(rune(id/26%26+'a'))
+	return fmt.Sprintf("sub_%d_%d", time.Now().UnixNano(), id)
 }

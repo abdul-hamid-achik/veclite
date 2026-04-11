@@ -125,6 +125,29 @@ func TestInvertedIndexContent(t *testing.T) {
 	}
 }
 
+func TestBM25TermFrequency(t *testing.T) {
+	idx := newInvertedIndex([]string{})
+
+	// Doc 1: "go" appears once
+	idx.indexRecord(1, nil, "go is a language")
+	// Doc 2: "go" appears three times (higher TF)
+	idx.indexRecord(2, nil, "go go go is great")
+
+	results := idx.search("go", 10)
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(results))
+	}
+
+	// The document with higher TF for "go" should score higher
+	if results[0].id != 2 {
+		t.Errorf("expected doc 2 (higher TF) to rank first, got doc %d with score %v, doc %d has score %v",
+			results[0].id, results[0].score, results[1].id, results[1].score)
+	}
+	if results[0].score <= results[1].score {
+		t.Errorf("higher TF should produce higher score: doc2=%v, doc1=%v", results[0].score, results[1].score)
+	}
+}
+
 func TestInvertedIndexSnapshot(t *testing.T) {
 	idx := newInvertedIndex([]string{"title"})
 	idx.indexRecord(1, map[string]any{"title": "Hello World"}, "")

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/abdul-hamid-achik/veclite"
+	"github.com/abdul-hamid-achik/veclite/config"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -48,13 +49,101 @@ func cmdMCP(args []string) error {
 	return srv.run()
 }
 
-// initEmbedder tries to initialize an embedder for auto-embedding support.
-// It looks for ONNX models in standard locations.
+// initEmbedder tries to initialize an embedder from config or environment variables.
+// It checks VECLITE_EMBEDDER env var for quick setup, or loads from veclite.yaml.
 func (s *MCPServer) initEmbedder() {
-	// The ONNX embedder requires build tags, so we use a callback pattern
-	// to allow optional initialization. For now, this is a no-op in the
-	// standard build. Users can set up embedders via the API.
-	// Future: check for VECLITE_MODEL_DIR env var or ~/.veclite/models
+	// Check for environment variable quick setup
+	provider := os.Getenv("VECLITE_EMBEDDER")
+	if provider == "" {
+		// Try loading from config file
+		cfg, err := config.LoadConfig("")
+		if err == nil && cfg.Embedder.Provider != "" {
+			provider = cfg.Embedder.Provider
+		}
+	}
+
+	if provider == "" {
+		return
+	}
+
+	var embedderCfg veclite.EmbedderConfig
+	switch provider {
+	case "openai":
+		apiKey := os.Getenv("VECLITE_OPENAI_API_KEY")
+		baseURL := os.Getenv("VECLITE_OPENAI_BASE_URL")
+		model := os.Getenv("VECLITE_OPENAI_MODEL")
+		if apiKey == "" {
+			// Try loading from config file
+			cfg, err := config.LoadConfig("")
+			if err == nil {
+				apiKey = cfg.Embedder.OpenAI.APIKey
+				if baseURL == "" {
+					baseURL = cfg.Embedder.OpenAI.BaseURL
+				}
+				if model == "" {
+					model = cfg.Embedder.OpenAI.Model
+				}
+			}
+		}
+		embedderCfg = veclite.EmbedderConfig{
+			Provider: "openai",
+			OpenAI: veclite.OpenAIConfig{
+				APIKey:  apiKey,
+				BaseURL: baseURL,
+				Model:   model,
+			},
+		}
+	case "ollama":
+		baseURL := os.Getenv("VECLITE_OLLAMA_BASE_URL")
+		model := os.Getenv("VECLITE_OLLAMA_MODEL")
+		if baseURL == "" || model == "" {
+			cfg, err := config.LoadConfig("")
+			if err == nil {
+				if baseURL == "" {
+					baseURL = cfg.Embedder.Ollama.BaseURL
+				}
+				if model == "" {
+					model = cfg.Embedder.Ollama.Model
+				}
+			}
+		}
+		embedderCfg = veclite.EmbedderConfig{
+			Provider: "ollama",
+			Ollama: veclite.OllamaConfig{
+				BaseURL: baseURL,
+				Model:   model,
+			},
+		}
+	case "onnx":
+		modelDir := os.Getenv("VECLITE_MODEL_DIR")
+		model := os.Getenv("VECLITE_ONNX_MODEL")
+		cfg, err := config.LoadConfig("")
+		if err == nil {
+			if modelDir == "" {
+				modelDir = cfg.Embedder.ONNX.ModelDir
+			}
+			if model == "" {
+				model = cfg.Embedder.ONNX.Model
+			}
+		}
+		embedderCfg = veclite.EmbedderConfig{
+			Provider: "onnx",
+			ONNX: veclite.ONNXConfig{
+				ModelDir: modelDir,
+				Model:    model,
+			},
+		}
+	default:
+		return
+	}
+
+	embedder, err := veclite.NewEmbedderFromConfig(embedderCfg)
+	if err != nil {
+		// Log the error but don't fail - MCP server can still work without embedding
+		fmt.Fprintf(os.Stderr, "veclite: failed to initialize embedder: %v\n", err)
+		return
+	}
+	s.embedder = embedder
 }
 
 // getOrCreateGraph returns or creates a knowledge graph by name.
@@ -114,6 +203,10 @@ func (s *MCPServer) run() error {
 // Input/output types for tools
 
 type emptyInput struct{}
+
+type collectionSchemaInput struct {
+	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+}
 
 type searchInput struct {
 	Collection string    `json:"collection" jsonschema:"description=Collection name,required"`
@@ -479,6 +572,14 @@ func (s *MCPServer) registerTools() {
 		Description: "Get database statistics including collection details",
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input emptyInput) (*mcp.CallToolResult, any, error) {
 		return s.toolStats()
+	})
+
+	// veclite_collection_schema - Discover the schema of a collection
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "veclite_collection_schema",
+		Description: "Discover the schema of a collection: payload fields, types, vector dimension, index type, and content availability",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input collectionSchemaInput) (*mcp.CallToolResult, any, error) {
+		return s.toolCollectionSchema(input)
 	})
 
 	// veclite_search - Vector similarity search
@@ -914,10 +1015,76 @@ func (s *MCPServer) toolStats() (*mcp.CallToolResult, any, error) {
 	return textResult(s.db.Stats())
 }
 
+func (s *MCPServer) toolCollectionSchema(input collectionSchemaInput) (*mcp.CallToolResult, any, error) {
+	coll, err := s.db.GetCollection(input.Collection)
+	if err != nil {
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
+	}
+
+	// Sample records to discover payload fields
+	all := coll.All()
+	sampleSize := len(all)
+	if sampleSize > 50 {
+		sampleSize = 50
+	}
+
+	fieldTypes := make(map[string]map[string]int)
+	contentAvailable := 0
+	hasVector := 0
+
+	for i := 0; i < sampleSize; i++ {
+		r := all[i]
+		if r.Content != "" {
+			contentAvailable++
+		}
+		if len(r.Vector) > 0 {
+			hasVector++
+		}
+		for k, v := range r.Payload {
+			if fieldTypes[k] == nil {
+				fieldTypes[k] = make(map[string]int)
+			}
+			typeName := fmt.Sprintf("%T", v)
+			fieldTypes[k][typeName]++
+		}
+	}
+
+	// Build schema result
+	type fieldInfo struct {
+		Types []string `json:"types"`
+		Count int      `json:"count"`
+	}
+	schema := map[string]any{
+		"collection":        input.Collection,
+		"dimension":         coll.Dimension(),
+		"distance_type":     coll.DistanceType(),
+		"index_type":        coll.IndexType(),
+		"record_count":      len(all),
+		"content_available": contentAvailable,
+		"has_vector":        hasVector,
+		"payload_fields":    make(map[string]fieldInfo),
+	}
+
+	fields := schema["payload_fields"].(map[string]fieldInfo)
+	for k, typeCounts := range fieldTypes {
+		types := make([]string, 0, len(typeCounts))
+		for t := range typeCounts {
+			types = append(types, t)
+		}
+		totalCount := 0
+		for _, c := range typeCounts {
+			totalCount += c
+		}
+		fields[k] = fieldInfo{Types: types, Count: totalCount}
+	}
+
+	return textResult(schema)
+}
+
 func (s *MCPServer) toolSearch(input searchInput) (*mcp.CallToolResult, any, error) {
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	queryVec := float64ToFloat32(input.Query)
@@ -938,7 +1105,7 @@ func (s *MCPServer) toolSearch(input searchInput) (*mcp.CallToolResult, any, err
 func (s *MCPServer) toolTextSearch(input textSearchInput) (*mcp.CallToolResult, any, error) {
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	opts := []veclite.SearchOption{}
@@ -957,7 +1124,7 @@ func (s *MCPServer) toolTextSearch(input textSearchInput) (*mcp.CallToolResult, 
 func (s *MCPServer) toolHybridSearch(input hybridSearchInput) (*mcp.CallToolResult, any, error) {
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	queryVec := float64ToFloat32(input.Vector)
@@ -984,7 +1151,7 @@ func (s *MCPServer) toolHybridSearch(input hybridSearchInput) (*mcp.CallToolResu
 func (s *MCPServer) toolFind(input findInput) (*mcp.CallToolResult, any, error) {
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	var vecliteFilters []veclite.Filter
@@ -1057,7 +1224,7 @@ func (s *MCPServer) toolMemoryRemember(input memoryRememberInput) (*mcp.CallTool
 			return errorResult("Auto-embedding failed: " + err.Error())
 		}
 	} else {
-		return errorResult("Vector is required when embedder is not configured")
+		return structuredError("NO_EMBEDDER", "Vector is required when embedder is not configured", "Provide a 'vector' field or configure an embedder")
 	}
 
 	coll := s.db.Collection(memoriesCollection)
@@ -1124,7 +1291,7 @@ func (s *MCPServer) toolMemoryRecall(input memoryRecallInput) (*mcp.CallToolResu
 
 	coll, err := s.db.GetCollection(memoriesCollection)
 	if err != nil {
-		return errorResult("Memories collection not found. Use memory_remember first.")
+		return structuredError("COLLECTION_NOT_FOUND", "Memories collection not found", "Use memory_remember to create it first")
 	}
 
 	// Build search options
@@ -1206,7 +1373,7 @@ func (s *MCPServer) toolMemoryRecall(input memoryRecallInput) (*mcp.CallToolResu
 func (s *MCPServer) toolMemoryForget(input memoryForgetInput) (*mcp.CallToolResult, any, error) {
 	coll, err := s.db.GetCollection(memoriesCollection)
 	if err != nil {
-		return errorResult("Memories collection not found")
+		return structuredError("COLLECTION_NOT_FOUND", "Memories collection not found", "Use memory_remember to create it first")
 	}
 
 	var filters []veclite.Filter
@@ -1255,7 +1422,7 @@ func (s *MCPServer) toolMemoryForget(input memoryForgetInput) (*mcp.CallToolResu
 
 func (s *MCPServer) toolEmbed(input embedInput) (*mcp.CallToolResult, any, error) {
 	if s.embedder == nil {
-		return errorResult("No embedder configured. Set VECLITE_MODEL_DIR or use ONNX embedder.")
+		return structuredError("NO_EMBEDDER", "No embedder configured", "Set VECLITE_MODEL_DIR environment variable or configure an ONNX embedder")
 	}
 
 	if input.Text != "" {
@@ -1348,7 +1515,7 @@ func (s *MCPServer) toolGraphAddRelationship(input graphAddRelationshipInput) (*
 func (s *MCPServer) toolGraphGetRelationships(input graphGetRelationshipsInput) (*mcp.CallToolResult, any, error) {
 	kg, ok := s.graphStore[input.Graph]
 	if !ok {
-		return errorResult("Graph not found: " + input.Graph)
+		return structuredError("COLLECTION_NOT_FOUND", "Graph '"+input.Graph+"' not found", "Use veclite_graph_create to create it first")
 	}
 
 	direction := input.Direction
@@ -1382,7 +1549,7 @@ func (s *MCPServer) toolGraphGetRelationships(input graphGetRelationshipsInput) 
 func (s *MCPServer) toolGraphTraverse(input graphTraverseInput) (*mcp.CallToolResult, any, error) {
 	kg, ok := s.graphStore[input.Graph]
 	if !ok {
-		return errorResult("Graph not found: " + input.Graph)
+		return structuredError("COLLECTION_NOT_FOUND", "Graph '"+input.Graph+"' not found", "Use veclite_graph_create to create it first")
 	}
 
 	config := veclite.TraversalConfig{
@@ -1432,7 +1599,7 @@ func (s *MCPServer) toolGraphTraverse(input graphTraverseInput) (*mcp.CallToolRe
 func (s *MCPServer) toolGraphExpandedSearch(input graphExpandedSearchInput) (*mcp.CallToolResult, any, error) {
 	kg, ok := s.graphStore[input.Graph]
 	if !ok {
-		return errorResult("Graph not found: " + input.Graph)
+		return structuredError("COLLECTION_NOT_FOUND", "Graph '"+input.Graph+"' not found", "Use veclite_graph_create to create it first")
 	}
 
 	var queryVec []float32
@@ -1555,7 +1722,7 @@ func (s *MCPServer) toolConversationAddTurn(input conversationAddTurnInput) (*mc
 func (s *MCPServer) toolConversationGetSession(input conversationGetSessionInput) (*mcp.CallToolResult, any, error) {
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	records, err := coll.GetSession(input.SessionID)
@@ -1591,7 +1758,7 @@ func (s *MCPServer) toolConversationGetSession(input conversationGetSessionInput
 func (s *MCPServer) toolConversationSearchSession(input conversationSearchSessionInput) (*mcp.CallToolResult, any, error) {
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	var queryVec []float32
@@ -1628,7 +1795,7 @@ func (s *MCPServer) toolConversationSearchSession(input conversationSearchSessio
 func (s *MCPServer) toolConversationListSessions(input conversationListSessionsInput) (*mcp.CallToolResult, any, error) {
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	sessions := coll.ListSessions()
@@ -1642,7 +1809,7 @@ func (s *MCPServer) toolConversationListSessions(input conversationListSessionsI
 func (s *MCPServer) toolConversationGetThread(input conversationGetThreadInput) (*mcp.CallToolResult, any, error) {
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	records, err := coll.GetThread(input.ChunkID)
@@ -1914,7 +2081,7 @@ func (s *MCPServer) toolMemoryFindClusters(input memoryFindClustersInput) (*mcp.
 
 	coll, err := s.db.GetCollection(collName)
 	if err != nil {
-		return errorResult("Collection not found: " + collName)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+collName+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	config := veclite.ConsolidationConfig{
@@ -1962,7 +2129,7 @@ func (s *MCPServer) toolMemoryArchive(input memoryArchiveInput) (*mcp.CallToolRe
 
 	coll, err := s.db.GetCollection(collName)
 	if err != nil {
-		return errorResult("Collection not found: " + collName)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+collName+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	if err := coll.ArchiveRecord(input.RecordID); err != nil {
@@ -1985,7 +2152,7 @@ func (s *MCPServer) toolMemoryUnarchive(input memoryUnarchiveInput) (*mcp.CallTo
 
 	coll, err := s.db.GetCollection(collName)
 	if err != nil {
-		return errorResult("Collection not found: " + collName)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+collName+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	if err := coll.UnarchiveRecord(input.RecordID); err != nil {
@@ -2008,7 +2175,7 @@ func (s *MCPServer) toolMemoryGetArchived(input memoryGetArchivedInput) (*mcp.Ca
 
 	coll, err := s.db.GetCollection(collName)
 	if err != nil {
-		return errorResult("Collection not found: " + collName)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+collName+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	records, err := coll.GetArchived()
@@ -2038,7 +2205,7 @@ func (s *MCPServer) toolMemoryGetArchived(input memoryGetArchivedInput) (*mcp.Ca
 func (s *MCPServer) toolGet(input getInput) (*mcp.CallToolResult, any, error) {
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	record, err := coll.Get(input.ID)
@@ -2059,7 +2226,7 @@ func (s *MCPServer) toolGet(input getInput) (*mcp.CallToolResult, any, error) {
 func (s *MCPServer) toolDelete(input deleteInput) (*mcp.CallToolResult, any, error) {
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	if err := coll.Delete(input.ID); err != nil {
@@ -2077,7 +2244,7 @@ func (s *MCPServer) toolDelete(input deleteInput) (*mcp.CallToolResult, any, err
 func (s *MCPServer) toolUpdate(input updateInput) (*mcp.CallToolResult, any, error) {
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	if err := coll.Update(input.ID, input.Payload); err != nil {
@@ -2113,7 +2280,7 @@ func (s *MCPServer) toolUpsert(input upsertInput) (*mcp.CallToolResult, any, err
 func (s *MCPServer) toolDeleteWhere(input deleteWhereInput) (*mcp.CallToolResult, any, error) {
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	var vecliteFilters []veclite.Filter
@@ -2150,7 +2317,7 @@ func (s *MCPServer) toolClear(input clearInput) (*mcp.CallToolResult, any, error
 
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	if err := coll.Clear(); err != nil {
@@ -2316,7 +2483,7 @@ func (s *MCPServer) toolMetrics() (*mcp.CallToolResult, any, error) {
 func (s *MCPServer) toolGraphGetEntity(input graphGetEntityInput) (*mcp.CallToolResult, any, error) {
 	kg, ok := s.graphStore[input.Graph]
 	if !ok {
-		return errorResult("Graph not found: " + input.Graph)
+		return structuredError("COLLECTION_NOT_FOUND", "Graph '"+input.Graph+"' not found", "Use veclite_graph_create to create it first")
 	}
 
 	entity, err := kg.GetEntity(input.EntityID)
@@ -2336,7 +2503,7 @@ func (s *MCPServer) toolGraphGetEntity(input graphGetEntityInput) (*mcp.CallTool
 func (s *MCPServer) toolGraphUpdateEntity(input graphUpdateEntityInput) (*mcp.CallToolResult, any, error) {
 	kg, ok := s.graphStore[input.Graph]
 	if !ok {
-		return errorResult("Graph not found: " + input.Graph)
+		return structuredError("COLLECTION_NOT_FOUND", "Graph '"+input.Graph+"' not found", "Use veclite_graph_create to create it first")
 	}
 
 	entity := veclite.Entity{
@@ -2366,7 +2533,7 @@ func (s *MCPServer) toolGraphUpdateEntity(input graphUpdateEntityInput) (*mcp.Ca
 func (s *MCPServer) toolGraphDeleteEntity(input graphDeleteEntityInput) (*mcp.CallToolResult, any, error) {
 	kg, ok := s.graphStore[input.Graph]
 	if !ok {
-		return errorResult("Graph not found: " + input.Graph)
+		return structuredError("COLLECTION_NOT_FOUND", "Graph '"+input.Graph+"' not found", "Use veclite_graph_create to create it first")
 	}
 
 	if err := kg.DeleteEntity(input.EntityID); err != nil {
@@ -2385,7 +2552,7 @@ func (s *MCPServer) toolGraphDeleteEntity(input graphDeleteEntityInput) (*mcp.Ca
 func (s *MCPServer) toolGraphDeleteRelationship(input graphDeleteRelationshipInput) (*mcp.CallToolResult, any, error) {
 	kg, ok := s.graphStore[input.Graph]
 	if !ok {
-		return errorResult("Graph not found: " + input.Graph)
+		return structuredError("COLLECTION_NOT_FOUND", "Graph '"+input.Graph+"' not found", "Use veclite_graph_create to create it first")
 	}
 
 	if err := kg.DeleteRelationship(input.RelationshipID); err != nil {
@@ -2404,7 +2571,7 @@ func (s *MCPServer) toolGraphDeleteRelationship(input graphDeleteRelationshipInp
 func (s *MCPServer) toolGraphListEntities(input graphListEntitiesInput) (*mcp.CallToolResult, any, error) {
 	kg, ok := s.graphStore[input.Graph]
 	if !ok {
-		return errorResult("Graph not found: " + input.Graph)
+		return structuredError("COLLECTION_NOT_FOUND", "Graph '"+input.Graph+"' not found", "Use veclite_graph_create to create it first")
 	}
 
 	entities := kg.ListEntities(input.EntityType)
@@ -2431,7 +2598,7 @@ func (s *MCPServer) toolGraphListEntities(input graphListEntitiesInput) (*mcp.Ca
 func (s *MCPServer) toolCleanupExpired(input cleanupExpiredInput) (*mcp.CallToolResult, any, error) {
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	deleted, err := coll.CleanupExpired()
@@ -2452,7 +2619,7 @@ func (s *MCPServer) toolCleanupExpired(input cleanupExpiredInput) (*mcp.CallTool
 func (s *MCPServer) toolCountExpired(input countExpiredInput) (*mcp.CallToolResult, any, error) {
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	count := coll.CountExpired()
@@ -2470,7 +2637,7 @@ func (s *MCPServer) toolMemoryEnforceLimit(input memoryEnforceLimitInput) (*mcp.
 
 	coll, err := s.db.GetCollection(collName)
 	if err != nil {
-		return errorResult("Collection not found: " + collName)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+collName+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	config := veclite.MemoryConfig{
@@ -2503,7 +2670,7 @@ func (s *MCPServer) toolMemoryConsolidate(input memoryConsolidateInput) (*mcp.Ca
 
 	coll, err := s.db.GetCollection(collName)
 	if err != nil {
-		return errorResult("Collection not found: " + collName)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+collName+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	config := veclite.ConsolidationConfig{
@@ -2549,7 +2716,7 @@ func (s *MCPServer) toolMemoryExpandConsolidation(input memoryExpandConsolidatio
 
 	coll, err := s.db.GetCollection(collName)
 	if err != nil {
-		return errorResult("Collection not found: " + collName)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+collName+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	records, err := coll.ExpandConsolidation(input.ConsolidationID)
@@ -2582,7 +2749,7 @@ func (s *MCPServer) toolConversationDeleteSession(input conversationDeleteSessio
 
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	// Get all records in the session
@@ -2613,7 +2780,7 @@ func (s *MCPServer) toolConversationDeleteSession(input conversationDeleteSessio
 func (s *MCPServer) toolConversationGetStats(input conversationGetStatsInput) (*mcp.CallToolResult, any, error) {
 	coll, err := s.db.GetCollection(input.Collection)
 	if err != nil {
-		return errorResult("Collection not found: " + input.Collection)
+		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
 
 	stats, err := coll.GetSessionStats(input.SessionID)
@@ -2653,6 +2820,29 @@ func errorResult(msg string) (*mcp.CallToolResult, any, error) {
 			&mcp.TextContent{Text: msg},
 		},
 		IsError: true,
+	}, nil, nil
+}
+
+type mcpError struct {
+	Code       string `json:"code"`
+	Message    string `json:"message"`
+	Suggestion string `json:"suggestion,omitempty"`
+}
+
+func structuredError(code, message, suggestion string) (*mcp.CallToolResult, any, error) {
+	errData, _ := json.Marshal(mcpError{
+		Code:       code,
+		Message:    message,
+		Suggestion: suggestion,
+	})
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: message},
+		},
+		IsError: true,
+		Meta: map[string]any{
+			"error": json.RawMessage(errData),
+		},
 	}, nil, nil
 }
 

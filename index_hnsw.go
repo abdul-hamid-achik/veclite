@@ -1,6 +1,8 @@
 package veclite
 
 import (
+	"math"
+
 	"github.com/abdul-hamid-achik/veclite/internal/floats"
 	"github.com/abdul-hamid-achik/veclite/internal/hnsw"
 )
@@ -13,10 +15,20 @@ type hnswIndex struct {
 }
 
 // newHNSWIndex creates a new HNSW index with the given parameters.
-func newHNSWIndex(dimension int, distanceType floats.DistanceType, m, efConstruction int) *hnswIndex {
-	config := hnsw.NewConfig(m, efConstruction)
+func newHNSWIndex(dimension int, distanceType floats.DistanceType, config *HNSWConfig) *hnswIndex {
+	hnswCfg := hnsw.Config{
+		M:              config.M,
+		Mmax:           config.M * 2,
+		EfConstruction: config.EfConstruction,
+		EfSearch:       config.EfSearch,
+		ML:             1.0 / math.Log(float64(config.M)),
+		UseHeuristic:   config.UseHeuristic,
+	}
+	if !hnswCfg.Validate() {
+		hnswCfg = hnsw.DefaultConfig()
+	}
 	return &hnswIndex{
-		idx: hnsw.New(config, dimension, distanceType),
+		idx: hnsw.New(hnswCfg, dimension, distanceType),
 	}
 }
 
@@ -62,6 +74,11 @@ func (h *hnswIndex) Count() int {
 // Type returns "hnsw".
 func (h *hnswIndex) Type() string {
 	return string(IndexTypeHNSW)
+}
+
+// Clear removes all vectors from the index.
+func (h *hnswIndex) Clear() {
+	h.idx.Clear()
 }
 
 // stats returns statistics about the index.

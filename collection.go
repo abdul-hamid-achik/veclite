@@ -3,6 +3,7 @@ package veclite
 import (
 	"errors"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -61,8 +62,7 @@ func newCollection(name string, config *collectionConfig, db *DB) *Collection {
 		c.index = newHNSWIndex(
 			config.dimension,
 			config.distanceType,
-			config.hnswConfig.M,
-			config.hnswConfig.EfConstruction,
+			config.hnswConfig,
 		)
 		c.setupVectorProvider()
 	}
@@ -77,8 +77,7 @@ func (c *Collection) initHNSWIfNeeded() {
 		c.index = newHNSWIndex(
 			c.dimension,
 			c.distanceType,
-			c.hnswConfig.M,
-			c.hnswConfig.EfConstruction,
+			c.hnswConfig,
 		)
 		c.setupVectorProvider()
 	}
@@ -452,7 +451,7 @@ func (c *Collection) Get(id uint64) (*Record, error) {
 
 	record, ok := c.records[id]
 	if !ok {
-		return nil, &NotFoundError{Type: "record", ID: string(rune(id))}
+		return nil, &NotFoundError{Type: "record", ID: strconv.FormatUint(id, 10)}
 	}
 
 	return record.Clone(), nil
@@ -465,7 +464,7 @@ func (c *Collection) GetVector(id uint64) ([]float32, error) {
 
 	record, ok := c.records[id]
 	if !ok {
-		return nil, &NotFoundError{Type: "record", ID: string(rune(id))}
+		return nil, &NotFoundError{Type: "record", ID: strconv.FormatUint(id, 10)}
 	}
 
 	result := make([]float32, len(record.Vector))
@@ -483,7 +482,7 @@ func (c *Collection) Delete(id uint64) error {
 
 	if _, ok := c.records[id]; !ok {
 		c.mu.Unlock()
-		return &NotFoundError{Type: "record", ID: string(rune(id))}
+		return &NotFoundError{Type: "record", ID: strconv.FormatUint(id, 10)}
 	}
 
 	// Delete from index first (soft delete)
@@ -557,7 +556,7 @@ func (c *Collection) Update(id uint64, payload map[string]any) error {
 	record, ok := c.records[id]
 	if !ok {
 		c.mu.Unlock()
-		return &NotFoundError{Type: "record", ID: string(rune(id))}
+		return &NotFoundError{Type: "record", ID: strconv.FormatUint(id, 10)}
 	}
 
 	record.Payload = payload
@@ -582,7 +581,7 @@ func (c *Collection) UpdateVector(id uint64, vector []float32) error {
 	record, ok := c.records[id]
 	if !ok {
 		c.mu.Unlock()
-		return &NotFoundError{Type: "record", ID: string(rune(id))}
+		return &NotFoundError{Type: "record", ID: strconv.FormatUint(id, 10)}
 	}
 
 	if len(vector) != c.dimension {
@@ -760,8 +759,7 @@ func (c *Collection) insertUnlocked(vector []float32, payload map[string]any) (u
 			c.index = newHNSWIndex(
 				c.dimension,
 				c.distanceType,
-				c.hnswConfig.M,
-				c.hnswConfig.EfConstruction,
+				c.hnswConfig,
 			)
 		}
 	} else if len(vector) != c.dimension {
@@ -804,8 +802,7 @@ func (c *Collection) insertWithIDUnlocked(id uint64, vector []float32, payload m
 			c.index = newHNSWIndex(
 				c.dimension,
 				c.distanceType,
-				c.hnswConfig.M,
-				c.hnswConfig.EfConstruction,
+				c.hnswConfig,
 			)
 		}
 	} else if len(vector) != c.dimension {
@@ -946,50 +943,77 @@ func (c *Collection) trackAccess(results []Result) {
 }
 
 // searchWithIndex performs search using the HNSW index.
-// When filters are present, over-fetches from HNSW and post-filters the results.
+// When filters are present, uses adaptive over-fetching: starts with 4x,
+// and if too few results pass the filter, retries with larger multipliers.
 func (c *Collection) searchWithIndex(query []float32, config *searchConfig) ([]Result, error) {
-	// Determine ef parameter
 	ef := config.efSearch
 	if ef == 0 && c.hnswConfig != nil {
 		ef = c.hnswConfig.EfSearch
 	}
 
-	// Request more candidates when filters, threshold, or offset are set,
-	// to ensure we get enough after post-filtering.
 	effectiveK := config.effectiveTopK()
-	requestK := effectiveK
 	hasFilters := len(config.filters) > 0
-	if hasFilters || config.threshold != nil {
-		requestK = max(effectiveK*4, 100)
+
+	if !hasFilters && config.threshold == nil {
+		// No filters — straightforward search
+		var indexResults []IndexResult
+		var err error
+		if ef > 0 {
+			indexResults, err = c.index.SearchWithEf(query, effectiveK, ef)
+		} else {
+			indexResults, err = c.index.Search(query, effectiveK)
+		}
+		if err != nil {
+			return nil, err
+		}
+		return c.indexResultsToResults(indexResults, config, effectiveK), nil
 	}
 
-	var indexResults []IndexResult
-	var err error
+	// Adaptive over-fetching for filtered searches.
+	// Start with 4x, then try 8x, 16x, up to a max multiplier.
+	multipliers := []int{4, 8, 16}
+	maxResults := max(effectiveK*32, 500)
 
-	if ef > 0 {
-		indexResults, err = c.index.SearchWithEf(query, requestK, ef)
-	} else {
-		indexResults, err = c.index.Search(query, requestK)
+	var results []Result
+	for _, mult := range multipliers {
+		requestK := max(effectiveK*mult, 100)
+		if requestK > maxResults {
+			requestK = maxResults
+		}
+
+		var indexResults []IndexResult
+		var err error
+		if ef > 0 {
+			indexResults, err = c.index.SearchWithEf(query, requestK, ef)
+		} else {
+			indexResults, err = c.index.Search(query, requestK)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		results = c.filterIndexResults(indexResults, config, effectiveK)
+		if len(results) >= effectiveK || requestK >= maxResults {
+			break
+		}
 	}
 
-	if err != nil {
-		return nil, err
-	}
+	return results, nil
+}
 
-	// Convert index results to full results with records, applying post-filters
+// filterIndexResults converts index results to Results, applying filters and thresholds.
+func (c *Collection) filterIndexResults(indexResults []IndexResult, config *searchConfig, effectiveK int) []Result {
 	results := make([]Result, 0, len(indexResults))
 	for _, ir := range indexResults {
 		record, ok := c.records[ir.ID]
 		if !ok {
-			continue // Record was deleted
+			continue
 		}
 
-		// Apply payload filters (post-filter HNSW results)
 		if !config.matchesFilters(record) {
 			continue
 		}
 
-		// Apply threshold filter
 		if config.threshold != nil {
 			if c.higherBetter && ir.Distance < *config.threshold {
 				continue
@@ -1004,13 +1028,41 @@ func (c *Collection) searchWithIndex(query []float32, config *searchConfig) ([]R
 			Score:  ir.Distance,
 		})
 
-		// Stop once we have enough results (including offset)
 		if len(results) >= effectiveK {
 			break
 		}
 	}
+	return results
+}
 
-	return results, nil
+// indexResultsToResults converts index results to Results (no filtering).
+func (c *Collection) indexResultsToResults(indexResults []IndexResult, config *searchConfig, effectiveK int) []Result {
+	results := make([]Result, 0, len(indexResults))
+	for _, ir := range indexResults {
+		record, ok := c.records[ir.ID]
+		if !ok {
+			continue
+		}
+
+		if config.threshold != nil {
+			if c.higherBetter && ir.Distance < *config.threshold {
+				continue
+			}
+			if !c.higherBetter && ir.Distance > *config.threshold {
+				continue
+			}
+		}
+
+		results = append(results, Result{
+			Record: record.Clone(),
+			Score:  ir.Distance,
+		})
+
+		if len(results) >= effectiveK {
+			break
+		}
+	}
+	return results
 }
 
 // searchBruteForce performs brute-force search.
@@ -1242,8 +1294,27 @@ func (c *Collection) All() []*Record {
 type SearchFunc func(result Result) bool
 
 // SearchStream performs a search and streams results to the callback function.
-// The callback receives results one at a time and can return false to stop early.
+// For brute-force searches, results are yielded as they are found, enabling
+// early termination without computing all scores. For HNSW searches, the
+// full result set is fetched first since the index returns ordered results.
 func (c *Collection) SearchStream(query []float32, fn SearchFunc, opts ...SearchOption) error {
+	if len(query) == 0 {
+		return ErrEmptyVector
+	}
+
+	config := defaultSearchConfig()
+	for _, opt := range opts {
+		opt.apply(config)
+	}
+
+	effectiveK := config.effectiveTopK()
+
+	// For brute-force, stream results as they are computed
+	if c.index == nil || config.effectiveTopK() <= 0 {
+		return c.searchStreamBruteForce(query, fn, config, effectiveK)
+	}
+
+	// For HNSW, fetch all results then stream them
 	results, err := c.Search(query, opts...)
 	if err != nil {
 		return err
@@ -1254,6 +1325,54 @@ func (c *Collection) SearchStream(query []float32, fn SearchFunc, opts ...Search
 			break
 		}
 	}
+	return nil
+}
+
+// searchStreamBruteForce streams results from brute-force search without
+// collecting all results first.
+func (c *Collection) searchStreamBruteForce(query []float32, fn SearchFunc, config *searchConfig, effectiveK int) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	dimension := c.dimension
+	if dimension == 0 {
+		dimension = len(query)
+	} else if len(query) != dimension {
+		return &DimensionError{Expected: dimension, Got: len(query)}
+	}
+
+	count := 0
+	for _, record := range c.records {
+		if config.effectiveTopK() > 0 && count >= effectiveK {
+			break
+		}
+
+		if !config.matchesFilters(record) {
+			continue
+		}
+
+		score := c.distanceFunc(query, record.Vector)
+
+		if config.threshold != nil {
+			if c.higherBetter && score < *config.threshold {
+				continue
+			}
+			if !c.higherBetter && score > *config.threshold {
+				continue
+			}
+		}
+
+		result := Result{
+			Record: record.Clone(),
+			Score:  score,
+		}
+
+		if !fn(result) {
+			return nil
+		}
+		count++
+	}
+
 	return nil
 }
 
@@ -1569,6 +1688,8 @@ func (c *Collection) Iterate(opts ...IterOption) *Iterator {
 }
 
 // Clear removes all records from the collection.
+// It preserves the nextID counter to avoid ID reuse after reinsertion.
+// Use Reset if you want to also reset the ID counter.
 // Returns an error if the database is read-only.
 func (c *Collection) Clear() error {
 	if err := c.checkReadOnly(); err != nil {
@@ -1577,7 +1698,37 @@ func (c *Collection) Clear() error {
 
 	c.mu.Lock()
 	c.records = make(map[uint64]*Record)
+	if c.index != nil {
+		c.index.Clear()
+	}
+	if c.textIndex != nil {
+		c.textIndex = newInvertedIndex(c.textIndex.fields)
+	}
 	// Keep dimension locked, don't reset nextID to avoid ID reuse
+	c.mu.Unlock()
+
+	c.syncIfNeeded()
+	return nil
+}
+
+// Reset removes all records from the collection and resets the ID counter to 1.
+// Unlike Clear, this allows ID reuse which may be desirable for testing or
+// when the collection is being fully repopulated.
+// Returns an error if the database is read-only.
+func (c *Collection) Reset() error {
+	if err := c.checkReadOnly(); err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	c.records = make(map[uint64]*Record)
+	if c.index != nil {
+		c.index.Clear()
+	}
+	if c.textIndex != nil {
+		c.textIndex = newInvertedIndex(c.textIndex.fields)
+	}
+	c.nextID = 1
 	c.mu.Unlock()
 
 	c.syncIfNeeded()

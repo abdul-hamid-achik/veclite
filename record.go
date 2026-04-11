@@ -2,6 +2,50 @@ package veclite
 
 import "time"
 
+func deepCopyMap(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	result := make(map[string]any, len(m))
+	for k, v := range m {
+		result[k] = deepCopyValue(v)
+	}
+	return result
+}
+
+func deepCopyValue(v any) any {
+	switch val := v.(type) {
+	case map[string]any:
+		return deepCopyMap(val)
+	case []any:
+		cp := make([]any, len(val))
+		for i, elem := range val {
+			cp[i] = deepCopyValue(elem)
+		}
+		return cp
+	case []string:
+		cp := make([]string, len(val))
+		copy(cp, val)
+		return cp
+	case []int:
+		cp := make([]int, len(val))
+		copy(cp, val)
+		return cp
+	case []float64:
+		cp := make([]float64, len(val))
+		copy(cp, val)
+		return cp
+	case []float32:
+		cp := make([]float32, len(val))
+		copy(cp, val)
+		return cp
+	case string, int, int64, float64, float32, bool, uint64, int32, nil:
+		return v
+	default:
+		return v
+	}
+}
+
 // Record represents a stored vector with its metadata.
 type Record struct {
 	// ID is the unique identifier for this record.
@@ -58,10 +102,7 @@ func (r *Record) Clone() *Record {
 	copy(clone.Vector, r.Vector)
 
 	if r.Payload != nil {
-		clone.Payload = make(map[string]any, len(r.Payload))
-		for k, v := range r.Payload {
-			clone.Payload[k] = v
-		}
+		clone.Payload = deepCopyMap(r.Payload)
 	}
 
 	return clone

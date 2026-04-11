@@ -21,8 +21,29 @@ type (
 	// RecordSnapshot is the serializable state of a record.
 	RecordSnapshot = storage.RecordSnapshot
 
+	// TFEntry stores a document ID and its term frequency for a term.
+	TFEntry = storage.TFEntry
+
 	// InvertedIndexSnapshot is the serializable state of the BM25 inverted index.
 	InvertedIndexSnapshot = storage.InvertedIndexSnapshot
+
+	// EntitySnapshot is the serializable state of a knowledge graph entity.
+	EntitySnapshot = storage.EntitySnapshot
+
+	// RelationshipSnapshot is the serializable state of a knowledge graph relationship.
+	RelationshipSnapshot = storage.RelationshipSnapshot
+
+	// GraphSnapshot is the serializable state of a knowledge graph.
+	GraphSnapshot = storage.GraphSnapshot
+
+	// EpisodeSnapshot is the serializable state of a single episode.
+	EpisodeSnapshot = storage.EpisodeSnapshot
+
+	// EpisodeStoreSnapshot is the serializable state of an episode store.
+	EpisodeStoreSnapshot = storage.EpisodeStoreSnapshot
+
+	// TimeRangeSnapshot is the serializable state of a time range.
+	TimeRangeSnapshot = storage.TimeRangeSnapshot
 )
 
 // NewDatabaseSnapshot creates a new empty database snapshot.

@@ -134,7 +134,13 @@ func (db *DB) CreateKnowledgeGraph(name string) (*KnowledgeGraph, error) {
 		return nil, fmt.Errorf("veclite: knowledge graph name required")
 	}
 
-	// Use a collection with a prefixed name for entity vectors
+	db.mu.RLock()
+	if kg, ok := db.knowledgeGraphs[name]; ok {
+		db.mu.RUnlock()
+		return kg, nil
+	}
+	db.mu.RUnlock()
+
 	collName := "_kg_" + name
 	coll := db.Collection(collName)
 
@@ -150,6 +156,21 @@ func (db *DB) CreateKnowledgeGraph(name string) (*KnowledgeGraph, error) {
 		higherBetter:  floats.IsHigherBetter(coll.distanceType),
 	}
 
+	// Register with DB for persistence
+	db.mu.Lock()
+	db.knowledgeGraphs[name] = kg
+	db.mu.Unlock()
+
+	return kg, nil
+}
+
+func (db *DB) GetKnowledgeGraph(name string) (*KnowledgeGraph, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	kg, ok := db.knowledgeGraphs[name]
+	if !ok {
+		return nil, &NotFoundError{Type: "knowledge graph", ID: name}
+	}
 	return kg, nil
 }
 
@@ -756,6 +777,91 @@ func removeString(slice []string, s string) []string {
 		}
 	}
 	return result
+}
+
+// snapshot creates a serializable snapshot of the knowledge graph.
+func (kg *KnowledgeGraph) snapshot() *GraphSnapshot {
+	kg.mu.RLock()
+	defer kg.mu.RUnlock()
+
+	snap := &GraphSnapshot{
+		Name:          kg.name,
+		Entities:      make([]EntitySnapshot, 0, len(kg.entities)),
+		Relationships: make([]RelationshipSnapshot, 0, len(kg.relationships)),
+		Outgoing:      make(map[string][]string, len(kg.outgoing)),
+		Incoming:      make(map[string][]string, len(kg.incoming)),
+	}
+
+	for _, e := range kg.entities {
+		snap.Entities = append(snap.Entities, EntitySnapshot{
+			ID:         e.ID,
+			Type:       e.Type,
+			Name:       e.Name,
+			Vector:     append([]float32(nil), e.Vector...),
+			Properties: copyMap(e.Properties),
+		})
+	}
+
+	for _, r := range kg.relationships {
+		snap.Relationships = append(snap.Relationships, RelationshipSnapshot{
+			ID:            r.ID,
+			SourceID:      r.SourceID,
+			TargetID:      r.TargetID,
+			Type:          r.Type,
+			Weight:        r.Weight,
+			Properties:    copyMap(r.Properties),
+			Bidirectional: r.Bidirectional,
+		})
+	}
+
+	for k, v := range kg.outgoing {
+		snap.Outgoing[k] = append([]string(nil), v...)
+	}
+	for k, v := range kg.incoming {
+		snap.Incoming[k] = append([]string(nil), v...)
+	}
+
+	return snap
+}
+
+// loadFromSnapshot restores the knowledge graph from a snapshot.
+func (kg *KnowledgeGraph) loadFromSnapshot(snap *GraphSnapshot) {
+	kg.mu.Lock()
+	defer kg.mu.Unlock()
+
+	kg.entities = make(map[string]*Entity, len(snap.Entities))
+	kg.relationships = make(map[string]*Relationship, len(snap.Relationships))
+	kg.outgoing = make(map[string][]string, len(snap.Outgoing))
+	kg.incoming = make(map[string][]string, len(snap.Incoming))
+
+	for _, e := range snap.Entities {
+		kg.entities[e.ID] = &Entity{
+			ID:         e.ID,
+			Type:       e.Type,
+			Name:       e.Name,
+			Vector:     append([]float32(nil), e.Vector...),
+			Properties: copyMap(e.Properties),
+		}
+	}
+
+	for _, r := range snap.Relationships {
+		kg.relationships[r.ID] = &Relationship{
+			ID:            r.ID,
+			SourceID:      r.SourceID,
+			TargetID:      r.TargetID,
+			Type:          r.Type,
+			Weight:        r.Weight,
+			Properties:    copyMap(r.Properties),
+			Bidirectional: r.Bidirectional,
+		}
+	}
+
+	for k, v := range snap.Outgoing {
+		kg.outgoing[k] = append([]string(nil), v...)
+	}
+	for k, v := range snap.Incoming {
+		kg.incoming[k] = append([]string(nil), v...)
+	}
 }
 
 func vectorsEqual(a, b []float32) bool {

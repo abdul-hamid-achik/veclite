@@ -47,11 +47,15 @@ func (n *Node) SetNeighbors(layer int, neighbors []uint64) {
 	}
 }
 
-// AddNeighbor adds a neighbor at the given layer.
+// AddNeighbor adds a neighbor at the given layer if not already present.
 func (n *Node) AddNeighbor(layer int, neighborID uint64) {
-	if layer >= 0 && layer <= n.Level {
-		n.Neighbors[layer] = append(n.Neighbors[layer], neighborID)
+	if layer < 0 || layer > n.Level {
+		return
 	}
+	if n.HasNeighbor(layer, neighborID) {
+		return
+	}
+	n.Neighbors[layer] = append(n.Neighbors[layer], neighborID)
 }
 
 // HasNeighbor returns true if the node has the given neighbor at the layer.

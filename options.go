@@ -15,6 +15,9 @@ const (
 	DistanceDot = floats.DistanceDot
 	// DistanceEuclidean uses Euclidean distance (lower = more similar).
 	DistanceEuclidean = floats.DistanceEuclidean
+	// DistanceEuclideanSquared uses squared Euclidean distance (lower = more similar).
+	// Faster than Euclidean since it avoids sqrt.
+	DistanceEuclideanSquared = floats.DistanceEuclideanSquared
 )
 
 // Option configures the database.
@@ -131,6 +134,7 @@ func WithHNSW(m, efConstruction int) CollectionOption {
 			M:              m,
 			EfConstruction: efConstruction,
 			EfSearch:       100,
+			UseHeuristic:   true,
 		}
 	})
 }

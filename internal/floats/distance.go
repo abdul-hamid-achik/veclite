@@ -123,6 +123,9 @@ const (
 	DistanceDot DistanceType = "dot"
 	// DistanceEuclidean uses Euclidean distance (lower = more similar).
 	DistanceEuclidean DistanceType = "euclidean"
+	// DistanceEuclideanSquared uses squared Euclidean distance (lower = more similar).
+	// Faster than Euclidean since it avoids the sqrt computation.
+	DistanceEuclideanSquared DistanceType = "euclidean_squared"
 )
 
 // GetDistanceFunc returns the distance function for a given type.
@@ -132,6 +135,8 @@ func GetDistanceFunc(t DistanceType) DistanceFunc {
 		return Dot
 	case DistanceEuclidean:
 		return Euclidean
+	case DistanceEuclideanSquared:
+		return EuclideanSquared
 	case DistanceCosine:
 		fallthrough
 	default:
@@ -142,7 +147,7 @@ func GetDistanceFunc(t DistanceType) DistanceFunc {
 // IsHigherBetter returns true if higher scores indicate better matches.
 func IsHigherBetter(t DistanceType) bool {
 	switch t {
-	case DistanceEuclidean:
+	case DistanceEuclidean, DistanceEuclideanSquared:
 		return false
 	default:
 		return true

@@ -67,6 +67,16 @@ func (idx *Index) ClearInternalVectors() {
 	idx.vectors = make(map[uint64][]float32)
 }
 
+// Clear removes all nodes and resets the index to an empty state.
+func (idx *Index) Clear() {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	idx.nodes = make(map[uint64]*Node)
+	idx.vectors = make(map[uint64][]float32)
+	idx.entryPoint = 0
+	idx.maxLevel = -1
+}
+
 // getVector retrieves a vector by ID, using the provider if set,
 // otherwise falling back to the internal vectors map.
 func (idx *Index) getVector(id uint64) ([]float32, bool) {
@@ -286,12 +296,22 @@ func (idx *Index) searchLayer(query []float32, entryID uint64, ef int, layer int
 }
 
 // selectNeighbors selects the best M neighbors from candidates.
+// When UseHeuristic is true, uses the diversity-preserving heuristic from
+// the HNSW paper (Algorithm 4) which favors candidates that cover different
+// regions of the space. Otherwise uses simple distance-based truncation.
 func (idx *Index) selectNeighbors(candidates []Item, m int) []Item {
 	if len(candidates) <= m {
 		return candidates
 	}
 
-	// Sort by distance (best first)
+	if idx.config.UseHeuristic {
+		return idx.selectNeighborsHeuristic(candidates, m)
+	}
+	return idx.selectNeighborsSimple(candidates, m)
+}
+
+// selectNeighborsSimple selects neighbors by sorting by distance and taking top M.
+func (idx *Index) selectNeighborsSimple(candidates []Item, m int) []Item {
 	sorted := make([]Item, len(candidates))
 	copy(sorted, candidates)
 
@@ -308,7 +328,79 @@ func (idx *Index) selectNeighbors(candidates []Item, m int) []Item {
 	return sorted[:m]
 }
 
+// selectNeighborsHeuristic implements Algorithm 4 from the HNSW paper.
+// It selects diverse neighbors: for each candidate, it checks whether it is closer
+// to the query than to any already-selected neighbor. If so, it is selected.
+// This prevents redundant connections that cover similar regions of the space.
+func (idx *Index) selectNeighborsHeuristic(candidates []Item, m int) []Item {
+	// Sort candidates by distance to query (best first)
+	sorted := make([]Item, len(candidates))
+	copy(sorted, candidates)
+
+	if idx.higherBetter {
+		sort.Slice(sorted, func(i, j int) bool {
+			return sorted[i].Distance > sorted[j].Distance
+		})
+	} else {
+		sort.Slice(sorted, func(i, j int) bool {
+			return sorted[i].Distance < sorted[j].Distance
+		})
+	}
+
+	selected := make([]Item, 0, m)
+
+	for _, candidate := range sorted {
+		if len(selected) >= m {
+			break
+		}
+
+		// Check if this candidate is closer to the query than to any selected neighbor
+		good := true
+		for _, sel := range selected {
+			dist := idx.distance(candidate.ID, sel.ID)
+			if idx.higherBetter {
+				// For similarity metrics, candidate is redundant if it's more similar
+				// to an already-selected neighbor than to the query
+				if dist > candidate.Distance {
+					good = false
+					break
+				}
+			} else {
+				// For distance metrics, candidate is redundant if it's closer
+				// to an already-selected neighbor than to the query
+				if dist < candidate.Distance {
+					good = false
+					break
+				}
+			}
+		}
+
+		if good {
+			selected = append(selected, candidate)
+		}
+	}
+
+	// If heuristic didn't fill the quota, add remaining candidates by distance
+	if len(selected) < m {
+		selectedSet := make(map[uint64]bool, len(selected))
+		for _, s := range selected {
+			selectedSet[s.ID] = true
+		}
+		for _, candidate := range sorted {
+			if len(selected) >= m {
+				break
+			}
+			if !selectedSet[candidate.ID] {
+				selected = append(selected, candidate)
+			}
+		}
+	}
+
+	return selected
+}
+
 // pruneConnections removes excess connections if node has too many neighbors.
+// Uses heuristic selection when UseHeuristic is enabled.
 func (idx *Index) pruneConnections(node *Node, layer int) {
 	maxConn := idx.config.M
 	if layer == 0 {
@@ -320,7 +412,7 @@ func (idx *Index) pruneConnections(node *Node, layer int) {
 		return
 	}
 
-	// Calculate distances and sort
+	// Calculate distances
 	type neighborDist struct {
 		id   uint64
 		dist float32
@@ -331,29 +423,57 @@ func (idx *Index) pruneConnections(node *Node, layer int) {
 		dists[i] = neighborDist{id: nid, dist: idx.distance(node.ID, nid)}
 	}
 
-	// Sort by distance (keep best connections)
-	if idx.higherBetter {
-		sort.Slice(dists, func(i, j int) bool {
-			return dists[i].dist > dists[j].dist
-		})
+	if idx.config.UseHeuristic {
+		// Use heuristic selection for pruning as well
+		items := make([]Item, len(dists))
+		for i, d := range dists {
+			items[i] = Item{ID: d.id, Distance: d.dist}
+		}
+		selected := idx.selectNeighborsHeuristic(items, maxConn)
+
+		newNeighbors := make([]uint64, len(selected))
+		for i, s := range selected {
+			newNeighbors[i] = s.ID
+		}
+		node.SetNeighbors(layer, newNeighbors)
+
+		// Remove reverse connections for pruned nodes
+		selectedSet := make(map[uint64]bool, len(selected))
+		for _, s := range selected {
+			selectedSet[s.ID] = true
+		}
+		for _, d := range dists {
+			if !selectedSet[d.id] {
+				prunedNode := idx.nodes[d.id]
+				if prunedNode != nil {
+					prunedNode.RemoveNeighbor(layer, node.ID)
+				}
+			}
+		}
 	} else {
-		sort.Slice(dists, func(i, j int) bool {
-			return dists[i].dist < dists[j].dist
-		})
-	}
+		// Sort by distance (keep best connections)
+		if idx.higherBetter {
+			sort.Slice(dists, func(i, j int) bool {
+				return dists[i].dist > dists[j].dist
+			})
+		} else {
+			sort.Slice(dists, func(i, j int) bool {
+				return dists[i].dist < dists[j].dist
+			})
+		}
 
-	// Keep only M best
-	newNeighbors := make([]uint64, maxConn)
-	for i := 0; i < maxConn; i++ {
-		newNeighbors[i] = dists[i].id
-	}
-	node.SetNeighbors(layer, newNeighbors)
+		newNeighbors := make([]uint64, maxConn)
+		for i := 0; i < maxConn; i++ {
+			newNeighbors[i] = dists[i].id
+		}
+		node.SetNeighbors(layer, newNeighbors)
 
-	// Remove reverse connections for pruned nodes
-	for i := maxConn; i < len(dists); i++ {
-		prunedNode := idx.nodes[dists[i].id]
-		if prunedNode != nil {
-			prunedNode.RemoveNeighbor(layer, node.ID)
+		// Remove reverse connections for pruned nodes
+		for i := maxConn; i < len(dists); i++ {
+			prunedNode := idx.nodes[dists[i].id]
+			if prunedNode != nil {
+				prunedNode.RemoveNeighbor(layer, node.ID)
+			}
 		}
 	}
 }

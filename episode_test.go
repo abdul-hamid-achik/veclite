@@ -336,3 +336,52 @@ func TestEpisodeRecordCount(t *testing.T) {
 		t.Errorf("expected record count of 5, got %d", episode.RecordCount())
 	}
 }
+
+func TestEpisodeStorePersistence(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := tmpDir + "/test.veclite"
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+
+	coll := db.Collection("ep-data")
+	_, err = coll.Insert([]float32{1, 0, 0}, map[string]any{"text": "hello world"})
+	if err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
+
+	es, err := db.CreateEpisodeStore("ep-data")
+	if err != nil {
+		t.Fatalf("CreateEpisodeStore failed: %v", err)
+	}
+
+	_, err = es.CreateEpisode([]uint64{1}, "test episode")
+	if err != nil {
+		t.Fatalf("CreateEpisode failed: %v", err)
+	}
+
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	db2, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open for restore failed: %v", err)
+	}
+	defer db2.Close()
+
+	es2, err := db2.GetEpisodeStore("ep-data")
+	if err != nil {
+		t.Fatalf("GetEpisodeStore after restore failed: %v", err)
+	}
+
+	episodes := es2.ListEpisodes()
+	if len(episodes) != 1 {
+		t.Fatalf("expected 1 episode after restore, got %d", len(episodes))
+	}
+	if episodes[0].Title != "test episode" {
+		t.Errorf("expected title 'test episode', got %s", episodes[0].Title)
+	}
+}

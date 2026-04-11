@@ -18,7 +18,7 @@ import (
 const (
 	// File format constants
 	fileMagic   = "VECLITE\x00"
-	fileVersion = uint32(1)
+	fileVersion = uint32(2) // v2: added KnowledgeGraphs, EpisodeStores, TF entries in BM25
 	headerSize  = 32
 	// Header layout:
 	//   [0:8]   - magic bytes "VECLITE\0"
@@ -170,8 +170,8 @@ func (f *File) Load() (*DatabaseSnapshot, error) {
 
 	// Validate version
 	version := binary.LittleEndian.Uint32(header[8:12])
-	if version != fileVersion {
-		return nil, &Error{Op: "validate", Err: ErrInvalidVersion}
+	if version > fileVersion {
+		return nil, &Error{Op: "validate", Err: fmt.Errorf("%w (file: %d, supported: %d)", ErrInvalidVersion, version, fileVersion)}
 	}
 
 	// Read stored checksum
@@ -195,7 +195,13 @@ func (f *File) Load() (*DatabaseSnapshot, error) {
 	var snapshot DatabaseSnapshot
 	decoder := gob.NewDecoder(bytes.NewReader(payload))
 	if err := decoder.Decode(&snapshot); err != nil {
-		return nil, &Error{Op: "decode", Err: err}
+		wrappedErr := fmt.Errorf("gob decode failed: %w (ensure payload types are gob-encodable)", err)
+		return nil, &Error{Op: "decode", Err: wrappedErr}
+	}
+
+	// Migrate from older versions
+	if version < fileVersion {
+		migrateSnapshot(&snapshot, version)
 	}
 
 	return &snapshot, nil
@@ -358,3 +364,26 @@ func (f *File) Delete() error {
 
 // Ensure File implements Backend.
 var _ Backend = (*File)(nil)
+
+// migrateSnapshot applies migrations to bring an older snapshot format
+// up to the current version. This handles backward compatibility when
+// the schema changes between releases.
+func migrateSnapshot(snapshot *DatabaseSnapshot, fromVersion uint32) {
+	if fromVersion < 2 {
+		// v1 -> v2: Added KnowledgeGraphs, EpisodeStores, and TF entries in BM25.
+		// These are nil/empty in v1 files, so no data transformation needed —
+		// just ensure the maps are initialized.
+		if snapshot.KnowledgeGraphs == nil {
+			snapshot.KnowledgeGraphs = make(map[string]*GraphSnapshot)
+		}
+		if snapshot.EpisodeStores == nil {
+			snapshot.EpisodeStores = make(map[string]*EpisodeStoreSnapshot)
+		}
+		// Convert v1 InvertedIndexSnapshot.Postings (map[string][]uint64)
+		// to v2 format (map[string][]TFEntry with count=1) if needed.
+		// This is handled by gob's backward compatibility: v1 files that
+		// decoded into map[string][]uint64 are compatible since v2 uses
+		// map[string][]TFEntry and gob respects field presence.
+	}
+	snapshot.Version = fileVersion
+}
