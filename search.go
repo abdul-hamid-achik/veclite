@@ -24,9 +24,10 @@ type searchConfig struct {
 // defaultSearchConfig returns the default search configuration.
 func defaultSearchConfig() *searchConfig {
 	return &searchConfig{
-		topK:     10,
-		filters:  nil,
-		efSearch: 0, // 0 means use index default
+		topK:           10,
+		filters:        nil,
+		efSearch:       0, // 0 means use index default
+		includeContent: true,
 	}
 }
 
@@ -80,6 +81,14 @@ func (c *searchConfig) matchesFilters(r *Record) bool {
 		}
 	}
 	return true
+}
+
+func (c *searchConfig) cloneRecordForResult(r *Record) *Record {
+	clone := r.Clone()
+	if clone != nil && !c.includeContent {
+		clone.Content = ""
+	}
+	return clone
 }
 
 // WithEfSearch sets the efSearch parameter for HNSW search.

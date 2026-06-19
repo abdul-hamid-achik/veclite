@@ -4,15 +4,15 @@
 
 ## Project Overview
 
-VecLite is an embeddable vector database for Go with zero external dependencies. It provides:
+VecLite is an embeddable vector database for Go. It provides:
 - Single-file persistence using gob encoding
 - HNSW index for fast approximate nearest neighbor search
 - In-memory mode for testing
 - CLI tool for database operations
 
 **Repository:** `github.com/abdul-hamid-achik/veclite`
-**Go Version:** 1.21+
-**Zero Dependencies:** Standard library only (no external modules)
+**Go Version:** 1.23+
+**Dependency Discipline:** Prefer the standard library for core database behavior. Optional integrations may use focused external modules.
 
 ## Project Structure
 
@@ -66,6 +66,13 @@ The `higherBetter` flag controls sort order and comparison logic throughout the 
 - Named containers for vectors
 - Optional HNSW index (defaults to brute-force if not specified)
 - Metadata filtering on search
+
+### Embedding and Modality Boundary
+- VecLite owns durable vector, text, payload, index, filter, and search primitives.
+- Applications own domain extraction, chunking, OCR, transcript parsing, frame selection, provider credentials, embedding generation, and rebuild policy.
+- Current collections store one vector per record. Use separate collections for incompatible embedding types until named vector spaces are implemented.
+- Store or validate an embedding profile in database or collection metadata when provider, model, dimensions, distance, or preprocessing changes can invalidate an index.
+- Use text-only records for BM25-first workflows; vector search must skip records without vectors.
 
 ## Development Commands
 
@@ -147,7 +154,7 @@ Keeping documentation synchronized with code ensures the project remains useful 
 
 ## Code Style Guidelines
 
-1. **Zero dependencies**: Do not add external modules. Use standard library only.
+1. **Dependency discipline**: Do not add external modules for core database behavior unless clearly necessary. Prefer the standard library and keep optional integrations isolated.
 
 2. **Error handling**: Return descriptive errors using types in `errors.go`:
    ```go
@@ -190,6 +197,13 @@ Keeping documentation synchronized with code ensures the project remains useful 
 2. Add field to `collectionConfig` struct
 3. Apply in `newCollection` or relevant method
 4. Update snapshot if persistence needed
+
+### Adding Embedding or Vector-Space Features
+1. Keep app-specific extraction outside VecLite.
+2. Preserve the existing single-vector API unless a breaking release is explicitly planned.
+3. Add storage-versioned migrations for persisted vector-space metadata.
+4. Document how old `Record.Vector` data maps into the default vector space.
+5. Add tests for dimension mismatches, persistence, search, update, delete, and hybrid behavior.
 
 ### Adding CLI Commands
 1. Add command case to `switch` in `cmd/veclite/main.go`

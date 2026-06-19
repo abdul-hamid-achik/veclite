@@ -70,7 +70,7 @@ func (c *Collection) SearchExplain(query []float32, opts ...SearchOption) (*Sear
 		if err != nil {
 			return nil, err
 		}
-		explanation.Results = results
+		explanation.Results = config.applyPagination(results)
 		explanation.NodesVisited = stats.NodesVisited
 		explanation.LayersVisited = stats.LayersVisited
 		explanation.BruteForce = false
@@ -79,7 +79,7 @@ func (c *Collection) SearchExplain(query []float32, opts ...SearchOption) (*Sear
 		if err != nil {
 			return nil, err
 		}
-		explanation.Results = results
+		explanation.Results = config.applyPagination(results)
 		explanation.NodesVisited = len(c.records)
 		explanation.BruteForce = true
 	}
@@ -95,6 +95,9 @@ func (c *Collection) searchWithIndexExplain(query []float32, config *searchConfi
 		results, err := c.searchBruteForce(query, config)
 		return results, hnsw.SearchStats{}, err
 	}
+	if hi.Count() == 0 {
+		return nil, hnsw.SearchStats{}, nil
+	}
 
 	// Determine ef parameter
 	ef := config.efSearch
@@ -105,7 +108,7 @@ func (c *Collection) searchWithIndexExplain(query []float32, config *searchConfi
 		ef = 100
 	}
 
-	indexResults, stats, err := hi.internal().SearchWithStats(query, config.topK, ef)
+	indexResults, stats, err := hi.internal().SearchWithStats(query, config.effectiveTopK(), ef)
 	if err != nil {
 		return nil, stats, err
 	}
@@ -118,7 +121,7 @@ func (c *Collection) searchWithIndexExplain(query []float32, config *searchConfi
 			continue
 		}
 		results = append(results, Result{
-			Record: record.Clone(),
+			Record: config.cloneRecordForResult(record),
 			Score:  ir.Distance,
 		})
 	}

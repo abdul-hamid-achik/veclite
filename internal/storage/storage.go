@@ -28,6 +28,9 @@ type DatabaseSnapshot struct {
 	// Version is the file format version.
 	Version uint32
 
+	// Metadata contains arbitrary database-level metadata.
+	Metadata map[string]any
+
 	// Collections maps collection names to their snapshots.
 	Collections map[string]*CollectionSnapshot
 
@@ -48,6 +51,9 @@ type DatabaseSnapshot struct {
 type CollectionSnapshot struct {
 	// Name is the collection name.
 	Name string
+
+	// Metadata contains arbitrary collection-level metadata.
+	Metadata map[string]any
 
 	// Dimension is the vector dimension.
 	Dimension int
@@ -196,7 +202,8 @@ type EpisodeStoreSnapshot struct {
 func NewDatabaseSnapshot() *DatabaseSnapshot {
 	now := time.Now()
 	return &DatabaseSnapshot{
-		Version:         1,
+		Version:         3,
+		Metadata:        make(map[string]any),
 		Collections:     make(map[string]*CollectionSnapshot),
 		KnowledgeGraphs: make(map[string]*GraphSnapshot),
 		EpisodeStores:   make(map[string]*EpisodeStoreSnapshot),
@@ -210,6 +217,7 @@ func NewCollectionSnapshot(name string, dimension int, distanceType floats.Dista
 	now := time.Now()
 	return &CollectionSnapshot{
 		Name:         name,
+		Metadata:     make(map[string]any),
 		Dimension:    dimension,
 		DistanceType: distanceType,
 		NextID:       1,

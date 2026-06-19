@@ -1,4 +1,4 @@
-// Package veclite provides an embeddable vector database with zero external dependencies.
+// Package veclite provides an embeddable vector database for Go.
 // It stores vectors with metadata in a single file using gob encoding.
 //
 // Basic usage:
@@ -25,13 +25,14 @@ import (
 )
 
 // Version is the library version.
-const Version = "0.2.0"
+const Version = "0.15.0"
 
 // DB represents a VecLite database.
 type DB struct {
 	path        string
 	storage     storage.Backend
 	config      *dbConfig
+	metadata    map[string]any
 	collections map[string]*Collection
 	mu          sync.RWMutex
 	closed      bool
@@ -83,6 +84,7 @@ func Open(path string, opts ...Option) (*DB, error) {
 		path:            path,
 		storage:         store,
 		config:          config,
+		metadata:        make(map[string]any),
 		collections:     make(map[string]*Collection),
 		knowledgeGraphs: make(map[string]*KnowledgeGraph),
 		episodeStores:   make(map[string]*EpisodeStore),
@@ -110,24 +112,34 @@ func Open(path string, opts ...Option) (*DB, error) {
 // Close closes the database, syncing any pending changes.
 func (db *DB) Close() error {
 	db.mu.Lock()
-	defer db.mu.Unlock()
-
 	if db.closed {
+		db.mu.Unlock()
 		return ErrDatabaseClosed
 	}
 
 	db.closed = true
+	readOnly := db.config.readOnly
+	db.mu.Unlock()
 
-	// Stop all background workers first
+	// Stop all background workers before taking the DB lock for snapshotting.
+	// Workers may need DB read locks while they shut down.
 	db.stopMu.Lock()
-	for _, stop := range db.stopFuncs {
-		stop()
-	}
+	stopFuncs := append([]func(){}, db.stopFuncs...)
 	db.stopFuncs = nil
 	db.stopMu.Unlock()
 
-	// Sync before closing — capture error but don't abort
-	syncErr := db.syncLocked()
+	for _, stop := range stopFuncs {
+		stop()
+	}
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	// Sync before closing unless the database was opened read-only.
+	var syncErr error
+	if !readOnly {
+		syncErr = db.syncLocked()
+	}
 
 	// Always release storage (and file lock), even if sync failed
 	closeErr := db.storage.Close()
@@ -148,12 +160,86 @@ func (db *DB) Path() string {
 	return db.path
 }
 
+// Metadata returns a deep copy of the database metadata.
+func (db *DB) Metadata() map[string]any {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	return deepCopyMap(db.metadata)
+}
+
+// SetMetadata replaces the database metadata.
+func (db *DB) SetMetadata(metadata map[string]any) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if db.closed {
+		return ErrDatabaseClosed
+	}
+	if db.config.readOnly {
+		return ErrReadOnly
+	}
+
+	db.metadata = deepCopyMap(metadata)
+	if db.metadata == nil {
+		db.metadata = make(map[string]any)
+	}
+	if db.config.syncOnWrite {
+		return db.syncLocked()
+	}
+	return nil
+}
+
+// SetMetadataValue sets one database metadata value.
+func (db *DB) SetMetadataValue(key string, value any) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if db.closed {
+		return ErrDatabaseClosed
+	}
+	if db.config.readOnly {
+		return ErrReadOnly
+	}
+
+	if db.metadata == nil {
+		db.metadata = make(map[string]any)
+	}
+	db.metadata[key] = deepCopyValue(value)
+	if db.config.syncOnWrite {
+		return db.syncLocked()
+	}
+	return nil
+}
+
+// DeleteMetadataValue removes one database metadata value.
+func (db *DB) DeleteMetadataValue(key string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if db.closed {
+		return ErrDatabaseClosed
+	}
+	if db.config.readOnly {
+		return ErrReadOnly
+	}
+
+	delete(db.metadata, key)
+	if db.config.syncOnWrite {
+		return db.syncLocked()
+	}
+	return nil
+}
+
 // Collection returns a collection by name, creating it if it doesn't exist.
 // This is the preferred way to get collections for most use cases.
 // In read-only mode, returns nil if the collection doesn't exist (cannot create).
 func (db *DB) Collection(name string) *Collection {
 	db.mu.Lock()
 	defer db.mu.Unlock()
+
+	if db.closed {
+		return nil
+	}
 
 	if coll, ok := db.collections[name]; ok {
 		return coll
@@ -264,6 +350,10 @@ func (db *DB) Sync() error {
 		return ErrDatabaseClosed
 	}
 
+	if db.config.readOnly {
+		return ErrReadOnly
+	}
+
 	return db.syncLocked()
 }
 
@@ -276,7 +366,8 @@ func (db *DB) syncLocked() error {
 // snapshotLocked creates a snapshot while holding the lock.
 func (db *DB) snapshotLocked() *storage.DatabaseSnapshot {
 	snapshot := &storage.DatabaseSnapshot{
-		Version:         2,
+		Version:         3,
+		Metadata:        deepCopyMap(db.metadata),
 		Collections:     make(map[string]*storage.CollectionSnapshot, len(db.collections)),
 		KnowledgeGraphs: make(map[string]*storage.GraphSnapshot, len(db.knowledgeGraphs)),
 		EpisodeStores:   make(map[string]*storage.EpisodeStoreSnapshot, len(db.episodeStores)),
@@ -303,6 +394,10 @@ func (db *DB) snapshotLocked() *storage.DatabaseSnapshot {
 func (db *DB) loadFromSnapshot(snapshot *storage.DatabaseSnapshot) {
 	db.createdAt = snapshot.CreatedAt
 	db.updatedAt = snapshot.UpdatedAt
+	db.metadata = deepCopyMap(snapshot.Metadata)
+	if db.metadata == nil {
+		db.metadata = make(map[string]any)
+	}
 
 	for name, collSnapshot := range snapshot.Collections {
 		coll := newCollection(name, defaultCollectionConfig(), db)

@@ -252,3 +252,320 @@ func TestCollectionTextSearchNoIndex(t *testing.T) {
 		t.Error("Expected error for TextSearch on collection without text index")
 	}
 }
+
+func TestTextDocumentSearchAndVectorSearchSkip(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	coll, err := db.CreateCollection("evidence",
+		WithDimension(3),
+		WithTextIndex("frame"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vectorID, err := coll.InsertDocument(
+		[]float32{1, 0, 0},
+		"vector backed document",
+		map[string]any{"frame": "frames/frame_0001.png"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	textID, err := coll.InsertTextDocument(
+		"checkout failed after clicking the submit button",
+		map[string]any{"frame": "frames/frame_0002.png"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stats := coll.Stats()
+	if stats.Count != 2 || stats.VectorCount != 1 || stats.TextOnlyCount != 1 {
+		t.Fatalf("Stats = %#v, want count=2 vector=1 text-only=1", stats)
+	}
+	if coll.Dimension() != 3 {
+		t.Fatalf("Dimension = %d, want 3", coll.Dimension())
+	}
+
+	textResults, err := coll.TextSearch("checkout submit", TopK(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(textResults) == 0 || textResults[0].Record.ID != textID {
+		t.Fatalf("TextSearch returned %#v, want first ID %d", textResults, textID)
+	}
+
+	vectorResults, err := coll.Search([]float32{1, 0, 0}, TopK(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vectorResults) != 1 {
+		t.Fatalf("Search returned %d results, want 1 vector-backed result", len(vectorResults))
+	}
+	if vectorResults[0].Record.ID != vectorID {
+		t.Fatalf("Search returned ID %d, want %d", vectorResults[0].Record.ID, vectorID)
+	}
+
+	hybridResults, err := coll.HybridSearch([]float32{1, 0, 0}, "checkout submit", TopK(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasResultID(hybridResults, textID) {
+		t.Fatalf("HybridSearch did not include text-only result ID %d: %#v", textID, hybridResults)
+	}
+}
+
+func TestTextDocumentUpsertReindexesAndRemovesVector(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	coll, err := db.CreateCollection("docs",
+		WithDimension(3),
+		WithTextIndex("doc_key"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := coll.InsertDocument(
+		[]float32{1, 0, 0},
+		"oldtoken",
+		map[string]any{"doc_key": "a"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	upsertID, inserted, err := coll.UpsertTextDocumentByKey(
+		"doc_key",
+		"a",
+		"newtoken",
+		map[string]any{"doc_key": "a"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted {
+		t.Fatal("expected UpsertTextDocumentByKey to update existing record")
+	}
+	if upsertID != id {
+		t.Fatalf("updated ID = %d, want %d", upsertID, id)
+	}
+
+	assertNoTextResults(t, coll, "oldtoken")
+	assertTextResultID(t, coll, "newtoken", id)
+
+	rec, err := coll.Get(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Vector) != 0 {
+		t.Fatalf("updated text document vector len = %d, want 0", len(rec.Vector))
+	}
+
+	vectorResults, err := coll.Search([]float32{1, 0, 0}, TopK(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vectorResults) != 0 {
+		t.Fatalf("Search returned %d results for text-only record, want 0", len(vectorResults))
+	}
+
+	if _, err := coll.UpsertTextDocument(id, "finaltoken", map[string]any{"doc_key": "a"}); err != nil {
+		t.Fatal(err)
+	}
+	assertNoTextResults(t, coll, "newtoken")
+	assertTextResultID(t, coll, "finaltoken", id)
+}
+
+func TestTextDocumentCanReceiveVectorLater(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	coll, err := db.CreateCollection("evidence",
+		WithHNSW(16, 200),
+		WithTextIndex("doc_key"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := coll.InsertTextDocument("keyword only first", map[string]any{"doc_key": "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := coll.Search([]float32{1, 0, 0}, TopK(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("Search returned %d results before vector promotion, want 0", len(results))
+	}
+
+	if err := coll.UpdateVector(id, []float32{1, 0, 0}); err != nil {
+		t.Fatal(err)
+	}
+	if coll.Dimension() != 3 {
+		t.Fatalf("Dimension = %d, want 3", coll.Dimension())
+	}
+	if stats := coll.IndexStats(); stats == nil || stats.NodeCount != 1 {
+		t.Fatalf("IndexStats = %#v, want one indexed vector", stats)
+	}
+
+	results, err = coll.Search([]float32{1, 0, 0}, TopK(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Record.ID != id {
+		t.Fatalf("Search after UpdateVector returned %#v, want ID %d", results, id)
+	}
+
+	if _, err := coll.UpsertTextDocument(id, "keyword only again", map[string]any{"doc_key": "a"}); err != nil {
+		t.Fatal(err)
+	}
+	results, err = coll.Search([]float32{1, 0, 0}, TopK(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("Search returned %d results after demotion to text-only, want 0", len(results))
+	}
+
+	updatedID, inserted, err := coll.UpsertByKey("doc_key", "a", []float32{0, 1, 0}, map[string]any{"doc_key": "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted {
+		t.Fatal("expected UpsertByKey to update text-only record")
+	}
+	if updatedID != id {
+		t.Fatalf("updated ID = %d, want %d", updatedID, id)
+	}
+
+	results, err = coll.Search([]float32{0, 1, 0}, TopK(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Record.ID != id {
+		t.Fatalf("Search after UpsertByKey returned %#v, want ID %d", results, id)
+	}
+}
+
+func TestTextIndexReindexedOnPayloadMutation(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	coll, err := db.CreateCollection("docs",
+		WithDimension(3),
+		WithTextIndex("title", "doc"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := coll.InsertDocument(
+		[]float32{0.1, 0.2, 0.3},
+		"body text",
+		map[string]any{"title": "oldtoken"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := coll.Update(id, map[string]any{"title": "newtoken"}); err != nil {
+		t.Fatal(err)
+	}
+	assertNoTextResults(t, coll, "oldtoken")
+	assertTextResultID(t, coll, "newtoken", id)
+
+	upsertID, err := coll.Upsert(0, []float32{0.2, 0.3, 0.4}, map[string]any{"title": "alphatoken"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertTextResultID(t, coll, "alphatoken", upsertID)
+
+	_, err = coll.Upsert(upsertID, []float32{0.3, 0.4, 0.5}, map[string]any{"title": "betatoken"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertNoTextResults(t, coll, "alphatoken")
+	assertTextResultID(t, coll, "betatoken", upsertID)
+
+	keyID, inserted, err := coll.UpsertByKey("doc", "key1", []float32{0.4, 0.5, 0.6}, map[string]any{
+		"doc":   "key1",
+		"title": "gammatoken",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inserted {
+		t.Fatal("expected initial UpsertByKey to insert")
+	}
+	assertTextResultID(t, coll, "gammatoken", keyID)
+
+	updatedID, inserted, err := coll.UpsertByKey("doc", "key1", []float32{0.5, 0.6, 0.7}, map[string]any{
+		"doc":   "key1",
+		"title": "deltatoken",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inserted {
+		t.Fatal("expected second UpsertByKey to update")
+	}
+	if updatedID != keyID {
+		t.Fatalf("updated ID = %d, want %d", updatedID, keyID)
+	}
+	assertNoTextResults(t, coll, "gammatoken")
+	assertTextResultID(t, coll, "deltatoken", keyID)
+}
+
+func hasResultID(results []Result, id uint64) bool {
+	for _, result := range results {
+		if result.Record.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func assertNoTextResults(t *testing.T, coll *Collection, query string) {
+	t.Helper()
+	results, err := coll.TextSearch(query, TopK(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("TextSearch(%q) returned %d results, want 0", query, len(results))
+	}
+}
+
+func assertTextResultID(t *testing.T, coll *Collection, query string, id uint64) {
+	t.Helper()
+	results, err := coll.TextSearch(query, TopK(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) == 0 {
+		t.Fatalf("TextSearch(%q) returned no results, want ID %d", query, id)
+	}
+	if results[0].Record.ID != id {
+		t.Fatalf("TextSearch(%q) returned ID %d, want %d", query, results[0].Record.ID, id)
+	}
+}

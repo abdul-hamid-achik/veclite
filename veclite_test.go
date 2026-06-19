@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/abdul-hamid-achik/veclite/internal/floats"
 )
@@ -61,6 +62,120 @@ func TestOpenFile(t *testing.T) {
 
 	if coll2.Count() != 1 {
 		t.Errorf("Count() = %v, want 1", coll2.Count())
+	}
+}
+
+func TestDatabaseAndCollectionMetadataPersistence(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "metadata.veclite")
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.SetMetadata(map[string]any{
+		"app":      "vecgrep",
+		"features": []any{"semantic", "text"},
+		"remove":   "temporary",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeleteMetadataValue("remove"); err != nil {
+		t.Fatal(err)
+	}
+	coll, err := db.CreateCollection("chunks",
+		WithDimension(3),
+		WithTextIndex("kind"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := map[string]any{
+		"provider":   "ollama",
+		"model":      "nomic-embed-text",
+		"dimensions": 768,
+	}
+	if err := coll.SetMetadata(map[string]any{
+		"embedding_profile": profile,
+		"remove":            "temporary",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := coll.DeleteMetadataValue("remove"); err != nil {
+		t.Fatal(err)
+	}
+
+	dbMeta := db.Metadata()
+	dbMeta["app"] = "mutated"
+	collMeta := coll.Metadata()
+	collMeta["embedding_profile"].(map[string]any)["model"] = "mutated"
+
+	if db.Metadata()["app"] != "vecgrep" {
+		t.Fatalf("database metadata was mutated through returned map: %#v", db.Metadata())
+	}
+	if _, ok := db.Metadata()["remove"]; ok {
+		t.Fatalf("database metadata delete did not persist before close: %#v", db.Metadata())
+	}
+	storedProfile := coll.Metadata()["embedding_profile"].(map[string]any)
+	if storedProfile["model"] != "nomic-embed-text" {
+		t.Fatalf("collection metadata was mutated through returned map: %#v", storedProfile)
+	}
+	if _, ok := coll.Metadata()["remove"]; ok {
+		t.Fatalf("collection metadata delete did not persist before close: %#v", coll.Metadata())
+	}
+
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = Open(path, WithReadOnly(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if got := db.Metadata()["app"]; got != "vecgrep" {
+		t.Fatalf("db metadata app = %v, want vecgrep", got)
+	}
+	if got := db.Metadata()["features"].([]any); len(got) != 2 || got[0] != "semantic" || got[1] != "text" {
+		t.Fatalf("db metadata features = %#v, want [semantic text]", got)
+	}
+	if _, ok := db.Metadata()["remove"]; ok {
+		t.Fatalf("reloaded database metadata has deleted key: %#v", db.Metadata())
+	}
+	coll, err = db.GetCollection("chunks")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloadedProfile := coll.Metadata()["embedding_profile"].(map[string]any)
+	if reloadedProfile["provider"] != "ollama" {
+		t.Fatalf("reloaded profile provider = %v, want ollama", reloadedProfile["provider"])
+	}
+	if reloadedProfile["model"] != "nomic-embed-text" {
+		t.Fatalf("reloaded profile model = %v, want nomic-embed-text", reloadedProfile["model"])
+	}
+	if _, ok := coll.Metadata()["remove"]; ok {
+		t.Fatalf("reloaded collection metadata has deleted key: %#v", coll.Metadata())
+	}
+
+	if err := db.SetMetadata(map[string]any{}); !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("read-only db metadata replace error = %v, want ErrReadOnly", err)
+	}
+	if err := db.SetMetadataValue("app", "other"); !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("read-only db metadata set error = %v, want ErrReadOnly", err)
+	}
+	if err := db.DeleteMetadataValue("app"); !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("read-only db metadata delete error = %v, want ErrReadOnly", err)
+	}
+	if err := coll.SetMetadata(map[string]any{}); !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("read-only collection metadata replace error = %v, want ErrReadOnly", err)
+	}
+	if err := coll.SetMetadataValue("embedding_profile", map[string]any{}); !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("read-only collection metadata set error = %v, want ErrReadOnly", err)
+	}
+	if err := coll.DeleteMetadataValue("embedding_profile"); !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("read-only collection metadata delete error = %v, want ErrReadOnly", err)
 	}
 }
 
@@ -1414,5 +1529,99 @@ func TestResetClearsNextID(t *testing.T) {
 
 	if id2 != 1 {
 		t.Errorf("After Reset, next ID should be 1, got %d", id2)
+	}
+}
+
+func TestCollectionWriteAfterDBCloseFails(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+
+	coll := db.Collection("test")
+	if coll == nil {
+		t.Fatal("Collection returned nil before close")
+	}
+
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	if got := db.Collection("test"); got != nil {
+		t.Fatal("Collection after close returned a collection, want nil")
+	}
+
+	_, err = coll.Insert([]float32{1, 0, 0}, nil)
+	if !errors.Is(err, ErrDatabaseClosed) {
+		t.Fatalf("Insert after DB close = %v, want ErrDatabaseClosed", err)
+	}
+}
+
+func TestReadOnlyCloseDoesNotRewriteDatabase(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "readonly.veclite")
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	coll := db.Collection("test")
+	if _, err := coll.Insert([]float32{1, 0, 0}, nil); err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat before read-only open failed: %v", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+
+	db, err = Open(path, WithReadOnly(true))
+	if err != nil {
+		t.Fatalf("Read-only open failed: %v", err)
+	}
+	if err := db.Sync(); !errors.Is(err, ErrReadOnly) {
+		t.Fatalf("Read-only Sync = %v, want ErrReadOnly", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Read-only Close failed: %v", err)
+	}
+
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat after read-only close failed: %v", err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("read-only close rewrote database: before=%v after=%v", before.ModTime(), after.ModTime())
+	}
+}
+
+func TestCloseStopsTTLCleanerWithoutDeadlock(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+
+	_, err = db.CreateCollection("test", WithDimension(3))
+	if err != nil {
+		t.Fatalf("CreateCollection failed: %v", err)
+	}
+	db.StartTTLCleaner(time.Millisecond, nil)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- db.Close()
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close timed out with active TTL cleaner")
 	}
 }

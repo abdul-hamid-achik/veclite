@@ -15,6 +15,7 @@ import (
 // Collection represents a collection of vectors with the same dimension.
 type Collection struct {
 	name         string
+	metadata     map[string]any
 	dimension    int
 	distanceType floats.DistanceType
 	distanceFunc floats.DistanceFunc
@@ -29,6 +30,9 @@ type Collection struct {
 	// Auto-embedding
 	embedder Embedder
 
+	// Memory pressure handling
+	memoryConfig *MemoryConfig
+
 	mu      sync.RWMutex
 	records map[uint64]*Record
 	nextID  uint64
@@ -40,6 +44,7 @@ type Collection struct {
 func newCollection(name string, config *collectionConfig, db *DB) *Collection {
 	c := &Collection{
 		name:         name,
+		metadata:     make(map[string]any),
 		dimension:    config.dimension,
 		distanceType: config.distanceType,
 		distanceFunc: floats.GetDistanceFunc(config.distanceType),
@@ -50,6 +55,7 @@ func newCollection(name string, config *collectionConfig, db *DB) *Collection {
 		nextID:       1,
 		db:           db,
 		embedder:     config.embedder,
+		memoryConfig: cloneMemoryConfig(config.memoryConfig),
 	}
 
 	// Initialize text index if configured
@@ -58,7 +64,7 @@ func newCollection(name string, config *collectionConfig, db *DB) *Collection {
 	}
 
 	// Initialize index if HNSW is configured
-	if config.indexType == IndexTypeHNSW && config.hnswConfig != nil {
+	if config.indexType == IndexTypeHNSW && config.hnswConfig != nil && config.dimension > 0 {
 		c.index = newHNSWIndex(
 			config.dimension,
 			config.distanceType,
@@ -67,7 +73,19 @@ func newCollection(name string, config *collectionConfig, db *DB) *Collection {
 		c.setupVectorProvider()
 	}
 
+	if c.memoryConfig != nil && c.memoryConfig.CleanupInterval > 0 && db != nil {
+		c.StartMemoryLimiter(*c.memoryConfig)
+	}
+
 	return c
+}
+
+func cloneMemoryConfig(config *MemoryConfig) *MemoryConfig {
+	if config == nil {
+		return nil
+	}
+	cp := *config
+	return &cp
 }
 
 // initHNSWIfNeeded initializes the HNSW index when the dimension becomes known.
@@ -95,7 +113,7 @@ func (c *Collection) setupVectorProvider() {
 	}
 	hnswIdx.internal().SetVectorProvider(func(id uint64) ([]float32, bool) {
 		rec, ok := c.records[id]
-		if !ok {
+		if !ok || len(rec.Vector) == 0 {
 			return nil, false
 		}
 		return rec.Vector, true
@@ -104,8 +122,17 @@ func (c *Collection) setupVectorProvider() {
 
 // checkReadOnly returns ErrReadOnly if the database is in read-only mode.
 func (c *Collection) checkReadOnly() error {
-	if c.db != nil && c.db.config != nil && c.db.config.readOnly {
-		return ErrReadOnly
+	if c.db != nil {
+		c.db.mu.RLock()
+		closed := c.db.closed
+		readOnly := c.db.config != nil && c.db.config.readOnly
+		c.db.mu.RUnlock()
+		if closed {
+			return ErrDatabaseClosed
+		}
+		if readOnly {
+			return ErrReadOnly
+		}
 	}
 	return nil
 }
@@ -118,9 +145,77 @@ func (c *Collection) syncIfNeeded() {
 	}
 }
 
+func (c *Collection) reindexRecordLocked(record *Record) {
+	if c.textIndex != nil && record != nil {
+		c.textIndex.indexRecord(record.ID, record.Payload, record.Content)
+	}
+}
+
+func (c *Collection) enforceMemoryLimitIfConfigured() {
+	if c.memoryConfig == nil || c.memoryConfig.MaxRecords <= 0 {
+		return
+	}
+	c.EnforceMemoryLimit(*c.memoryConfig)
+}
+
 // Name returns the collection name.
 func (c *Collection) Name() string {
 	return c.name
+}
+
+// Metadata returns a deep copy of the collection metadata.
+func (c *Collection) Metadata() map[string]any {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return deepCopyMap(c.metadata)
+}
+
+// SetMetadata replaces the collection metadata.
+func (c *Collection) SetMetadata(metadata map[string]any) error {
+	if err := c.checkReadOnly(); err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	c.metadata = deepCopyMap(metadata)
+	if c.metadata == nil {
+		c.metadata = make(map[string]any)
+	}
+	c.mu.Unlock()
+
+	c.syncIfNeeded()
+	return nil
+}
+
+// SetMetadataValue sets one collection metadata value.
+func (c *Collection) SetMetadataValue(key string, value any) error {
+	if err := c.checkReadOnly(); err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	if c.metadata == nil {
+		c.metadata = make(map[string]any)
+	}
+	c.metadata[key] = deepCopyValue(value)
+	c.mu.Unlock()
+
+	c.syncIfNeeded()
+	return nil
+}
+
+// DeleteMetadataValue removes one collection metadata value.
+func (c *Collection) DeleteMetadataValue(key string) error {
+	if err := c.checkReadOnly(); err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	delete(c.metadata, key)
+	c.mu.Unlock()
+
+	c.syncIfNeeded()
+	return nil
 }
 
 // Dimension returns the vector dimension.
@@ -161,6 +256,7 @@ func (c *Collection) Insert(vector []float32, payload map[string]any) (uint64, e
 	if c.db != nil && c.db.metrics != nil {
 		c.db.metrics.recordInsert()
 	}
+	c.enforceMemoryLimitIfConfigured()
 	c.syncIfNeeded()
 
 	// Notify subscribers about the new record
@@ -194,6 +290,7 @@ func (c *Collection) InsertWithOptions(vector []float32, payload map[string]any,
 	if c.db != nil && c.db.metrics != nil {
 		c.db.metrics.recordInsert()
 	}
+	c.enforceMemoryLimitIfConfigured()
 	c.syncIfNeeded()
 
 	// Notify subscribers about the new record
@@ -375,6 +472,7 @@ func (c *Collection) InsertBatch(vectors [][]float32, payloads []map[string]any)
 		return nil, err
 	}
 
+	c.enforceMemoryLimitIfConfigured()
 	c.syncIfNeeded()
 	return ids, nil
 }
@@ -561,6 +659,31 @@ func (c *Collection) Update(id uint64, payload map[string]any) error {
 
 	record.Payload = payload
 	record.UpdatedAt = time.Now()
+	c.reindexRecordLocked(record)
+	c.mu.Unlock()
+
+	c.syncIfNeeded()
+	return nil
+}
+
+// UpdateDocument updates the content and payload for a record without changing its vector.
+func (c *Collection) UpdateDocument(id uint64, content string, payload map[string]any) error {
+	if err := c.checkReadOnly(); err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+
+	record, ok := c.records[id]
+	if !ok {
+		c.mu.Unlock()
+		return &NotFoundError{Type: "record", ID: strconv.FormatUint(id, 10)}
+	}
+
+	record.Content = content
+	record.Payload = payload
+	record.UpdatedAt = time.Now()
+	c.reindexRecordLocked(record)
 	c.mu.Unlock()
 
 	c.syncIfNeeded()
@@ -584,24 +707,32 @@ func (c *Collection) UpdateVector(id uint64, vector []float32) error {
 		return &NotFoundError{Type: "record", ID: strconv.FormatUint(id, 10)}
 	}
 
-	if len(vector) != c.dimension {
+	if c.dimension == 0 {
+		c.dimension = len(vector)
+		c.initHNSWIfNeeded()
+	} else if len(vector) != c.dimension {
 		c.mu.Unlock()
 		return &DimensionError{Expected: c.dimension, Got: len(vector)}
 	}
 
 	// Update index if present
 	if c.index != nil {
-		// Hard delete old vector from index (needed for re-insertion with same ID)
-		c.hardDeleteFromIndex(id)
+		if len(record.Vector) > 0 {
+			// Hard delete old vector from index (needed for re-insertion with same ID)
+			c.hardDeleteFromIndex(id)
+		}
 		// Insert new vector
 		if err := c.index.Insert(id, vector); err != nil {
 			// Re-insert old vector on failure
-			_ = c.index.Insert(id, record.Vector)
+			if len(record.Vector) > 0 {
+				_ = c.index.Insert(id, record.Vector)
+			}
 			c.mu.Unlock()
 			return err
 		}
 	}
 
+	record.Vector = make([]float32, len(vector))
 	copy(record.Vector, vector)
 	record.UpdatedAt = time.Now()
 	c.mu.Unlock()
@@ -643,6 +774,7 @@ func (c *Collection) Upsert(id uint64, vector []float32, payload map[string]any)
 		return 0, err
 	}
 
+	c.enforceMemoryLimitIfConfigured()
 	c.syncIfNeeded()
 	return id, nil
 }
@@ -661,22 +793,31 @@ func (c *Collection) upsertLocked(id uint64, vector []float32, payload map[strin
 	record, exists := c.records[id]
 	if exists {
 		// Update existing record
-		if len(vector) != c.dimension {
+		if c.dimension == 0 {
+			c.dimension = len(vector)
+			c.initHNSWIfNeeded()
+		} else if len(vector) != c.dimension {
 			return 0, &DimensionError{Expected: c.dimension, Got: len(vector)}
 		}
 
 		// Update index if present
 		if c.index != nil {
-			c.hardDeleteFromIndex(id)
+			if len(record.Vector) > 0 {
+				c.hardDeleteFromIndex(id)
+			}
 			if err := c.index.Insert(id, vector); err != nil {
-				_ = c.index.Insert(id, record.Vector)
+				if len(record.Vector) > 0 {
+					_ = c.index.Insert(id, record.Vector)
+				}
 				return 0, err
 			}
 		}
 
+		record.Vector = make([]float32, len(vector))
 		copy(record.Vector, vector)
 		record.Payload = payload
 		record.UpdatedAt = time.Now()
+		c.reindexRecordLocked(record)
 		return id, nil
 	}
 
@@ -701,6 +842,7 @@ func (c *Collection) UpsertByKey(keyField string, keyValue any, vector []float32
 		return 0, false, err
 	}
 
+	c.enforceMemoryLimitIfConfigured()
 	c.syncIfNeeded()
 	return id, inserted, nil
 }
@@ -725,22 +867,31 @@ func (c *Collection) upsertByKeyLocked(keyField string, keyValue any, vector []f
 
 	if existingRecord != nil {
 		// Update existing record
-		if c.dimension > 0 && len(vector) != c.dimension {
+		if c.dimension == 0 {
+			c.dimension = len(vector)
+			c.initHNSWIfNeeded()
+		} else if len(vector) != c.dimension {
 			return 0, false, &DimensionError{Expected: c.dimension, Got: len(vector)}
 		}
 
 		// Update index if present
 		if c.index != nil {
-			c.hardDeleteFromIndex(existingID)
+			if len(existingRecord.Vector) > 0 {
+				c.hardDeleteFromIndex(existingID)
+			}
 			if err := c.index.Insert(existingID, vector); err != nil {
-				_ = c.index.Insert(existingID, existingRecord.Vector)
+				if len(existingRecord.Vector) > 0 {
+					_ = c.index.Insert(existingID, existingRecord.Vector)
+				}
 				return 0, false, err
 			}
 		}
 
+		existingRecord.Vector = make([]float32, len(vector))
 		copy(existingRecord.Vector, vector)
 		existingRecord.Payload = payload
 		existingRecord.UpdatedAt = time.Now()
+		c.reindexRecordLocked(existingRecord)
 		return existingID, false, nil
 	}
 
@@ -755,13 +906,7 @@ func (c *Collection) insertUnlocked(vector []float32, payload map[string]any) (u
 	// Check/set dimension
 	if c.dimension == 0 {
 		c.dimension = len(vector)
-		if c.indexType == IndexTypeHNSW && c.hnswConfig != nil && c.index == nil {
-			c.index = newHNSWIndex(
-				c.dimension,
-				c.distanceType,
-				c.hnswConfig,
-			)
-		}
+		c.initHNSWIfNeeded()
 	} else if len(vector) != c.dimension {
 		return 0, &DimensionError{Expected: c.dimension, Got: len(vector)}
 	}
@@ -789,6 +934,8 @@ func (c *Collection) insertUnlocked(vector []float32, payload map[string]any) (u
 		}
 	}
 
+	c.reindexRecordLocked(record)
+
 	return id, nil
 }
 
@@ -798,13 +945,7 @@ func (c *Collection) insertWithIDUnlocked(id uint64, vector []float32, payload m
 	// Check/set dimension
 	if c.dimension == 0 {
 		c.dimension = len(vector)
-		if c.indexType == IndexTypeHNSW && c.hnswConfig != nil && c.index == nil {
-			c.index = newHNSWIndex(
-				c.dimension,
-				c.distanceType,
-				c.hnswConfig,
-			)
-		}
+		c.initHNSWIfNeeded()
 	} else if len(vector) != c.dimension {
 		return 0, &DimensionError{Expected: c.dimension, Got: len(vector)}
 	}
@@ -832,6 +973,8 @@ func (c *Collection) insertWithIDUnlocked(id uint64, vector []float32, payload m
 			return 0, err
 		}
 	}
+
+	c.reindexRecordLocked(record)
 
 	return id, nil
 }
@@ -946,6 +1089,10 @@ func (c *Collection) trackAccess(results []Result) {
 // When filters are present, uses adaptive over-fetching: starts with 4x,
 // and if too few results pass the filter, retries with larger multipliers.
 func (c *Collection) searchWithIndex(query []float32, config *searchConfig) ([]Result, error) {
+	if c.index.Count() == 0 {
+		return nil, nil
+	}
+
 	ef := config.efSearch
 	if ef == 0 && c.hnswConfig != nil {
 		ef = c.hnswConfig.EfSearch
@@ -1024,7 +1171,7 @@ func (c *Collection) filterIndexResults(indexResults []IndexResult, config *sear
 		}
 
 		results = append(results, Result{
-			Record: record.Clone(),
+			Record: config.cloneRecordForResult(record),
 			Score:  ir.Distance,
 		})
 
@@ -1054,7 +1201,7 @@ func (c *Collection) indexResultsToResults(indexResults []IndexResult, config *s
 		}
 
 		results = append(results, Result{
-			Record: record.Clone(),
+			Record: config.cloneRecordForResult(record),
 			Score:  ir.Distance,
 		})
 
@@ -1070,6 +1217,10 @@ func (c *Collection) searchBruteForce(query []float32, config *searchConfig) ([]
 	// Collect matching results
 	results := make([]Result, 0)
 	for _, record := range c.records {
+		if len(record.Vector) == 0 {
+			continue
+		}
+
 		// Apply filters
 		if !config.matchesFilters(record) {
 			continue
@@ -1088,7 +1239,7 @@ func (c *Collection) searchBruteForce(query []float32, config *searchConfig) ([]
 		}
 
 		results = append(results, Result{
-			Record: record.Clone(),
+			Record: config.cloneRecordForResult(record),
 			Score:  score,
 		})
 	}
@@ -1167,12 +1318,21 @@ func (c *Collection) Stats() CollectionStats {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
+	vectorCount := 0
+	for _, record := range c.records {
+		if len(record.Vector) > 0 {
+			vectorCount++
+		}
+	}
+
 	return CollectionStats{
-		Name:         c.name,
-		Count:        len(c.records),
-		Dimension:    c.dimension,
-		DistanceType: string(c.distanceType),
-		IndexType:    string(c.indexType),
+		Name:          c.name,
+		Count:         len(c.records),
+		VectorCount:   vectorCount,
+		TextOnlyCount: len(c.records) - vectorCount,
+		Dimension:     c.dimension,
+		DistanceType:  string(c.distanceType),
+		IndexType:     string(c.indexType),
 	}
 }
 
@@ -1193,6 +1353,7 @@ func (c *Collection) snapshot() *storage.CollectionSnapshot {
 
 	snapshot := &storage.CollectionSnapshot{
 		Name:         c.name,
+		Metadata:     deepCopyMap(c.metadata),
 		Dimension:    c.dimension,
 		DistanceType: c.distanceType,
 		NextID:       c.nextID,
@@ -1239,6 +1400,10 @@ func (c *Collection) loadFromSnapshot(snapshot *storage.CollectionSnapshot) {
 	defer c.mu.Unlock()
 
 	c.dimension = snapshot.Dimension
+	c.metadata = deepCopyMap(snapshot.Metadata)
+	if c.metadata == nil {
+		c.metadata = make(map[string]any)
+	}
 	c.distanceType = snapshot.DistanceType
 	c.distanceFunc = floats.GetDistanceFunc(snapshot.DistanceType)
 	c.higherBetter = floats.IsHigherBetter(snapshot.DistanceType)
@@ -1340,6 +1505,10 @@ func (c *Collection) searchStreamBruteForce(query []float32, fn SearchFunc, conf
 
 	count := 0
 	for _, record := range c.records {
+		if len(record.Vector) == 0 {
+			continue
+		}
+
 		if config.effectiveTopK() > 0 && count >= effectiveK {
 			break
 		}
@@ -1360,7 +1529,7 @@ func (c *Collection) searchStreamBruteForce(query []float32, fn SearchFunc, conf
 		}
 
 		result := Result{
-			Record: record.Clone(),
+			Record: config.cloneRecordForResult(record),
 			Score:  score,
 		}
 
@@ -1407,7 +1576,7 @@ func (c *Collection) TextSearch(query string, opts ...SearchOption) ([]Result, e
 		}
 
 		results = append(results, Result{
-			Record: record.Clone(),
+			Record: config.cloneRecordForResult(record),
 			Score:  float32(tr.score),
 		})
 	}
@@ -1443,6 +1612,7 @@ func (c *Collection) HybridSearch(query []float32, text string, opts ...SearchOp
 
 	// Run vector search
 	vectorOpts := []SearchOption{TopK(fetchK)}
+	vectorOpts = append(vectorOpts, WithContent(config.includeContent))
 	if config.threshold != nil {
 		vectorOpts = append(vectorOpts, Threshold(*config.threshold))
 	}
@@ -1459,6 +1629,7 @@ func (c *Collection) HybridSearch(query []float32, text string, opts ...SearchOp
 
 	// Run text search
 	textOpts := []SearchOption{TopK(fetchK)}
+	textOpts = append(textOpts, WithContent(config.includeContent))
 	for _, f := range config.filters {
 		textOpts = append(textOpts, WithFilter(f))
 	}
@@ -1544,8 +1715,162 @@ func (c *Collection) InsertDocument(vector []float32, content string, payload ma
 	}
 
 	c.mu.Unlock()
+	c.enforceMemoryLimitIfConfigured()
 	c.syncIfNeeded()
 	return id, nil
+}
+
+// InsertTextDocument inserts content and payload without a vector.
+// Text-only records are indexed by BM25 when text indexing is enabled and are
+// skipped by vector search, hybrid vector search, and vector subscriptions.
+func (c *Collection) InsertTextDocument(content string, payload map[string]any) (uint64, error) {
+	if err := c.checkReadOnly(); err != nil {
+		return 0, err
+	}
+
+	id := c.insertTextDocumentLocked(0, content, payload, nil)
+
+	if c.db != nil && c.db.metrics != nil {
+		c.db.metrics.recordInsert()
+	}
+	c.enforceMemoryLimitIfConfigured()
+	c.syncIfNeeded()
+	return id, nil
+}
+
+// InsertTextDocumentWithOptions inserts content and payload without a vector,
+// applying insert options such as TTL and importance.
+func (c *Collection) InsertTextDocumentWithOptions(content string, payload map[string]any, opts ...InsertOption) (uint64, error) {
+	if err := c.checkReadOnly(); err != nil {
+		return 0, err
+	}
+
+	config := defaultInsertConfig()
+	for _, opt := range opts {
+		opt.apply(config)
+	}
+
+	id := c.insertTextDocumentLocked(0, content, payload, config)
+
+	if c.db != nil && c.db.metrics != nil {
+		c.db.metrics.recordInsert()
+	}
+	c.enforceMemoryLimitIfConfigured()
+	c.syncIfNeeded()
+	return id, nil
+}
+
+// UpsertTextDocument inserts or updates a text-only document by ID.
+// If id is 0, a new record is created with an auto-generated ID.
+func (c *Collection) UpsertTextDocument(id uint64, content string, payload map[string]any) (uint64, error) {
+	if err := c.checkReadOnly(); err != nil {
+		return 0, err
+	}
+
+	c.mu.Lock()
+	if id != 0 {
+		if record, ok := c.records[id]; ok {
+			if c.index != nil && len(record.Vector) > 0 {
+				c.hardDeleteFromIndex(id)
+			}
+			record.Vector = nil
+			record.Content = content
+			record.Payload = payload
+			record.UpdatedAt = time.Now()
+			c.reindexRecordLocked(record)
+			c.mu.Unlock()
+			c.syncIfNeeded()
+			return id, nil
+		}
+	}
+	id = c.insertTextDocumentUnlocked(id, content, payload, nil)
+	c.mu.Unlock()
+
+	if c.db != nil && c.db.metrics != nil {
+		c.db.metrics.recordInsert()
+	}
+	c.enforceMemoryLimitIfConfigured()
+	c.syncIfNeeded()
+	return id, nil
+}
+
+// UpsertTextDocumentByKey inserts or updates a text-only document by payload key.
+func (c *Collection) UpsertTextDocumentByKey(keyField string, keyValue any, content string, payload map[string]any) (uint64, bool, error) {
+	if err := c.checkReadOnly(); err != nil {
+		return 0, false, err
+	}
+
+	c.mu.Lock()
+	for id, record := range c.records {
+		if record.Payload == nil {
+			continue
+		}
+		if v, ok := record.Payload[keyField]; ok && compareValues(v, keyValue) {
+			if c.index != nil && len(record.Vector) > 0 {
+				c.hardDeleteFromIndex(id)
+			}
+			record.Vector = nil
+			record.Content = content
+			record.Payload = payload
+			record.UpdatedAt = time.Now()
+			c.reindexRecordLocked(record)
+			c.mu.Unlock()
+			c.syncIfNeeded()
+			return id, false, nil
+		}
+	}
+	id := c.insertTextDocumentUnlocked(0, content, payload, nil)
+	c.mu.Unlock()
+
+	if c.db != nil && c.db.metrics != nil {
+		c.db.metrics.recordInsert()
+	}
+	c.enforceMemoryLimitIfConfigured()
+	c.syncIfNeeded()
+	return id, true, nil
+}
+
+// insertTextDocumentLocked inserts a text-only record.
+func (c *Collection) insertTextDocumentLocked(id uint64, content string, payload map[string]any, config *insertConfig) uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.insertTextDocumentUnlocked(id, content, payload, config)
+}
+
+// insertTextDocumentUnlocked inserts a text-only record.
+// Caller must hold c.mu.Lock().
+func (c *Collection) insertTextDocumentUnlocked(id uint64, content string, payload map[string]any, config *insertConfig) uint64 {
+	now := time.Now()
+	if id == 0 {
+		id = c.nextID
+		c.nextID++
+	} else if id >= c.nextID {
+		c.nextID = id + 1
+	}
+
+	expiresAt := time.Time{}
+	importance := float32(0)
+	if config != nil {
+		if config.content != "" {
+			content = config.content
+		}
+		expiresAt = config.computeExpiresAt()
+		importance = config.importance
+	}
+
+	record := &Record{
+		ID:         id,
+		Payload:    payload,
+		Content:    content,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		ExpiresAt:  expiresAt,
+		Importance: importance,
+	}
+
+	c.records[id] = record
+	c.reindexRecordLocked(record)
+	return id
 }
 
 // InsertText embeds the text using the configured embedder and inserts the result.

@@ -1,6 +1,6 @@
 # VecLite
 
-Embeddable vector database for Go with zero external dependencies.
+Embeddable vector database for Go.
 
 Store vectors with metadata in a single file. Search with cosine similarity, dot product, or Euclidean distance. Add HNSW for fast approximate nearest neighbors. Use BM25 for full-text search. Combine both with hybrid search.
 
@@ -9,9 +9,12 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
 - [Features](#features)
 - [Quick Start](#quick-start)
 - [Installation](#installation)
+- [Use as a Go Library](#use-as-a-go-library)
+- [Embedding Strategy](#embedding-strategy)
 - [Library API](#library-api)
   - [Opening a Database](#opening-a-database)
   - [Collections](#collections)
+  - [Database and Collection Metadata](#database-and-collection-metadata)
   - [Inserting Vectors](#inserting-vectors)
   - [Document Storage](#document-storage)
   - [Searching](#searching)
@@ -56,14 +59,14 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
 
 ## Features
 
-- **Zero dependencies** -- Standard library only, no CGO
+- **Embeddable Go library** -- Core vector storage and search are small and local-first; optional integrations add provider-specific modules
 - **Single-file storage** -- Database persists to one `.veclite` file
 - **HNSW indexing** -- Fast approximate nearest neighbor search
 - **BM25 text search** -- Full-text search over record content and payload fields
 - **Hybrid search** -- Combine vector and text search with Reciprocal Rank Fusion
 - **Document storage** -- Store original text content alongside vectors
 - **Auto-embedding** -- Pluggable `Embedder` interface for text-to-vector conversion
-- **Local ONNX embedder** -- Optional `all-MiniLM-L6-v2` embedder with zero external dependencies (build with `-tags onnx`)
+- **Local ONNX embedder** -- Optional `all-MiniLM-L6-v2` embedder for local inference (build with `-tags onnx`)
 - **Metadata filtering** -- Rich filter expressions (equality, range, glob, prefix, logical operators)
 - **Streaming results** -- Process results via callback without materializing all at once
 - **Pagination** -- Offset/limit on search results and record iteration
@@ -117,7 +120,7 @@ func main() {
 
 ## Installation
 
-Requires Go 1.21 or later. No external dependencies.
+Requires Go 1.23 or later. VecLite's core storage and search APIs are local-first; optional integrations such as MCP, YAML config, and ONNX embedding use external Go modules.
 
 ```bash
 # Library
@@ -128,6 +131,22 @@ go install github.com/abdul-hamid-achik/veclite/cmd/veclite@latest
 ```
 
 Pre-built binaries are available on the [Releases](https://github.com/abdul-hamid-achik/veclite/releases) page.
+
+## Use as a Go Library
+
+VecLite is primarily an importable Go library:
+
+```go
+import "github.com/abdul-hamid-achik/veclite"
+```
+
+Applications can bring their own embedding pipeline and use VecLite for durable local storage, HNSW vector search, BM25 text search, metadata filtering, and hybrid ranking. See [docs/embeddings.md](docs/embeddings.md) for the app/library boundary and embedding-profile guidance.
+
+## Embedding Strategy
+
+Current VecLite releases store one vector per record. Use one collection when all records share the same provider, model, dimensions, modality, and distance metric. Use separate collections when embedding types are incompatible.
+
+VecLite's long-term multimodal direction is named vector spaces: one logical record can hold vectors such as `text`, `frame_clip`, or `audio`, each with its own dimension and index settings. That API is planned, not current behavior; see [ADR-0001](docs/adr/0001-embedding-boundary-and-named-vector-spaces.md).
 
 ## Library API
 
@@ -189,6 +208,27 @@ err := db.DropCollection("embeddings")
 | `WithTextIndex(fields...)` | Enable BM25 text indexing on named payload fields. `Content` is always indexed. |
 | `WithEmbedder(Embedder)` | Set auto-embedding plugin for `InsertText`/`SearchText`. |
 
+### Database and Collection Metadata
+
+Store application-level or collection-level metadata alongside the database file:
+
+```go
+err := db.SetMetadataValue("app", "vecgrep")
+dbMeta := db.Metadata()
+
+err = coll.SetMetadataValue("embedding_profile", map[string]any{
+    "provider":   "ollama",
+    "model":      "nomic-embed-text",
+    "dimensions": 768,
+    "distance":   "cosine",
+})
+collMeta := coll.Metadata()
+
+err = coll.DeleteMetadataValue("deprecated_key")
+```
+
+`Metadata` returns a deep copy. Use database and collection metadata for schema/profile information. Use record payloads for per-record fields that need filtering or retrieval.
+
 **Distance metrics:**
 
 | Metric | Constant | Interpretation |
@@ -226,6 +266,24 @@ id, err := coll.InsertDocument(
 ```
 
 The `Content` field is stored on the `Record` and automatically indexed by BM25 when text indexing is enabled.
+
+For keyword-first workflows, store text without a vector:
+
+```go
+id, err := coll.InsertTextDocument(
+    "00:12 OCR and transcript evidence",
+    map[string]any{"frame": "frames/frame_0012.png"},
+)
+
+id, err = coll.InsertTextDocumentWithOptions(
+    "temporary transcript evidence",
+    map[string]any{"frame": "frames/frame_0013.png"},
+    veclite.WithTTL(24 * time.Hour),
+    veclite.WithImportance(0.8),
+)
+```
+
+Text-only records are returned by `TextSearch`, filters, iteration, and direct lookup. Vector search skips them.
 
 ### Searching
 
@@ -271,12 +329,11 @@ Full-text search using BM25 ranking. Requires `WithTextIndex` on the collection.
 
 ```go
 coll, _ := db.CreateCollection("docs",
-    veclite.WithDimension(384),
     veclite.WithTextIndex("title", "body"),
 )
 
-// Insert documents with content
-coll.InsertDocument(vector, "Go programming language", map[string]any{
+// Insert a keyword-searchable document without an embedding vector
+coll.InsertTextDocument("Go programming language", map[string]any{
     "title": "Go Language",
     "body":  "Fast and efficient",
 })
@@ -485,7 +542,7 @@ id, err := coll.InsertText("Go is a programming language", payload)
 results, err := coll.SearchText("programming languages", veclite.TopK(10))
 ```
 
-The `Embedder` interface lives in the core library (zero dependencies). VecLite provides built-in implementations for OpenAI, Ollama, and ONNX.
+The `Embedder` interface lives in the core library. VecLite provides built-in implementations for OpenAI, Ollama, and ONNX.
 
 ### Embedding Providers
 

@@ -18,7 +18,7 @@ import (
 const (
 	// File format constants
 	fileMagic   = "VECLITE\x00"
-	fileVersion = uint32(2) // v2: added KnowledgeGraphs, EpisodeStores, TF entries in BM25
+	fileVersion = uint32(3) // v3: added metadata maps and text-only records
 	headerSize  = 32
 	// Header layout:
 	//   [0:8]   - magic bytes "VECLITE\0"
@@ -384,6 +384,18 @@ func migrateSnapshot(snapshot *DatabaseSnapshot, fromVersion uint32) {
 		// This is handled by gob's backward compatibility: v1 files that
 		// decoded into map[string][]uint64 are compatible since v2 uses
 		// map[string][]TFEntry and gob respects field presence.
+	}
+	if fromVersion < 3 {
+		// v2 -> v3: Added database/collection metadata maps. Text-only records
+		// are represented by nil/empty vectors and need no data transformation.
+		if snapshot.Metadata == nil {
+			snapshot.Metadata = make(map[string]any)
+		}
+		for _, coll := range snapshot.Collections {
+			if coll != nil && coll.Metadata == nil {
+				coll.Metadata = make(map[string]any)
+			}
+		}
 	}
 	snapshot.Version = fileVersion
 }

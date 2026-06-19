@@ -288,6 +288,37 @@ func TestMemoryLimiterUnderLimit(t *testing.T) {
 	}
 }
 
+func TestWithMemoryLimitsEvictsOnInsert(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer db.Close()
+
+	coll, err := db.CreateCollection("test",
+		WithDimension(3),
+		WithMemoryLimits(MemoryConfig{
+			MaxRecords:        3,
+			EvictionPolicy:    "fifo",
+			EvictionBatchSize: 10,
+		}),
+	)
+	if err != nil {
+		t.Fatalf("Failed to create collection: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		_, err := coll.Insert([]float32{float32(i), 0, 0}, nil)
+		if err != nil {
+			t.Fatalf("Insert failed: %v", err)
+		}
+	}
+
+	if coll.Count() > 3 {
+		t.Errorf("WithMemoryLimits allowed %d records, want at most 3", coll.Count())
+	}
+}
+
 // TC-MEMORY-006: Archived records are not evicted
 func TestMemoryLimiterSkipsArchived(t *testing.T) {
 	db, err := Open(":memory:")

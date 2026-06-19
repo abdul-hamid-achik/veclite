@@ -1,8 +1,9 @@
 // Package veclite provides an embeddable vector database for Go applications.
 //
-// VecLite stores vectors with metadata in a single file, supports HNSW indexing
-// for fast approximate nearest-neighbor search, and requires zero external
-// dependencies for its core functionality.
+// VecLite stores vectors, text documents, and metadata in a single file,
+// supports HNSW indexing for fast approximate nearest-neighbor search, and
+// keeps the core storage and search APIs local-first. Optional integrations
+// provide embedders, config, and MCP tooling.
 //
 // # Quick Start
 //
@@ -37,6 +38,10 @@
 //	    veclite.WithFilter(veclite.Equal("category", "science")),
 //	    veclite.Threshold(0.7),
 //	)
+//
+// Text-only documents can be stored for BM25-first workflows:
+//
+//	id, err := coll.InsertTextDocument("searchable text", map[string]any{"source": "timeline"})
 //
 // # Persistence
 //

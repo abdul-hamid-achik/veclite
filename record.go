@@ -153,6 +153,12 @@ type CollectionStats struct {
 	// Count is the number of records in the collection.
 	Count int
 
+	// VectorCount is the number of records with a vector.
+	VectorCount int
+
+	// TextOnlyCount is the number of records without a vector.
+	TextOnlyCount int
+
 	// Dimension is the vector dimension (0 if not yet set).
 	Dimension int
 

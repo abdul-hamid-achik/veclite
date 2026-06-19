@@ -131,6 +131,82 @@ func TestFileStorage(t *testing.T) {
 	}
 }
 
+func TestFileStorageMetadataAndTextOnlyRecord(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "metadata.veclite")
+
+	store := storage.NewFile(path)
+
+	data := NewDatabaseSnapshot()
+	data.Metadata = map[string]any{
+		"app":     "vecgrep",
+		"version": int64(1),
+		"enabled": true,
+		"tags":    []any{"semantic", "video"},
+		"weights": []float64{0.7, 0.3},
+		"profile": map[string]any{
+			"provider":   "local",
+			"dimensions": 3,
+		},
+	}
+
+	coll := NewCollectionSnapshot("evidence", 0, floats.DistanceCosine)
+	coll.Metadata = map[string]any{
+		"embedding_profile": map[string]any{
+			"model":      "keyword-only",
+			"dimensions": int32(0),
+		},
+	}
+	coll.Records = append(coll.Records, &RecordSnapshot{
+		ID:      1,
+		Payload: map[string]any{"path": "video.mp4", "lines": []int{10, 11}},
+		Content: "checkout failed in transcript",
+	})
+	data.Collections["evidence"] = coll
+
+	if err := store.Save(data); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	loaded, err := store.Load()
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if loaded.Metadata["app"] != "vecgrep" {
+		t.Fatalf("loaded app metadata = %v, want vecgrep", loaded.Metadata["app"])
+	}
+	if loaded.Metadata["enabled"] != true {
+		t.Fatalf("loaded enabled metadata = %v, want true", loaded.Metadata["enabled"])
+	}
+	if tags := loaded.Metadata["tags"].([]any); len(tags) != 2 || tags[0] != "semantic" || tags[1] != "video" {
+		t.Fatalf("loaded tags metadata = %#v, want [semantic video]", tags)
+	}
+	if profile := loaded.Metadata["profile"].(map[string]any); profile["dimensions"] != 3 {
+		t.Fatalf("loaded profile metadata = %#v, want dimensions=3", profile)
+	}
+
+	loadedColl := loaded.Collections["evidence"]
+	if loadedColl == nil {
+		t.Fatal("loaded collection is nil")
+	}
+	if model := loadedColl.Metadata["embedding_profile"].(map[string]any)["model"]; model != "keyword-only" {
+		t.Fatalf("loaded collection profile model = %v, want keyword-only", model)
+	}
+	if len(loadedColl.Records) != 1 {
+		t.Fatalf("loaded records = %d, want 1", len(loadedColl.Records))
+	}
+	record := loadedColl.Records[0]
+	if len(record.Vector) != 0 {
+		t.Fatalf("loaded text-only record vector len = %d, want 0", len(record.Vector))
+	}
+	if record.Content != "checkout failed in transcript" {
+		t.Fatalf("loaded text-only content = %q", record.Content)
+	}
+	if lines := record.Payload["lines"].([]int); len(lines) != 2 || lines[0] != 10 || lines[1] != 11 {
+		t.Fatalf("loaded record lines = %#v, want [10 11]", lines)
+	}
+}
+
 func TestFileStorageAtomicWrite(t *testing.T) {
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "test.veclite")
@@ -245,8 +321,8 @@ func TestFileStorageInvalidMagic(t *testing.T) {
 func TestNewDatabaseSnapshot(t *testing.T) {
 	snapshot := NewDatabaseSnapshot()
 
-	if snapshot.Version != 1 {
-		t.Errorf("Version = %v, want 1", snapshot.Version)
+	if snapshot.Version != 3 {
+		t.Errorf("Version = %v, want 3", snapshot.Version)
 	}
 
 	if snapshot.Collections == nil {
