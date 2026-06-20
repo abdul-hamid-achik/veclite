@@ -386,6 +386,7 @@ func (c *Collection) CleanupExpired() (int, error) {
 			if c.index != nil {
 				_ = c.index.Delete(id)
 			}
+			c.removeFromSpaceIndexesLocked(id, record)
 			if c.textIndex != nil {
 				c.textIndex.removeRecord(id)
 			}
@@ -596,7 +597,8 @@ func (c *Collection) Delete(id uint64) error {
 
 	c.mu.Lock()
 
-	if _, ok := c.records[id]; !ok {
+	record, ok := c.records[id]
+	if !ok {
 		c.mu.Unlock()
 		return &NotFoundError{Type: "record", ID: strconv.FormatUint(id, 10)}
 	}
@@ -605,6 +607,7 @@ func (c *Collection) Delete(id uint64) error {
 	if c.index != nil {
 		_ = c.index.Delete(id)
 	}
+	c.removeFromSpaceIndexesLocked(id, record)
 	if c.textIndex != nil {
 		c.textIndex.removeRecord(id)
 	}
@@ -645,6 +648,7 @@ func (c *Collection) DeleteWhere(filters ...Filter) (int, error) {
 			if c.index != nil {
 				_ = c.index.Delete(id)
 			}
+			c.removeFromSpaceIndexesLocked(id, record)
 			if c.textIndex != nil {
 				c.textIndex.removeRecord(id)
 			}
@@ -1864,7 +1868,9 @@ func (c *Collection) UpsertTextDocument(id uint64, content string, payload map[s
 			if c.index != nil && len(record.Vector) > 0 {
 				c.hardDeleteFromIndex(id)
 			}
+			c.removeFromSpaceIndexesLocked(id, record)
 			record.Vector = nil
+			record.Vectors = nil
 			record.Content = content
 			record.Payload = payload
 			record.UpdatedAt = time.Now()
@@ -1900,7 +1906,9 @@ func (c *Collection) UpsertTextDocumentByKey(keyField string, keyValue any, cont
 			if c.index != nil && len(record.Vector) > 0 {
 				c.hardDeleteFromIndex(id)
 			}
+			c.removeFromSpaceIndexesLocked(id, record)
 			record.Vector = nil
+			record.Vectors = nil
 			record.Content = content
 			record.Payload = payload
 			record.UpdatedAt = time.Now()

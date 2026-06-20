@@ -121,6 +121,26 @@ func (c *Collection) setupSpaceVectorProvider(sp *vectorSpace) {
 	})
 }
 
+// removeFromSpaceIndexesLocked removes a record's vectors from every named-space
+// index it participates in. The caller must hold c.mu for writing. Call this
+// whenever a record is deleted or converted to text-only so the per-space HNSW
+// indexes do not leak nodes (a space index reads vectors from c.records via its
+// vector provider, so a dangling node would otherwise persist after the record
+// is gone — and could corrupt search if it were the graph entry point).
+func (c *Collection) removeFromSpaceIndexesLocked(id uint64, record *Record) {
+	if record == nil || len(record.Vectors) == 0 || len(c.spaces) == 0 {
+		return
+	}
+	for name, sp := range c.spaces {
+		if sp.index == nil {
+			continue
+		}
+		if vec, ok := record.Vectors[name]; ok && len(vec) > 0 {
+			c.hardDeleteFromSpaceIndex(sp, id)
+		}
+	}
+}
+
 // hardDeleteFromSpaceIndex removes a vector from a space's index completely,
 // needed before re-inserting under the same ID.
 func (c *Collection) hardDeleteFromSpaceIndex(sp *vectorSpace, id uint64) {
@@ -229,6 +249,20 @@ func (c *Collection) SetEmbeddingProfile(profile EmbeddingProfile) error {
 		return err
 	}
 	c.mu.Lock()
+	// Keep the default-space dimension consistent with the profile so that every
+	// insert path (Insert, InsertWithOptions, Upsert, UpdateVector, InsertDocument,
+	// InsertRecord) enforces it via the collection dimension check — not only
+	// InsertRecord. Reject a profile whose dimension conflicts with an established one.
+	if profile.Dimension > 0 {
+		if c.dimension == 0 {
+			c.dimension = profile.Dimension
+			c.initHNSWIfNeeded()
+		} else if c.dimension != profile.Dimension {
+			c.mu.Unlock()
+			return fmt.Errorf("%w: profile dimension %d does not match collection dimension %d",
+				ErrProfileMismatch, profile.Dimension, c.dimension)
+		}
+	}
 	p := profile
 	c.profile = &p
 	c.mu.Unlock()

@@ -295,12 +295,33 @@ func Migrate(s *DatabaseSnapshot) *DatabaseSnapshot {
 		return nil
 	}
 
-	if s.Version < 4 {
+	// This mirrors the on-disk path in file.go's migrateSnapshot so that calling
+	// Migrate directly (e.g. on a memory-backed snapshot) yields the same result
+	// as loading an old file. Each step is additive and idempotent.
+	if s.Version < 2 {
+		// v1 -> v2: knowledge graphs and episode stores.
+		if s.KnowledgeGraphs == nil {
+			s.KnowledgeGraphs = make(map[string]*GraphSnapshot)
+		}
+		if s.EpisodeStores == nil {
+			s.EpisodeStores = make(map[string]*EpisodeStoreSnapshot)
+		}
+	}
+	if s.Version < 3 {
+		// v2 -> v3: database/collection metadata.
+		if s.Metadata == nil {
+			s.Metadata = make(map[string]any)
+		}
 		for _, coll := range s.Collections {
-			if coll == nil {
-				continue
+			if coll != nil && coll.Metadata == nil {
+				coll.Metadata = make(map[string]any)
 			}
-			if coll.VectorSpaces == nil {
+		}
+	}
+	if s.Version < 4 {
+		// v3 -> v4: named vector spaces (additive; no per-record rewrite).
+		for _, coll := range s.Collections {
+			if coll != nil && coll.VectorSpaces == nil {
 				coll.VectorSpaces = make([]*VectorSpaceSnapshot, 0)
 			}
 		}

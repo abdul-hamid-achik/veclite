@@ -89,7 +89,7 @@ func cmdSpaceAdd(args []string) error {
 	fs := flag.NewFlagSet("space-add", flag.ExitOnError)
 	name := fs.String("name", "", "Vector space name (required, not 'default')")
 	dim := fs.Int("dim", 0, "Vector dimension (0 = auto-detect on first insert)")
-	distance := fs.String("distance", "cosine", "Distance metric: cosine, dot, euclidean")
+	distance := fs.String("distance", "cosine", "Distance metric: cosine, dot, euclidean, euclidean_squared")
 	modality := fs.String("modality", "", "Modality hint, e.g. text, image, audio")
 	provider := fs.String("provider", "", "Embedding provider")
 	model := fs.String("model", "", "Embedding model")

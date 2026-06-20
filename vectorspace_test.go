@@ -303,6 +303,100 @@ func TestFuseRRFPublic(t *testing.T) {
 	}
 }
 
+func TestDeleteRemovesNamedSpaceVectors(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+	coll, _ := db.CreateCollection("d", WithDimension(2),
+		WithVectorSpace(VectorSpaceConfig{Name: "image", Dimension: 2,
+			HNSW: &HNSWConfig{M: 8, EfConstruction: 64, EfSearch: 32, UseHeuristic: true}}))
+
+	ids := make([]uint64, 0, 3)
+	for _, label := range []string{"a", "b", "c"} {
+		v := []float32{1, 0}
+		if label == "b" {
+			v = []float32{0, 1}
+		}
+		id, err := coll.InsertRecord(RecordInput{
+			Payload: map[string]any{"label": label},
+			Vectors: map[string][]float32{DefaultVectorSpace: v, "image": v},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+
+	sp := coll.spaces["image"]
+	if got := sp.index.Count(); got != 3 {
+		t.Fatalf("image index should hold 3 vectors, got %d", got)
+	}
+
+	// Delete the first-inserted record (often the HNSW graph entry point).
+	if err := coll.Delete(ids[0]); err != nil {
+		t.Fatal(err)
+	}
+	if got := sp.index.Count(); got != 2 {
+		t.Fatalf("image index leaked: count = %d, want 2 after delete", got)
+	}
+
+	// The deleted record must not appear, and search must not be corrupted by a
+	// dangling entry point.
+	res, err := coll.SearchSpace("image", []float32{1, 0}, TopK(5))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range res {
+		if r.Record.ID == ids[0] {
+			t.Fatalf("deleted record still returned from image space: %+v", r)
+		}
+	}
+	if len(res) != 2 {
+		t.Fatalf("expected 2 remaining results, got %d", len(res))
+	}
+
+	// DeleteWhere also cleans the space index.
+	if _, err := coll.DeleteWhere(Equal("label", "c")); err != nil {
+		t.Fatal(err)
+	}
+	if got := sp.index.Count(); got != 1 {
+		t.Fatalf("DeleteWhere leaked: count = %d, want 1", got)
+	}
+
+	// Converting the last record to text-only removes its named-space vector too.
+	if _, err := coll.UpsertTextDocument(ids[1], "now text only", map[string]any{"label": "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := sp.index.Count(); got != 0 {
+		t.Fatalf("text-only conversion leaked: count = %d, want 0", got)
+	}
+}
+
+func TestDefaultProfileValidatesPrimaryInsert(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	// Profile set AFTER creation must still be enforced by the primary Insert path.
+	coll := db.Collection("p")
+	if err := coll.SetEmbeddingProfile(EmbeddingProfile{Provider: "x", Model: "m", Dimension: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coll.Insert([]float32{1, 2}, nil); !errors.Is(err, ErrDimensionMismatch) {
+		t.Errorf("Insert of 2-d vector against dim-3 profile should fail, got %v", err)
+	}
+	if _, err := coll.Insert([]float32{1, 2, 3}, nil); err != nil {
+		t.Errorf("Insert of matching 3-d vector should succeed, got %v", err)
+	}
+	if _, err := coll.Upsert(0, []float32{1, 2}, nil); !errors.Is(err, ErrDimensionMismatch) {
+		t.Errorf("Upsert of 2-d vector against dim-3 profile should fail, got %v", err)
+	}
+
+	// A profile whose dimension conflicts with an established collection dimension is rejected.
+	coll2, _ := db.CreateCollection("p2", WithDimension(2))
+	if err := coll2.SetEmbeddingProfile(EmbeddingProfile{Dimension: 3}); !errors.Is(err, ErrProfileMismatch) {
+		t.Errorf("conflicting profile dimension should fail with ErrProfileMismatch, got %v", err)
+	}
+}
+
 func TestSetRecordVectorAddsSpace(t *testing.T) {
 	db, _ := Open(":memory:")
 	defer db.Close()

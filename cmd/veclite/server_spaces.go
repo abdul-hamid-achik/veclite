@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 
 	"github.com/abdul-hamid-achik/veclite"
 )
@@ -77,16 +76,11 @@ func (s *Server) addVectorSpace(w http.ResponseWriter, r *http.Request, collName
 		return
 	}
 
-	var distType veclite.DistanceType
-	switch strings.ToLower(req.Distance) {
-	case "", "cosine":
-		distType = veclite.DistanceCosine
-	case "dot":
-		distType = veclite.DistanceDot
-	case "euclidean":
-		distType = veclite.DistanceEuclidean
-	default:
-		writeError(w, http.StatusBadRequest, "Invalid distance type", "INVALID_DISTANCE")
+	// Reuse the CLI distance parser so the HTTP and CLI surfaces accept identical
+	// distance values (including euclidean_squared) — they are one driver contract.
+	distType, derr := parseDistanceType(req.Distance)
+	if derr != nil {
+		writeError(w, http.StatusBadRequest, derr.Error(), "INVALID_DISTANCE")
 		return
 	}
 
