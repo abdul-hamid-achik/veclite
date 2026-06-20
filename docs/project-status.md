@@ -4,11 +4,15 @@ This page records the current implementation state and the next work that matter
 
 ## Current Release
 
-`v0.15.1` is published at:
+`v0.16.0` is the current release:
 
-https://github.com/abdul-hamid-achik/veclite/releases/tag/v0.15.1
+https://github.com/abdul-hamid-achik/veclite/releases/tag/v0.16.0
 
-The release includes the VitePress documentation site, Bun-based docs tooling, database and collection metadata, text document storage, BM25-first text records, hybrid search, and embedding-boundary documentation.
+It introduces **named vector spaces** (multiple independent embeddings per record), a first-class
+`EmbeddingProfile` API, multi-space result fusion (`MultiSpaceSearch` / public `FuseRRF`), the v4
+storage format with additive v1–v3 migration, and the matching CLI and HTTP named-space surface.
+It builds on `v0.15.1`, which added the VitePress documentation site, database and collection
+metadata, text document storage, BM25-first text records, and hybrid search.
 
 ## Current Design Boundary
 
