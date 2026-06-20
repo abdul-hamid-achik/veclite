@@ -32,6 +32,21 @@ var (
 
 	// ErrReadOnly is returned when a write operation is attempted on a read-only database.
 	ErrReadOnly = errors.New("veclite: database is read-only")
+
+	// ErrVectorSpaceExists is returned when declaring a vector space whose name
+	// is already in use (including the reserved "default" space).
+	ErrVectorSpaceExists = errors.New("veclite: vector space already exists")
+
+	// ErrVectorSpaceNotFound is returned when referencing an undeclared vector space.
+	ErrVectorSpaceNotFound = errors.New("veclite: vector space not found")
+
+	// ErrInvalidVectorSpace is returned when a vector-space declaration is invalid,
+	// e.g. an empty name or an attempt to redeclare the reserved "default" space.
+	ErrInvalidVectorSpace = errors.New("veclite: invalid vector space")
+
+	// ErrProfileMismatch is returned when two embedding profiles are incompatible,
+	// or when a vector does not match a declared embedding profile.
+	ErrProfileMismatch = errors.New("veclite: embedding profile mismatch")
 )
 
 // DimensionError provides details about dimension mismatches.

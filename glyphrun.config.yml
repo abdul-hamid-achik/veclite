@@ -1,0 +1,35 @@
+version: 1
+
+# Glyphrun drives the compiled `veclite` CLI inside a real PTY and checks its
+# user-visible behaviour against the specs under specs/glyphrun/. These specs
+# are the language-agnostic contract for the CLI surface other languages will
+# build drivers against, so they assert on JSON output rather than internals.
+#
+# Run a spec:   glyph run specs/glyphrun/cli_named_spaces.yml --format md
+# List specs:   glyph list specs/glyphrun
+
+defaultEnvironment: local
+
+artifactRoot: .glyphrun/runs
+snapshotRoot: .glyphrun/snapshots
+
+environments:
+  local:
+    env:
+      TERM: xterm-256color
+      COLORTERM: truecolor
+      LANG: en_US.UTF-8
+
+terminal:
+  profile: xterm-256color
+  cols: 120
+  rows: 40
+  normalize:
+    trimRight: true
+    normalizeLineEndings: true
+
+artifacts:
+  rawLog: true
+  frames: true
+  finalScreen: true
+  snapshots: true

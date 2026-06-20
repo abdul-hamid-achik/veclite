@@ -7,28 +7,43 @@
 VecLite is an embeddable vector database for Go. It provides:
 - Single-file persistence using gob encoding
 - HNSW index for fast approximate nearest neighbor search
+- Named vector spaces: multiple independent embeddings per record (e.g. `text` + `image`)
+- BM25 text indexing, hybrid search, and Reciprocal Rank Fusion
 - In-memory mode for testing
-- CLI tool for database operations
+- CLI tool and HTTP server for database operations
 
 **Repository:** `github.com/abdul-hamid-achik/veclite`
 **Go Version:** 1.23+
 **Dependency Discipline:** Prefer the standard library for core database behavior. Optional integrations may use focused external modules.
 
+### Not a Go-only library
+
+VecLite can be imported directly as a Go library, but it is **not** intended to be Go-only.
+The CLI (`cmd/veclite`) and HTTP server (`veclite serve`) are stable, JSON-in/JSON-out
+surfaces meant to be the contract that language drivers (Python, TypeScript, etc.) will build
+on. Drivers are **not** being written yet, but when changing the CLI or HTTP API, treat their
+JSON shapes as a public, cross-language contract: keep them additive and stable, and cover
+them with `specs/glyphrun/` behavior specs so any driver can be validated against the same
+expectations.
+
 ## Project Structure
 
 ```
 veclite/
-├── veclite.go          # DB struct, Open/Close, Collection management
-├── collection.go       # Collection struct, Insert/Delete/Search
+├── veclite.go          # DB struct, Open/Close, Collection management, snapshot migration
+├── collection.go       # Collection struct, Insert/Delete/Search, snapshot/load
+├── collection_spaces.go# Named vector space API (AddVectorSpace, InsertRecord, SearchSpace, MultiSpaceSearch)
+├── vectorspace.go      # VectorSpaceConfig, RecordInput, EmbeddingProfile, internal vectorSpace
 ├── search.go           # Search options and configuration
-├── record.go           # Record struct with ID, Vector, Metadata
+├── fusion.go           # Reciprocal Rank Fusion (internal + public FuseRRF)
+├── record.go           # Record struct with ID, Vector, Vectors (named), Metadata
 ├── filter.go           # Metadata filtering (Equal, In, Glob, Prefix, etc.)
-├── options.go          # Functional options (WithHNSW, WithDimension, etc.)
+├── options.go          # Functional options (WithHNSW, WithDimension, WithVectorSpace, ...)
 ├── index.go            # Index interface definition
 ├── index_hnsw.go       # HNSW wrapper implementing Index interface
 ├── explain.go          # SearchExplain for debugging
 ├── errors.go           # Error types
-├── storage.go          # Storage interface and snapshots
+├── storage.go          # Storage interface, snapshots, CurrentVersion, Migrate
 ├── storage_file.go     # File-based persistence
 ├── storage_memory.go   # In-memory storage
 ├── internal/
@@ -44,9 +59,15 @@ veclite/
 │       └── errors.go   # HNSW-specific errors
 └── cmd/veclite/        # CLI application
     ├── main.go         # CLI entry point, read/write commands
+    ├── spaces.go       # Named-space CLI (space-add, spaces, record-insert, search-space, fuse-search)
     ├── server.go       # HTTP server mode (serve command)
+    ├── server_spaces.go# HTTP handlers for named vector spaces
     └── maintenance.go  # compact, validate, benchmark commands
 ```
+
+> Note: the public API files live at the module root in `package veclite`; the
+> `storage_file.go`/`storage_memory.go` names above map to `internal/storage/file.go`
+> and `internal/storage/memory.go`.
 
 ## Key Concepts
 
@@ -67,12 +88,40 @@ The `higherBetter` flag controls sort order and comparison logic throughout the 
 - Optional HNSW index (defaults to brute-force if not specified)
 - Metadata filtering on search
 
+### Named Vector Spaces
+- A collection has one implicit **`default`** space (backed by `Record.Vector` and the
+  collection's primary dimension/distance/index) plus zero or more **named** spaces declared
+  with `AddVectorSpace` / `WithVectorSpace`.
+- Each space has its own dimension, distance metric, and optional HNSW index. A named space's
+  vectors live in `Record.Vectors[name]`; the index uses a vector provider that reads them.
+- `InsertRecord(RecordInput{...})` inserts one logical record carrying vectors in several
+  spaces at once. `SearchSpace(space, query, ...)` searches one space; `MultiSpaceSearch`
+  fuses several spaces with RRF (or use the public `FuseRRF`).
+- **Backward compatible & additive:** the entire pre-existing single-vector API
+  (`Insert`, `Search`, `HybridSearch`, `UpdateVector`, ...) is unchanged and operates on the
+  default space. Old snapshots load as a collection with only the default space.
+- Reserved name `DefaultVectorSpace` (`"default"`) and the empty string both target the
+  default space; they cannot be redeclared with `AddVectorSpace`.
+
+### Embedding Profiles
+- `EmbeddingProfile` (provider, model, dimension, distance, normalize, version) is a
+  first-class type, not just a metadata convention. Attach it via `WithEmbeddingProfile` /
+  `SetEmbeddingProfile` (collection default space) or `VectorSpaceConfig.Profile` (per space).
+- A set profile validates inserted vectors against its dimension. `EmbeddingProfile.Compatible`
+  reports whether two profiles describe interchangeable vectors (used to detect when a
+  provider/model/distance change invalidates an index).
+- Profiles persist in the snapshot. The historical "store a profile in metadata" convention
+  still works for callers that prefer it.
+
 ### Embedding and Modality Boundary
-- VecLite owns durable vector, text, payload, index, filter, and search primitives.
-- Applications own domain extraction, chunking, OCR, transcript parsing, frame selection, provider credentials, embedding generation, and rebuild policy.
-- Current collections store one vector per record. Use separate collections for incompatible embedding types until named vector spaces are implemented.
-- Store or validate an embedding profile in database or collection metadata when provider, model, dimensions, distance, or preprocessing changes can invalidate an index.
-- Use text-only records for BM25-first workflows; vector search must skip records without vectors.
+- VecLite owns durable vector, text, payload, index, filter, and search primitives — now
+  including named vector spaces and embedding profiles.
+- Applications own domain extraction, chunking, OCR, transcript parsing, frame selection,
+  provider credentials, embedding generation, and rebuild policy.
+- Use named vector spaces for multimodal records (e.g. `text` + `image` for one item). Use
+  separate collections only when the records are genuinely unrelated.
+- Use text-only records (`InsertTextDocument`) for BM25-first workflows; vector search skips
+  records without a vector in the queried space.
 
 ## Development Commands
 
@@ -200,21 +249,32 @@ Keeping documentation synchronized with code ensures the project remains useful 
 
 ### Adding Embedding or Vector-Space Features
 1. Keep app-specific extraction outside VecLite.
-2. Preserve the existing single-vector API unless a breaking release is explicitly planned.
-3. Add storage-versioned migrations for persisted vector-space metadata.
-4. Document how old `Record.Vector` data maps into the default vector space.
-5. Add tests for dimension mismatches, persistence, search, update, delete, and hybrid behavior.
+2. Preserve the existing single-vector API; the default space must stay backward compatible.
+3. New persisted fields go on `storage.VectorSpaceSnapshot`/`RecordSnapshot`/`CollectionSnapshot`.
+   When the on-disk format changes, bump `fileVersion` in `internal/storage/file.go`, add a
+   case to `migrateSnapshot`, and bump `storage.CurrentVersion`. The v3→v4 named-vector-space
+   migration is the reference: gob tolerates added fields, so migrations are additive and never
+   rewrite record data.
+4. Old `Record.Vector` data maps into the implicit `default` space with no transformation.
+5. Add tests for dimension mismatches, profile compatibility, persistence round-trips, per-space
+   search, multi-space fusion, update, delete, and the v3→v4 migration (see `vectorspace_test.go`).
+6. Mirror new behavior on the CLI (`cmd/veclite/spaces.go`) and HTTP server
+   (`cmd/veclite/server_spaces.go`), and add a `specs/glyphrun/` behavior spec — these are the
+   cross-language contract.
 
 ### Adding CLI Commands
 1. Add command case to `switch` in `cmd/veclite/main.go`
 2. Implement `cmd<CommandName>` function in appropriate file:
    - Read/write commands → `main.go`
-   - Server-related → `server.go`
+   - Named vector spaces → `spaces.go`
+   - Server-related → `server.go` / `server_spaces.go`
    - Maintenance (compact, validate, benchmark) → `maintenance.go`
-3. Add flag parsing with `flag.NewFlagSet`
-4. Support `--json` flag for JSON output (use `outputJSON()` helper)
-5. Update `printUsage()` with new command
-6. Add documentation to README.md
+3. Add flag parsing with `flag.NewFlagSet` and call `fs.Parse(args)`. `main()` already reorders
+   each command's args through `hoistFlags` before dispatch, so flags work in any position
+   (Go's `flag` otherwise stops at the first non-flag token). Don't hoist again inside the command.
+4. Support `--json` flag for JSON output (use the `encodeJSON()` helper in `spaces.go`)
+5. Update `printUsage()` with the new command
+6. Add documentation to README.md and a `specs/glyphrun/` behavior spec
 
 ### Extending HTTP API
 1. Add handler method to `Server` struct in `cmd/veclite/server.go`

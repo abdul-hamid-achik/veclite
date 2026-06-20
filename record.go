@@ -51,8 +51,14 @@ type Record struct {
 	// ID is the unique identifier for this record.
 	ID uint64
 
-	// Vector is the embedding vector.
+	// Vector is the embedding vector for the implicit "default" vector space.
 	Vector []float32
+
+	// Vectors holds embeddings for additional named vector spaces, keyed by
+	// space name (see Collection.AddVectorSpace). The "default" space is always
+	// represented by the Vector field above and never stored here. Nil when the
+	// record only uses the default space.
+	Vectors map[string][]float32
 
 	// Payload contains arbitrary metadata associated with the vector.
 	Payload map[string]any
@@ -101,11 +107,40 @@ func (r *Record) Clone() *Record {
 
 	copy(clone.Vector, r.Vector)
 
+	if r.Vectors != nil {
+		clone.Vectors = make(map[string][]float32, len(r.Vectors))
+		for name, vec := range r.Vectors {
+			cp := make([]float32, len(vec))
+			copy(cp, vec)
+			clone.Vectors[name] = cp
+		}
+	}
+
 	if r.Payload != nil {
 		clone.Payload = deepCopyMap(r.Payload)
 	}
 
 	return clone
+}
+
+// VectorFor returns the vector this record holds for the named vector space.
+// The reserved name "default" (DefaultVectorSpace) returns the Vector field.
+// The second result is false when the record has no vector in that space.
+func (r *Record) VectorFor(space string) ([]float32, bool) {
+	if r == nil {
+		return nil, false
+	}
+	if space == "" || space == DefaultVectorSpace {
+		if len(r.Vector) == 0 {
+			return nil, false
+		}
+		return r.Vector, true
+	}
+	vec, ok := r.Vectors[space]
+	if !ok || len(vec) == 0 {
+		return nil, false
+	}
+	return vec, true
 }
 
 // IsExpired returns true if the record has a TTL set and has expired.

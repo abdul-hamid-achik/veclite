@@ -83,11 +83,19 @@ Applications should own domain and provider concerns:
 
 This boundary keeps VecLite importable from any Go project while still letting applications build richer workflows on top.
 
-## Current Model: One Vector per Record
+## Collections, Spaces, and Records
 
-Current VecLite collections store one vector per record. A collection has one dimension and one distance metric.
+A collection has one **default** vector space (one dimension and one distance metric, backed by
+`Record.Vector`) and may declare additional **named** vector spaces (see below). Choose the
+smallest structure that fits:
 
-Use one collection when all records share the same embedding profile:
+- **One collection, default space** — all records share one embedding profile.
+- **One collection, named spaces** — records are the same logical items but carry several
+  embeddings (e.g. text + image). Use this for multimodal records.
+- **Separate collections** — records are genuinely unrelated, or you are mid-migration between
+  incompatible profiles.
+
+Use one collection with the default space when all records share the same embedding profile:
 
 ```go
 code, _ := db.CreateCollection("code_chunks",
@@ -110,9 +118,29 @@ Do not mix vectors from different providers, models, dimensions, or modalities i
 
 ## Embedding Profiles
 
-An embedding profile describes the vector meaning, not just its length. Applications should persist a profile next to each index and compare it before indexing or searching.
+An embedding profile describes the vector meaning, not just its length. As of the named-vector-space release, `EmbeddingProfile` is a **first-class type** you can attach to a collection's default space or to an individual named vector space — it persists in the database and validates inserted vectors against its dimension:
 
-Recommended fields:
+```go
+coll, _ := db.CreateCollection("code_chunks",
+    veclite.WithEmbeddingProfile(veclite.EmbeddingProfile{
+        Provider:  "ollama",
+        Model:     "nomic-embed-text",
+        Dimension: 768,
+        Distance:  veclite.DistanceCosine,
+        Normalize: true,
+        Version:   "chunker-v1",
+    }),
+)
+
+// Compatible reports whether two profiles describe interchangeable vectors.
+if err := current.Compatible(incoming); err != nil {
+    // provider/model/dimension/distance/normalize changed — rebuild the index.
+}
+```
+
+`EmbeddingProfile.Compatible` catches the class of errors a dimension check cannot: a model swap that keeps the same dimension still produces incompatible vectors. The older "store a profile in collection metadata" convention below still works for callers that prefer untyped metadata.
+
+Recommended metadata fields (untyped convention):
 
 ```json
 {
@@ -173,46 +201,47 @@ matches, _ := coll.HybridSearch(
 
 For keyword-first applications that do not yet have semantic embeddings, use `InsertTextDocument`. Use `InsertTextDocumentWithOptions` when text-only records need TTL or importance settings. Text-only records are indexed by BM25 and skipped by vector search until you add semantic vectors later.
 
-## Future Direction: Named Vector Spaces
+## Named Vector Spaces
 
-Named vector spaces are the accepted long-term design for multiple embedding types in one logical record.
-
-Planned shape:
-
-```go
-textSpace := veclite.VectorSpaceConfig{
-    Name: "text",
-    Dimension: 1536,
-    Distance: veclite.DistanceCosine,
-    Modality: "text",
-    Provider: "openai",
-    Model: "text-embedding-3-small",
-}
-
-frameSpace := veclite.VectorSpaceConfig{
-    Name: "frame_clip",
-    Dimension: 512,
-    Distance: veclite.DistanceCosine,
-    Modality: "image",
-    Provider: "openclip",
-    Model: "ViT-B-32",
-}
-```
-
-The future API should let apps store:
+Named vector spaces let one logical record hold several embeddings at once — for example a
+`text` embedding and an `image` embedding for the same item — each with its own dimension,
+distance metric, and HNSW index. This is the supported way to model multimodal records without
+splitting them across unrelated collections.
 
 ```go
-veclite.RecordInput{
+coll, _ := db.CreateCollection("frames",
+    veclite.WithDimension(1536), // the default space (text)
+    veclite.WithVectorSpace(veclite.VectorSpaceConfig{
+        Name:      "frame_clip",
+        Dimension: 512,
+        Distance:  veclite.DistanceCosine,
+        Modality:  "image",
+        Provider:  "openclip",
+        Model:     "ViT-B-32",
+        HNSW:      &veclite.HNSWConfig{M: 16, EfConstruction: 200, EfSearch: 100, UseHeuristic: true},
+    }),
+)
+
+// One logical record, vectors in two spaces.
+id, _ := coll.InsertRecord(veclite.RecordInput{
     Content: "00:12 OCR text and transcript text",
-    Payload: map[string]any{
-        "time_seconds": 12.0,
-        "frame": "frames/frame_0012.png",
-    },
+    Payload: map[string]any{"time_seconds": 12.0, "frame": "frames/frame_0012.png"},
     Vectors: map[string][]float32{
-        "text": textVector,
-        "frame_clip": imageVector,
+        veclite.DefaultVectorSpace: textVector,  // the "text" default space
+        "frame_clip":               imageVector,
     },
-}
+})
+
+// Search one space, or fuse several with Reciprocal Rank Fusion.
+byText, _  := coll.SearchSpace(veclite.DefaultVectorSpace, textQuery, veclite.TopK(10))
+byImage, _ := coll.SearchSpace("frame_clip", imageQuery, veclite.TopK(10))
+fused, _   := coll.MultiSpaceSearch(map[string][]float32{
+    veclite.DefaultVectorSpace: textQuery,
+    "frame_clip":               imageQuery,
+}, veclite.TopK(10))
 ```
 
-Current releases do not expose this API yet. Treat named vector spaces as the migration target for future multimodal work, not as current behavior.
+The default space (`Record.Vector`) stays fully backward compatible: every existing single-vector
+API operates on it, and databases written before this feature load as a collection with only the
+default space. See the dedicated **[Named Vector Spaces](/guide/named-vector-spaces)** guide for the
+full Go, CLI, and HTTP surface.

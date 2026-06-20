@@ -1,0 +1,101 @@
+version: 1
+name: cli_named_spaces
+
+metadata:
+  feature: named-vector-spaces
+  owner: core
+  priority: high
+  tags:
+    - named-vectors
+    - cli
+    - agent
+
+intent: |
+  Verify the veclite CLI can declare a named vector space on a collection,
+  insert one logical record carrying vectors in several spaces, list the
+  spaces as JSON, and search a single named space — the cross-language CLI
+  contract for multimodal records.
+
+target:
+  cmd:
+    - "/bin/sh"
+    - "-c"
+    - "./bin/veclite spaces .glyphrun/tmp/named/items.veclite items --json"
+  cwd: "."
+  timeoutMs: 20000
+
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: forbid
+
+preconditions:
+  commands:
+    - run: "go build -o ./bin/veclite ./cmd/veclite"
+      timeoutMs: 120000
+    - run: "rm -rf .glyphrun/tmp/named && mkdir -p .glyphrun/tmp/named"
+      timeoutMs: 5000
+    - run: "./bin/veclite create-collection .glyphrun/tmp/named/items.veclite items --dimension=2"
+      timeoutMs: 10000
+    # Flags placed after the positionals exercise the CLI's flag hoisting.
+    - run: "./bin/veclite space-add .glyphrun/tmp/named/items.veclite items --name=image --dim=2 --modality=image --hnsw"
+      timeoutMs: 10000
+    - run: "./bin/veclite record-insert .glyphrun/tmp/named/items.veclite items --vectors='{\"default\":[1,0],\"image\":[1,0]}' --content='red apple' --payload='{\"label\":\"apple\"}'"
+      timeoutMs: 10000
+    - run: "./bin/veclite record-insert .glyphrun/tmp/named/items.veclite items --vectors='{\"default\":[0,1],\"image\":[0,1]}' --payload='{\"label\":\"car\"}'"
+      timeoutMs: 10000
+
+steps:
+  - wait:
+      process:
+        exitCode: 0
+      timeoutMs: 20000
+  - snapshot: result
+
+outcomes:
+  - id: clean_exit
+    description: listing spaces exits successfully
+    verify:
+      process:
+        exitCode: 0
+  - id: default_space_listed
+    description: the implicit default space is reported
+    verify:
+      screen:
+        contains: '"name": "default"'
+  - id: image_space_listed
+    description: the declared image space is reported
+    verify:
+      screen:
+        contains: '"name": "image"'
+  - id: image_space_is_hnsw
+    description: the image space uses an HNSW index
+    verify:
+      screen:
+        contains: '"index_type": "hnsw"'
+  - id: image_modality_recorded
+    description: the image space records its modality
+    verify:
+      screen:
+        contains: '"modality": "image"'
+  - id: both_spaces_have_two_vectors
+    description: each space holds a vector for both inserted records
+    verify:
+      command:
+        run: "./bin/veclite spaces .glyphrun/tmp/named/items.veclite items --json | jq -e '[.[] | select(.vector_count == 2)] | length == 2' >/dev/null"
+  - id: search_image_space_ranks_car
+    description: an image-space query nearest the car vector returns the car record
+    verify:
+      command:
+        run: "./bin/veclite search-space .glyphrun/tmp/named/items.veclite items image --query='[0,1]' --top-k=1 --json | jq -e '.[0].payload.label == \"car\"' >/dev/null"
+  - id: search_default_space_ranks_apple
+    description: a default-space query nearest the apple vector returns the apple record
+    verify:
+      command:
+        run: "./bin/veclite search-space .glyphrun/tmp/named/items.veclite items default --query='[1,0]' --top-k=1 --json | jq -e '.[0].payload.label == \"apple\"' >/dev/null"
+  - id: unknown_space_is_rejected
+    description: searching an undeclared space fails
+    verify:
+      command:
+        run: "! ./bin/veclite search-space .glyphrun/tmp/named/items.veclite items audio --query='[0,1]' --json 2>/dev/null"

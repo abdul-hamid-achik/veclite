@@ -1,0 +1,72 @@
+version: 1
+name: cli_fuse_search
+
+metadata:
+  feature: multi-space-fusion
+  owner: core
+  priority: high
+  tags:
+    - fusion
+    - cli
+    - agent
+
+intent: |
+  Verify the veclite CLI fuses per-space search results with Reciprocal Rank
+  Fusion: a record that ranks highly in every queried space should win the
+  fused ranking over records that rank highly in only one space.
+
+target:
+  cmd:
+    - "/bin/sh"
+    - "-c"
+    - "./bin/veclite fuse-search .glyphrun/tmp/fuse/items.veclite items --queries='{\"default\":[1,0],\"image\":[1,0]}' --top-k=3 --json"
+  cwd: "."
+  timeoutMs: 20000
+
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: forbid
+
+preconditions:
+  commands:
+    - run: "go build -o ./bin/veclite ./cmd/veclite"
+      timeoutMs: 120000
+    - run: "rm -rf .glyphrun/tmp/fuse && mkdir -p .glyphrun/tmp/fuse"
+      timeoutMs: 5000
+    - run: "./bin/veclite create-collection .glyphrun/tmp/fuse/items.veclite items --dimension=2"
+      timeoutMs: 10000
+    - run: "./bin/veclite space-add .glyphrun/tmp/fuse/items.veclite items --name=image --dim=2"
+      timeoutMs: 10000
+    # 'a' is top in BOTH spaces, 'b' only in text, 'c' only in image.
+    - run: "./bin/veclite record-insert .glyphrun/tmp/fuse/items.veclite items --vectors='{\"default\":[1,0],\"image\":[1,0]}' --payload='{\"label\":\"a\"}'"
+      timeoutMs: 10000
+    - run: "./bin/veclite record-insert .glyphrun/tmp/fuse/items.veclite items --vectors='{\"default\":[1,0],\"image\":[0,1]}' --payload='{\"label\":\"b\"}'"
+      timeoutMs: 10000
+    - run: "./bin/veclite record-insert .glyphrun/tmp/fuse/items.veclite items --vectors='{\"default\":[0,1],\"image\":[1,0]}' --payload='{\"label\":\"c\"}'"
+      timeoutMs: 10000
+
+steps:
+  - wait:
+      process:
+        exitCode: 0
+      timeoutMs: 20000
+  - snapshot: result
+
+outcomes:
+  - id: clean_exit
+    description: fuse-search exits successfully
+    verify:
+      process:
+        exitCode: 0
+  - id: fusion_ranks_consensus_first
+    description: the record strong in both spaces ranks first
+    verify:
+      command:
+        run: "./bin/veclite fuse-search .glyphrun/tmp/fuse/items.veclite items --queries='{\"default\":[1,0],\"image\":[1,0]}' --top-k=3 --json | jq -e '.[0].payload.label == \"a\"' >/dev/null"
+  - id: fusion_returns_all_candidates
+    description: all three records appear in the fused ranking
+    verify:
+      command:
+        run: "./bin/veclite fuse-search .glyphrun/tmp/fuse/items.veclite items --queries='{\"default\":[1,0],\"image\":[1,0]}' --top-k=3 --json | jq -e 'length == 3' >/dev/null"

@@ -27,6 +27,15 @@ type Collection struct {
 	// Text search
 	textIndex *invertedIndex
 
+	// Named vector spaces beyond the implicit "default" space. The default space
+	// is represented by the dimension/distanceType/index fields above and by
+	// Record.Vector; entries here describe extra spaces whose vectors live in
+	// Record.Vectors. Guarded by mu like the rest of the collection state.
+	spaces map[string]*vectorSpace
+
+	// profile is the collection's first-class default embedding profile (optional).
+	profile *EmbeddingProfile
+
 	// Auto-embedding
 	embedder Embedder
 
@@ -56,6 +65,15 @@ func newCollection(name string, config *collectionConfig, db *DB) *Collection {
 		db:           db,
 		embedder:     config.embedder,
 		memoryConfig: cloneMemoryConfig(config.memoryConfig),
+		spaces:       make(map[string]*vectorSpace),
+		profile:      cloneProfile(config.profile),
+	}
+
+	// Declare any vector spaces requested at creation time.
+	for _, vsc := range config.vectorSpaces {
+		// newCollection runs before the collection is published, so this cannot
+		// race; addVectorSpaceLocked validates names and dimensions.
+		_ = c.addVectorSpaceLocked(vsc)
 	}
 
 	// Initialize text index if configured
@@ -1352,22 +1370,33 @@ func (c *Collection) snapshot() *storage.CollectionSnapshot {
 	defer c.mu.RUnlock()
 
 	snapshot := &storage.CollectionSnapshot{
-		Name:         c.name,
-		Metadata:     deepCopyMap(c.metadata),
-		Dimension:    c.dimension,
-		DistanceType: c.distanceType,
-		NextID:       c.nextID,
-		Records:      make([]*storage.RecordSnapshot, 0, len(c.records)),
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
-		IndexType:    string(c.indexType),
-		HNSWConfig:   c.hnswConfig,
+		Name:             c.name,
+		Metadata:         deepCopyMap(c.metadata),
+		Dimension:        c.dimension,
+		DistanceType:     c.distanceType,
+		NextID:           c.nextID,
+		Records:          make([]*storage.RecordSnapshot, 0, len(c.records)),
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+		IndexType:        string(c.indexType),
+		HNSWConfig:       c.hnswConfig,
+		EmbeddingProfile: c.profile.toSnapshot(),
 	}
 
 	for _, record := range c.records {
+		var vectors map[string][]float32
+		if len(record.Vectors) > 0 {
+			vectors = make(map[string][]float32, len(record.Vectors))
+			for name, vec := range record.Vectors {
+				cp := make([]float32, len(vec))
+				copy(cp, vec)
+				vectors[name] = cp
+			}
+		}
 		snapshot.Records = append(snapshot.Records, &storage.RecordSnapshot{
 			ID:             record.ID,
 			Vector:         record.Vector,
+			Vectors:        vectors,
 			Payload:        record.Payload,
 			Content:        record.Content,
 			CreatedAt:      record.CreatedAt,
@@ -1377,6 +1406,31 @@ func (c *Collection) snapshot() *storage.CollectionSnapshot {
 			AccessCount:    record.AccessCount,
 			LastAccessedAt: record.LastAccessedAt,
 		})
+	}
+
+	// Snapshot additional named vector spaces (the default space is captured by
+	// the collection-level Dimension/DistanceType/IndexType/HNSW fields above).
+	if len(c.spaces) > 0 {
+		snapshot.VectorSpaces = make([]*storage.VectorSpaceSnapshot, 0, len(c.spaces))
+		for _, sp := range c.spaces {
+			vss := &storage.VectorSpaceSnapshot{
+				Name:         sp.name,
+				Dimension:    sp.dimension,
+				DistanceType: sp.distanceType,
+				Modality:     sp.modality,
+				Provider:     sp.provider,
+				Model:        sp.model,
+				IndexType:    string(sp.indexType),
+				HNSWConfig:   sp.hnswConfig,
+				Profile:      sp.profile.toSnapshot(),
+			}
+			if sp.index != nil && sp.indexType == IndexTypeHNSW {
+				if hnswIdx, ok := sp.index.(*hnswIndex); ok {
+					vss.HNSWSnapshot = hnswIdx.internal().Snapshot()
+				}
+			}
+			snapshot.VectorSpaces = append(snapshot.VectorSpaces, vss)
+		}
 	}
 
 	// Snapshot HNSW index if present
@@ -1410,12 +1464,21 @@ func (c *Collection) loadFromSnapshot(snapshot *storage.CollectionSnapshot) {
 	c.nextID = snapshot.NextID
 	c.indexType = IndexType(snapshot.IndexType)
 	c.hnswConfig = snapshot.HNSWConfig
+	c.profile = profileFromSnapshot(snapshot.EmbeddingProfile)
 	c.records = make(map[uint64]*Record, len(snapshot.Records))
 
 	for _, rs := range snapshot.Records {
+		var vectors map[string][]float32
+		if len(rs.Vectors) > 0 {
+			vectors = make(map[string][]float32, len(rs.Vectors))
+			for name, vec := range rs.Vectors {
+				vectors[name] = vec
+			}
+		}
 		c.records[rs.ID] = &Record{
 			ID:             rs.ID,
 			Vector:         rs.Vector,
+			Vectors:        vectors,
 			Payload:        rs.Payload,
 			Content:        rs.Content,
 			CreatedAt:      rs.CreatedAt,
@@ -1425,6 +1488,34 @@ func (c *Collection) loadFromSnapshot(snapshot *storage.CollectionSnapshot) {
 			AccessCount:    rs.AccessCount,
 			LastAccessedAt: rs.LastAccessedAt,
 		}
+	}
+
+	// Restore additional named vector spaces and rebuild their indexes.
+	c.spaces = make(map[string]*vectorSpace, len(snapshot.VectorSpaces))
+	for _, vss := range snapshot.VectorSpaces {
+		if vss == nil || vss.Name == "" || vss.Name == DefaultVectorSpace {
+			continue
+		}
+		sp := &vectorSpace{
+			name:         vss.Name,
+			dimension:    vss.Dimension,
+			distanceType: vss.DistanceType,
+			distanceFunc: floats.GetDistanceFunc(vss.DistanceType),
+			higherBetter: floats.IsHigherBetter(vss.DistanceType),
+			modality:     vss.Modality,
+			provider:     vss.Provider,
+			model:        vss.Model,
+			indexType:    IndexType(vss.IndexType),
+			hnswConfig:   vss.HNSWConfig,
+			profile:      profileFromSnapshot(vss.Profile),
+		}
+		if IndexType(vss.IndexType) == IndexTypeHNSW && vss.HNSWSnapshot != nil {
+			idx := hnsw.LoadFromSnapshot(vss.HNSWSnapshot, vss.DistanceType)
+			sp.index = &hnswIndex{idx: idx}
+			c.setupSpaceVectorProvider(sp)
+			idx.ClearInternalVectors()
+		}
+		c.spaces[sp.name] = sp
 	}
 
 	// Restore HNSW index if present

@@ -1,0 +1,25 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="VecLite">
+  <title>VecLite</title>
+  <defs>
+    <linearGradient id="vl-bg" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#6366F1"/>
+      <stop offset="0.55" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#A855F7"/>
+    </linearGradient>
+  </defs>
+  <!-- App tile -->
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#vl-bg)"/>
+  <!-- One record fanning out into named vector spaces -->
+  <g stroke="#FFFFFF" stroke-width="11" stroke-linecap="round" opacity="0.95">
+    <line x1="118" y1="150" x2="70" y2="74"/>
+    <line x1="118" y1="150" x2="192" y2="86"/>
+    <line x1="118" y1="150" x2="186" y2="196"/>
+  </g>
+  <!-- Space nodes -->
+  <circle cx="70" cy="74" r="15" fill="#FFFFFF"/>
+  <circle cx="192" cy="86" r="13" fill="#E9D5FF"/>
+  <circle cx="186" cy="196" r="13" fill="#C7D2FE"/>
+  <!-- Origin record -->
+  <circle cx="118" cy="150" r="18" fill="#FFFFFF"/>
+  <circle cx="118" cy="150" r="8" fill="#7C3AED"/>
+</svg>

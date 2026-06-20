@@ -66,6 +66,8 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
 - **HNSW indexing** -- Fast approximate nearest neighbor search
 - **BM25 text search** -- Full-text search over record content and payload fields
 - **Hybrid search** -- Combine vector and text search with Reciprocal Rank Fusion
+- **Named vector spaces** -- Multiple independent embeddings per record (e.g. `text` + `image`) with per-space fusion
+- **Embedding profiles** -- First-class `EmbeddingProfile` with dimension validation and compatibility checks
 - **Document storage** -- Store original text content alongside vectors
 - **Auto-embedding** -- Pluggable `Embedder` interface for text-to-vector conversion
 - **Local ONNX embedder** -- Optional `all-MiniLM-L6-v2` embedder for local inference (build with `-tags onnx`)
@@ -154,11 +156,22 @@ import "github.com/abdul-hamid-achik/veclite"
 
 Applications can bring their own embedding pipeline and use VecLite for durable local storage, HNSW vector search, BM25 text search, metadata filtering, and hybrid ranking. See [docs/embeddings.md](docs/embeddings.md) for the app/library boundary and embedding-profile guidance.
 
+### Use from any language
+
+VecLite is usable as a Go library **and** as a standalone engine driven from any language through
+its CLI and HTTP server, both of which speak JSON. Language drivers (Python, TypeScript, …) are
+**planned, not yet written** — but the CLI and HTTP JSON shapes are treated as a stable
+cross-language contract and are pinned by the behavior specs under `specs/glyphrun/`. If you are
+integrating from another language today, drive `veclite serve` over HTTP or shell out to the
+`veclite` CLI with `--json`.
+
 ## Embedding Strategy
 
-Current VecLite releases store one vector per record. Use one collection when all records share the same provider, model, dimensions, modality, and distance metric. Use separate collections when embedding types are incompatible.
-
-VecLite's long-term multimodal direction is named vector spaces: one logical record can hold vectors such as `text`, `frame_clip`, or `audio`, each with its own dimension and index settings. That API is planned, not current behavior; see [ADR-0001](docs/adr/0001-embedding-boundary-and-named-vector-spaces.md).
+A collection has one default vector space plus optional **named vector spaces**, so one logical
+record can hold several embeddings (e.g. `text`, `image`, `audio`), each with its own dimension and
+index. Use one collection with named spaces for multimodal records; use separate collections only
+when records are genuinely unrelated. See the [Named Vector Spaces](docs/guide/named-vector-spaces.md)
+guide and [ADR-0001](docs/adr/0001-embedding-boundary-and-named-vector-spaces.md) for the design.
 
 ## Project Status
 
@@ -375,6 +388,48 @@ results, err := coll.HybridSearch(
 ```
 
 RRF merges ranked lists from both searches with configurable weights. This produces better results than either search alone when queries have both semantic and keyword components.
+
+### Named Vector Spaces
+
+A collection has one implicit `default` space (backed by `Record.Vector`) and may declare
+additional **named** spaces — each with its own dimension, distance metric, and HNSW index. One
+logical record can then carry several embeddings at once (e.g. `text` and `image`). This is fully
+additive: the entire single-vector API above keeps working on the default space, and databases
+written before this feature load unchanged.
+
+```go
+coll, _ := db.CreateCollection("items",
+    veclite.WithDimension(1536), // default space (text)
+    veclite.WithVectorSpace(veclite.VectorSpaceConfig{
+        Name: "image", Dimension: 512, Distance: veclite.DistanceCosine, Modality: "image",
+        HNSW: &veclite.HNSWConfig{M: 16, EfConstruction: 200, EfSearch: 100, UseHeuristic: true},
+    }),
+)
+
+// One logical record with vectors in two spaces.
+id, _ := coll.InsertRecord(veclite.RecordInput{
+    Content: "a red apple",
+    Payload: map[string]any{"label": "apple"},
+    Vectors: map[string][]float32{
+        veclite.DefaultVectorSpace: textVector,
+        "image":                    imageVector,
+    },
+})
+
+// Search one space, or fuse several with Reciprocal Rank Fusion.
+byImage, _ := coll.SearchSpace("image", imageQuery, veclite.TopK(10))
+fused, _   := coll.MultiSpaceSearch(map[string][]float32{
+    veclite.DefaultVectorSpace: textQuery,
+    "image":                    imageQuery,
+}, veclite.TopK(10))
+```
+
+`FuseRRF` is exposed publicly for custom weighted fusion across any result sets (vector spaces,
+BM25, or externally produced rankings). Attach a first-class `EmbeddingProfile` to a collection
+(`WithEmbeddingProfile`) or a space (`VectorSpaceConfig.Profile`) to validate inserts and detect
+index-invalidating provider/model changes via `EmbeddingProfile.Compatible`.
+
+See the full guide: **[Named Vector Spaces](https://github.com/abdul-hamid-achik/veclite/blob/main/docs/guide/named-vector-spaces.md)**.
 
 ### Streaming Results
 
@@ -1546,6 +1601,16 @@ veclite <command> [arguments]
 | `find <file> <collection>` | Find records by filter |
 | `search <file> <collection>` | Search for similar vectors |
 
+#### Named Vector Spaces
+
+| Command | Description |
+|---------|-------------|
+| `spaces <file> <collection>` | List a collection's vector spaces |
+| `space-add <file> <collection>` | Declare a named vector space (`--name`, `--dim`, `--distance`, `--modality`, `--hnsw`) |
+| `record-insert <file> <collection>` | Insert a record with vectors in several spaces (`--vectors`, `--input`) |
+| `search-space <file> <collection> <space>` | Search a single named vector space |
+| `fuse-search <file> <collection>` | Search several spaces and fuse with RRF (`--queries`) |
+
 #### Server Mode
 
 | Command | Description |
@@ -1580,6 +1645,15 @@ veclite batch-insert data.veclite embeddings --input=vectors.json
 # Search
 veclite search data.veclite embeddings \
     --query='[0.1,0.2,0.3,...]' --top-k=10 --filter='type=code'
+
+# Named vector spaces: declare a space, insert a multi-space record, search and fuse
+veclite space-add data.veclite items --name=image --dim=512 --modality=image --hnsw
+veclite record-insert data.veclite items \
+    --vectors='{"default":[0.1,0.2],"image":[0.3,0.4]}' --content='a red apple'
+veclite spaces data.veclite items --json
+veclite search-space data.veclite items image --query='[0.3,0.4]' --top-k=5
+veclite fuse-search data.veclite items \
+    --queries='{"default":[0.1,0.2],"image":[0.3,0.4]}' --top-k=10
 
 # Upsert
 veclite upsert data.veclite embeddings \
@@ -1638,6 +1712,11 @@ veclite serve data.veclite --port=8080 --host=127.0.0.1 --cors
 | DELETE | `/collections/{name}/vectors/{id}` | Delete vector |
 | DELETE | `/collections/{name}/vectors` | Delete by filter (with body) |
 | POST | `/collections/{name}/search` | Search vectors |
+| GET | `/collections/{name}/spaces` | List vector spaces |
+| POST | `/collections/{name}/spaces` | Add a named vector space |
+| POST | `/collections/{name}/records` | Insert a multi-space record |
+| POST | `/collections/{name}/search-space` | Search one named vector space |
+| POST | `/collections/{name}/fuse-search` | Fuse search across vector spaces |
 | POST | `/collections/{name}/upsert` | Upsert vector |
 | POST | `/collections/{name}/find` | Find records by filter |
 | POST | `/collections/{name}/compact` | Compact collection |

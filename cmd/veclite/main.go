@@ -27,50 +27,66 @@ func main() {
 
 	var err error
 	cmd := os.Args[1]
+	// Reorder so flags placed after the leading positional arguments are still
+	// parsed. Go's flag package stops at the first non-flag token, so without this
+	// the documented "<command> <file> <collection> --flag" ordering would silently
+	// drop the flags. hoistFlags (cmd/veclite/spaces.go) is idempotent and a no-op
+	// when args already lead with flags, so flags-first invocations are unaffected.
+	args := hoistFlags(os.Args[2:])
 	switch cmd {
 	case "version":
 		cmdVersion()
 		return
 	case "info":
-		err = cmdInfo(os.Args[2:])
+		err = cmdInfo(args)
 	case "collections":
-		err = cmdCollections(os.Args[2:])
+		err = cmdCollections(args)
 	case "stats":
-		err = cmdStats(os.Args[2:])
+		err = cmdStats(args)
 	case "dump":
-		err = cmdDump(os.Args[2:])
+		err = cmdDump(args)
 	case "create-collection":
-		err = cmdCreateCollection(os.Args[2:])
+		err = cmdCreateCollection(args)
 	case "drop-collection":
-		err = cmdDropCollection(os.Args[2:])
+		err = cmdDropCollection(args)
 	case "insert":
-		err = cmdInsert(os.Args[2:])
+		err = cmdInsert(args)
 	case "batch-insert":
-		err = cmdBatchInsert(os.Args[2:])
+		err = cmdBatchInsert(args)
 	case "search":
-		err = cmdSearch(os.Args[2:])
+		err = cmdSearch(args)
 	case "delete":
-		err = cmdDelete(os.Args[2:])
+		err = cmdDelete(args)
 	case "get":
-		err = cmdGet(os.Args[2:])
+		err = cmdGet(args)
 	case "upsert":
-		err = cmdUpsert(os.Args[2:])
+		err = cmdUpsert(args)
 	case "update":
-		err = cmdUpdate(os.Args[2:])
+		err = cmdUpdate(args)
 	case "delete-where":
-		err = cmdDeleteWhere(os.Args[2:])
+		err = cmdDeleteWhere(args)
 	case "find":
-		err = cmdFind(os.Args[2:])
+		err = cmdFind(args)
+	case "space-add":
+		err = cmdSpaceAdd(args)
+	case "spaces":
+		err = cmdSpaces(args)
+	case "record-insert":
+		err = cmdRecordInsert(args)
+	case "search-space":
+		err = cmdSearchSpace(args)
+	case "fuse-search":
+		err = cmdFuseSearch(args)
 	case "serve":
-		err = cmdServe(os.Args[2:])
+		err = cmdServe(args)
 	case "mcp":
-		err = cmdMCP(os.Args[2:])
+		err = cmdMCP(args)
 	case "compact":
-		err = cmdCompact(os.Args[2:])
+		err = cmdCompact(args)
 	case "validate":
-		err = cmdValidate(os.Args[2:])
+		err = cmdValidate(args)
 	case "benchmark":
-		err = cmdBenchmark(os.Args[2:])
+		err = cmdBenchmark(args)
 	case "help", "-h", "--help":
 		printUsage()
 		return
@@ -112,6 +128,13 @@ Write Commands:
   find <file> <collection>         Find records by filter (no vector needed)
   search <file> <collection>       Search for similar vectors
 
+Named Vector Spaces:
+  spaces <file> <collection>       List a collection's vector spaces
+  space-add <file> <collection>    Declare a named vector space (--name, --dim, ...)
+  record-insert <file> <collection> Insert a record with vectors in several spaces
+  search-space <file> <collection> <space>  Search one named vector space
+  fuse-search <file> <collection>  Search several spaces and fuse with RRF
+
 Server Mode:
   serve <file>             Start HTTP server for multi-client access
   mcp <file>               Start MCP tool server over stdio
@@ -133,6 +156,10 @@ Examples:
   veclite create-collection data.veclite embeddings --dimension=384 --distance=cosine
   veclite insert data.veclite embeddings --vector='[0.1,0.2,0.3]' --payload='{"file":"main.go"}'
   veclite search data.veclite embeddings --query='[0.1,0.2,0.3]' --top-k=5
+  veclite space-add data.veclite items --name=image --dim=512 --modality=image --hnsw
+  veclite record-insert data.veclite items --vectors='{"default":[0.1,0.2],"image":[0.3,0.4]}'
+  veclite search-space data.veclite items image --query='[0.3,0.4]' --top-k=5
+  veclite fuse-search data.veclite items --queries='{"default":[0.1,0.2],"image":[0.3,0.4]}'
   veclite serve data.veclite --port=8080`)
 }
 

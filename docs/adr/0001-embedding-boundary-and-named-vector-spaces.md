@@ -2,7 +2,11 @@
 
 ## Status
 
-Accepted
+Accepted — **Implemented**. The additive named-vector-space and embedding-profile API described
+under "API Direction" now ships (storage format v4). See the
+[Named Vector Spaces](/guide/named-vector-spaces) guide for the delivered Go, CLI, and HTTP surface.
+This ADR is retained as the design record; the "API Direction" section below describes the shipped
+shape (`VectorSpaceConfig`, `RecordInput`, `EmbeddingProfile`, `SearchSpace`, `MultiSpaceSearch`).
 
 ## Context
 
@@ -96,7 +100,12 @@ The future API should allow:
 
 ## Follow-up Work
 
-- Add a public embedding guide that explains current single-vector usage, app-owned embedders, and future named vector spaces.
-- Use collection or database metadata for embedding-profile information.
-- Use text-only records for BM25-first applications that do not yet need vectors.
-- Implement named vector spaces in a storage-versioned release after the profile and metadata story is clear.
+- ~~Add a public embedding guide~~ — **done** (`/embeddings` and `/guide/named-vector-spaces`).
+- ~~Use collection or database metadata for embedding-profile information~~ — **superseded**: `EmbeddingProfile` is now a first-class, persisted type (the metadata convention still works).
+- ~~Use text-only records for BM25-first applications~~ — **done** (`InsertTextDocument`).
+- ~~Implement named vector spaces in a storage-versioned release~~ — **done** in storage format v4: `VectorSpaceConfig`, `RecordInput`, `AddVectorSpace`, `InsertRecord`, `SearchSpace`, `MultiSpaceSearch`, and the public `FuseRRF`, all additive over the existing single-vector API.
+
+### Remaining
+
+- Language drivers (Python, TypeScript, …) over the CLI/HTTP JSON contract — planned, not started.
+- Hosted docs deployment from the repository.

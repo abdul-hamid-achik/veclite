@@ -18,7 +18,7 @@ import (
 const (
 	// File format constants
 	fileMagic   = "VECLITE\x00"
-	fileVersion = uint32(3) // v3: added metadata maps and text-only records
+	fileVersion = uint32(4) // v4: named vector spaces and first-class embedding profiles
 	headerSize  = 32
 	// Header layout:
 	//   [0:8]   - magic bytes "VECLITE\0"
@@ -394,6 +394,19 @@ func migrateSnapshot(snapshot *DatabaseSnapshot, fromVersion uint32) {
 		for _, coll := range snapshot.Collections {
 			if coll != nil && coll.Metadata == nil {
 				coll.Metadata = make(map[string]any)
+			}
+		}
+	}
+	if fromVersion < 4 {
+		// v3 -> v4: Added named vector spaces and first-class embedding profiles.
+		// Existing single-vector collections become the implicit "default" space:
+		// the per-record Vector and the collection's Dimension/DistanceType/Index
+		// fields already describe it, so no per-record data transformation is
+		// needed. Normalise the new VectorSpaces slice so later code can rely on
+		// its presence; nil EmbeddingProfile keeps the metadata-convention path.
+		for _, coll := range snapshot.Collections {
+			if coll != nil && coll.VectorSpaces == nil {
+				coll.VectorSpaces = make([]*VectorSpaceSnapshot, 0)
 			}
 		}
 	}

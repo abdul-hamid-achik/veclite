@@ -69,6 +69,11 @@ func cmdServe(args []string) error {
 		fmt.Println("  PUT    /collections/{name}/vectors/{id} Update vector and/or payload")
 		fmt.Println("  DELETE /collections/{name}/vectors/{id} Delete vector")
 		fmt.Println("  POST   /collections/{name}/search       Search vectors")
+		fmt.Println("  GET    /collections/{name}/spaces       List vector spaces")
+		fmt.Println("  POST   /collections/{name}/spaces       Add a named vector space")
+		fmt.Println("  POST   /collections/{name}/records      Insert a multi-space record")
+		fmt.Println("  POST   /collections/{name}/search-space Search one named vector space")
+		fmt.Println("  POST   /collections/{name}/fuse-search  Fuse search across vector spaces")
 		fmt.Println("  POST   /collections/{name}/upsert       Upsert vector")
 		fmt.Println("  POST   /collections/{name}/find         Find records by filter")
 		fmt.Println("  DELETE /collections/{name}/vectors       Delete vectors by filter")
@@ -378,6 +383,37 @@ func (s *Server) handleCollection(w http.ResponseWriter, r *http.Request) {
 
 	if len(parts) == 2 {
 		switch parts[1] {
+		case "spaces":
+			switch r.Method {
+			case "GET":
+				s.listVectorSpaces(w, r, collName)
+			case "POST":
+				s.addVectorSpace(w, r, collName)
+			default:
+				writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+			}
+			return
+		case "records":
+			if r.Method == "POST" {
+				s.insertRecord(w, r, collName)
+			} else {
+				writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+			}
+			return
+		case "search-space":
+			if r.Method == "POST" {
+				s.searchVectorSpace(w, r, collName)
+			} else {
+				writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+			}
+			return
+		case "fuse-search":
+			if r.Method == "POST" {
+				s.fuseSearch(w, r, collName)
+			} else {
+				writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+			}
+			return
 		case "search":
 			if r.Method == "POST" {
 				s.searchVectors(w, r, collName)
@@ -691,9 +727,9 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 	m := s.db.Metrics()
 	writeJSON(w, http.StatusOK, map[string]any{
-		"search_count":      m.SearchCount,
-		"insert_count":      m.InsertCount,
-		"delete_count":      m.DeleteCount,
+		"search_count":       m.SearchCount,
+		"insert_count":       m.InsertCount,
+		"delete_count":       m.DeleteCount,
 		"avg_search_time_ns": int64(m.AvgSearchTime),
 	})
 }

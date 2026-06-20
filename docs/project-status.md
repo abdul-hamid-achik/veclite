@@ -31,31 +31,53 @@ Applications should own domain-specific extraction and embedding pipelines:
 
 ## What Works Now
 
-Use one VecLite collection when records share one embedding profile: provider, model, dimensions, distance metric, modality, and preprocessor.
+**Named vector spaces** let one logical record carry several embeddings (e.g. `text` + `image`),
+each with its own dimension, distance metric, and HNSW index. Declare them with `AddVectorSpace` /
+`WithVectorSpace`, insert with `InsertRecord`, search one space with `SearchSpace`, and fuse
+across spaces with `MultiSpaceSearch` (or the public `FuseRRF`). The default space stays fully
+backward compatible. See the [Named Vector Spaces](/guide/named-vector-spaces) guide.
 
-Use separate collections when embedding profiles differ. This is the current path for code search, video evidence search, and future multimodal search.
+**Embedding profiles** are a first-class type (`EmbeddingProfile`) attachable to a collection or a
+space; they validate inserts and expose `Compatible` for detecting index-invalidating changes.
 
-Text-only records are supported through `InsertTextDocument` and `InsertTextDocumentWithOptions`. They are indexed by BM25, returned by filters and iteration, and skipped by vector search until an application adds vectors through a later indexing workflow.
+Use one collection with the default space when records share one embedding profile. Use **named
+spaces** when records are the same logical items with multiple embeddings, and separate collections
+only when records are genuinely unrelated.
+
+Text-only records are supported through `InsertTextDocument` and `InsertTextDocumentWithOptions`.
+They are indexed by BM25, returned by filters and iteration, and skipped by vector search until an
+application adds vectors.
+
+The CLI (`space-add`, `spaces`, `record-insert`, `search-space`, `fuse-search`) and HTTP server
+expose the same operations as JSON — the cross-language contract that future language drivers will
+build on.
 
 ## Related Projects
 
 `vecgrep` should use VecLite for durable code chunk storage, vector search, text search, filters, and hybrid ranking. It should keep file discovery, chunking, provider setup, and index rebuild policy in `vecgrep`.
 
-`vidtrace` should start with text-only evidence records for timeline, OCR, and transcript entries. It can add semantic text embeddings later in a separate collection. Image/frame embeddings should remain separate until VecLite has named vector spaces.
+`vidtrace` should start with text-only evidence records for timeline, OCR, and transcript entries.
+It can add semantic text embeddings in the default space and frame/image embeddings in a named
+`frame` space on the **same** records, then fuse them with `MultiSpaceSearch`.
 
-## Missing Work
+## Recently Shipped
 
-- Named vector spaces are not implemented.
-- Storage migrations for multiple vector spaces are not implemented.
-- Embedding-profile compatibility is a metadata convention, not a first-class API.
-- Multi-space result fusion is not implemented.
-- The docs site builds locally with `task site`, but this repo does not yet define hosted docs deployment.
-- GitHub Actions has Node runtime deprecation warnings from upstream actions.
-- The release workflow uses GoReleaser `latest`; pin it before release automation becomes stricter.
+- **Named vector spaces** — multiple independent embeddings per record (additive, backward compatible).
+- **Storage migration to format v4** — pre-v4 databases open as a default-space-only collection with no rewrite.
+- **First-class embedding profiles** — `EmbeddingProfile` with dimension validation and `Compatible` checks.
+- **Multi-space result fusion** — `MultiSpaceSearch` and the public `FuseRRF` API.
+- **CLI + HTTP named-space surface** — `space-add`, `spaces`, `record-insert`, `search-space`, `fuse-search`, mirrored over HTTP.
+- **Glyphrun behavior specs** under `specs/glyphrun/` pin the CLI contract.
+- **CI hygiene** — upstream actions bumped off the deprecated Node runtime; GoReleaser pinned to `~> v2`.
+
+## Remaining Work
+
+- Hosted docs deployment from this repo (a GitHub Pages workflow alongside the existing Vercel config).
+- Language drivers (Python, TypeScript, …) over the CLI/HTTP contract — planned, not started.
+- Cross-space fusion ergonomics (weighted multi-space + BM25 in one call) if app usage warrants it.
 
 ## Next Steps
 
-1. Use `v0.15.1` from `vecgrep` and `vidtrace` with separate collections per embedding profile.
-2. Add small profile helper APIs if app-side metadata comparison becomes repetitive.
-3. Design named vector spaces as an additive API with a storage migration plan.
-4. Add hosted docs deployment only after the local docs content stabilizes.
+1. Adopt named vector spaces from `vidtrace` for multimodal evidence (text default space + `frame` space).
+2. Cut a minor release that advertises named vector spaces and the v4 format.
+3. Start the first language driver against the CLI/HTTP JSON contract once the surface settles.

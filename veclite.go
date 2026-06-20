@@ -366,7 +366,7 @@ func (db *DB) syncLocked() error {
 // snapshotLocked creates a snapshot while holding the lock.
 func (db *DB) snapshotLocked() *storage.DatabaseSnapshot {
 	snapshot := &storage.DatabaseSnapshot{
-		Version:         3,
+		Version:         storage.CurrentVersion,
 		Metadata:        deepCopyMap(db.metadata),
 		Collections:     make(map[string]*storage.CollectionSnapshot, len(db.collections)),
 		KnowledgeGraphs: make(map[string]*storage.GraphSnapshot, len(db.knowledgeGraphs)),
@@ -392,6 +392,11 @@ func (db *DB) snapshotLocked() *storage.DatabaseSnapshot {
 
 // loadFromSnapshot restores the database from a snapshot.
 func (db *DB) loadFromSnapshot(snapshot *storage.DatabaseSnapshot) {
+	// Upgrade older on-disk formats to the current version. The named-vector-space
+	// migration (v4) is additive: existing single-vector collections keep working
+	// as the implicit "default" space, so this never rewrites record data.
+	snapshot = storage.Migrate(snapshot)
+
 	db.createdAt = snapshot.CreatedAt
 	db.updatedAt = snapshot.UpdatedAt
 	db.metadata = deepCopyMap(snapshot.Metadata)

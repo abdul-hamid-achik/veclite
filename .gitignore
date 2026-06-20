@@ -22,6 +22,9 @@ coverage.html
 # Vecgrep index (semantic search)
 .vecgrep/
 
+# Glyphrun run artifacts (specs under specs/glyphrun/ are tracked)
+.glyphrun/
+
 # IDE
 .idea/
 .vscode/
@@ -46,3 +49,4 @@ lib/
 
 .env
 .vecai/
+.vercel

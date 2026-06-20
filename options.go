@@ -80,6 +80,8 @@ type collectionConfig struct {
 	textIndexFields []string
 	embedder        Embedder
 	memoryConfig    *MemoryConfig
+	vectorSpaces    []VectorSpaceConfig
+	profile         *EmbeddingProfile
 }
 
 // defaultCollectionConfig returns the default collection configuration.
@@ -161,5 +163,31 @@ func WithTextIndex(fields ...string) CollectionOption {
 func WithEmbedder(e Embedder) CollectionOption {
 	return collectionOptionFunc(func(c *collectionConfig) {
 		c.embedder = e
+	})
+}
+
+// WithVectorSpace declares an additional named vector space at collection
+// creation time. May be passed multiple times to declare several spaces. The
+// reserved DefaultVectorSpace name is rejected (the default space always exists).
+// Equivalent to calling Collection.AddVectorSpace after creation.
+func WithVectorSpace(config VectorSpaceConfig) CollectionOption {
+	return collectionOptionFunc(func(c *collectionConfig) {
+		c.vectorSpaces = append(c.vectorSpaces, config)
+	})
+}
+
+// WithEmbeddingProfile attaches a first-class embedding profile to the
+// collection's default vector space. Vectors inserted into the default space are
+// then validated against the profile's declared dimension.
+func WithEmbeddingProfile(profile EmbeddingProfile) CollectionOption {
+	return collectionOptionFunc(func(c *collectionConfig) {
+		p := profile
+		c.profile = &p
+		if c.dimension == 0 && profile.Dimension > 0 {
+			c.dimension = profile.Dimension
+		}
+		if profile.Distance != "" {
+			c.distanceType = profile.Distance
+		}
 	})
 }

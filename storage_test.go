@@ -321,8 +321,8 @@ func TestFileStorageInvalidMagic(t *testing.T) {
 func TestNewDatabaseSnapshot(t *testing.T) {
 	snapshot := NewDatabaseSnapshot()
 
-	if snapshot.Version != 3 {
-		t.Errorf("Version = %v, want 3", snapshot.Version)
+	if snapshot.Version != 4 {
+		t.Errorf("Version = %v, want 4", snapshot.Version)
 	}
 
 	if snapshot.Collections == nil {
