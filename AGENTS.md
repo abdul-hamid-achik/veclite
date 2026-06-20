@@ -43,7 +43,8 @@ veclite/
 ├── index_hnsw.go       # HNSW wrapper implementing Index interface
 ├── explain.go          # SearchExplain for debugging
 ├── errors.go           # Error types
-├── storage.go          # Storage interface, snapshots, CurrentVersion, Migrate
+├── storage.go          # Storage interface alias + snapshot type re-exports
+│                        #   (CurrentVersion + Migrate live in internal/storage/storage.go)
 ├── storage_file.go     # File-based persistence
 ├── storage_memory.go   # In-memory storage
 ├── internal/
@@ -294,11 +295,40 @@ The GitHub Actions CI runs on every push/PR:
 
 All checks must pass before merging.
 
+## Documentation Site and Deployment
+
+The documentation lives in `docs/` and is a **VitePress** site (Bun-based tooling).
+
+- **Build/preview locally:** `task site`, `task site-dev`, `task site-preview` (or `bun run site*`).
+- **Hosting — already solved, do not duplicate:** the site is **deployed to Vercel** via
+  `vercel.json` at the repo root; the linked `.vercel` project (gitignored) auto-deploys on every
+  push to `main`. It is served at the **domain root**, so the VitePress `base` is the default `/`.
+- **Do NOT add a second deploy path** (no GitHub Pages workflow, no `gh-pages`, no `DOCS_BASE`
+  base-path juggling). A previous attempt added a redundant GitHub Pages workflow; it was removed.
+  If hosting ever needs to change, change/replace the Vercel config — keep exactly one deploy target.
+- When you add a docs page, wire it into `docs/.vitepress/config.mts` (`nav` + `sidebar`). Static
+  assets (icons, images) go in `docs/.vitepress/public/` and are referenced with root-absolute
+  paths (e.g. `/logo.svg`).
+
+> General rule this encodes: before adding infrastructure (deploy, CI, tooling), check what the repo
+> already does — `vercel.json`, `.vercel`, `glyphrun.config.yml`, `Taskfile.yml`, `.goreleaser.yml`,
+> `.github/workflows/` — and extend the existing mechanism instead of introducing a parallel one.
+
+## Release and Deployment Summary
+
+| Concern | Mechanism | Source of truth |
+|---------|-----------|-----------------|
+| Go module / library | `go get` | git tags (`vX.Y.Z`) |
+| CLI binaries + Homebrew | GoReleaser on tag push | `.goreleaser.yml`, `.github/workflows/release.yml` |
+| Documentation site | Vercel (VitePress) | `vercel.json` + linked `.vercel` project |
+| CLI behavior contract | glyphrun specs | `specs/glyphrun/`, `glyphrun.config.yml` |
+
 ## Versioning
 
-- Library version is in `veclite.go` as `const Version`
-- CLI version is injected via ldflags at build time
-- Follow semantic versioning (major.minor.patch)
+- Library version is in `veclite.go` as `const Version` (keep `package.json` `version` in sync for docs).
+- CLI version is injected via ldflags at build time; GoReleaser sets it from the git tag.
+- Follow semantic versioning (major.minor.patch). Cutting a release = bump `const Version`, commit,
+  then push an annotated `vX.Y.Z` tag, which triggers `release.yml` (GoReleaser).
 
 ## Important Files to Understand
 

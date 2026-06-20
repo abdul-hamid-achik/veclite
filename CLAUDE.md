@@ -39,9 +39,20 @@ contract**. Keep them additive and stable, and back every CLI behavior with a
   New command functions just call `fs.Parse(args)` — do not hoist again (it's idempotent anyway).
 - **Storage version bumps:** when the on-disk format changes, update `fileVersion` +
   `migrateSnapshot` in `internal/storage/file.go` **and** `CurrentVersion`/`Migrate` in
-  `storage.go`. Migrations must be additive (gob tolerates new fields).
+  `internal/storage/storage.go` (the root `storage.go` only re-exports types). Migrations must be
+  additive (gob tolerates new fields).
 - **Locks:** DB → Collection → Index, outermost to innermost (see AGENTS.md). Named-space
   searches take the Collection `RLock`; never call a method that re-locks while holding it.
+- **Docs are already hosted — don't add a deploy target.** The `docs/` VitePress site is deployed
+  to **Vercel** (`vercel.json` + linked `.vercel` project, auto-deploys on push, served at root).
+  There is no GitHub Pages and there should not be — a redundant Pages workflow was added once and
+  removed. Build locally with `task site`; new assets go in `docs/.vitepress/public/` (root paths).
+- **Check before you build infra.** Before adding any deploy/CI/tooling, look at what exists —
+  `vercel.json`, `.vercel`, `.goreleaser.yml`, `glyphrun.config.yml`, `Taskfile.yml`,
+  `.github/workflows/` — and extend it rather than introducing a parallel mechanism.
+- **Cutting a release:** bump `const Version` in `veclite.go` (and `package.json` for docs), commit,
+  then push an annotated `vX.Y.Z` tag — that triggers GoReleaser (`release.yml`). See AGENTS.md
+  "Release and Deployment Summary".
 
 ## Validate your work
 

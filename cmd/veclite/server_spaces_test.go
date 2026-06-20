@@ -118,6 +118,29 @@ func TestHTTPNamedSpacesLifecycle(t *testing.T) {
 	}
 }
 
+func TestParseFilterRequestNumericOps(t *testing.T) {
+	rec := &veclite.Record{Payload: map[string]any{"n": 5.0}}
+	cases := []struct {
+		op   string
+		val  float64
+		want bool
+	}{
+		{"gt", 3, true}, {"gt", 5, false}, {">", 4, true},
+		{"gte", 5, true}, {"gte", 6, false},
+		{"lt", 9, true}, {"lt", 5, false}, {"<", 6, true},
+		{"lte", 5, true}, {"lte", 4, false},
+	}
+	for _, c := range cases {
+		f := parseFilterRequest(filterRequest{Key: "n", Op: c.op, Value: c.val})
+		if f == nil {
+			t.Fatalf("op %q returned a nil filter (operator not wired up?)", c.op)
+		}
+		if got := f.Match(rec); got != c.want {
+			t.Errorf("op %q val %v: Match=%v, want %v", c.op, c.val, got, c.want)
+		}
+	}
+}
+
 func TestHTTPSearchUnknownSpaceFails(t *testing.T) {
 	s := newTestServer(t)
 	rec := do(t, s, http.MethodPost, "/collections/items/search-space",

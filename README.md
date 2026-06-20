@@ -1853,7 +1853,7 @@ VecLite can run as an [MCP](https://modelcontextprotocol.io/) tool server, makin
 veclite mcp data.veclite
 ```
 
-The server communicates over stdio using JSON-RPC 2.0. It exposes **55 tools** across several categories:
+The server communicates over stdio using JSON-RPC 2.0. It exposes **56 tools** across several categories:
 
 ### Core Vector Operations
 
@@ -1882,6 +1882,7 @@ The server communicates over stdio using JSON-RPC 2.0. It exposes **55 tools** a
 |------|-------------|
 | `veclite_create_collection` | Create a collection with options (dimension, distance, index) |
 | `veclite_drop_collection` | Delete a collection (requires `confirm: true`) |
+| `veclite_collection_schema` | Discover a collection's schema: payload fields, types, vector dimension, index type, content availability |
 | `veclite_sync` | Force persist all changes to disk |
 | `veclite_metrics` | Get performance metrics (search/insert/delete counts) |
 

@@ -696,6 +696,22 @@ func parseFilterRequest(f filterRequest) veclite.Filter {
 		return veclite.Equal(f.Key, f.Value)
 	case "neq", "!=":
 		return veclite.NotEqual(f.Key, f.Value)
+	case "gt", ">":
+		if n, ok := filterNumber(f.Value); ok {
+			return veclite.GT(f.Key, n)
+		}
+	case "gte", ">=":
+		if n, ok := filterNumber(f.Value); ok {
+			return veclite.GTE(f.Key, n)
+		}
+	case "lt", "<":
+		if n, ok := filterNumber(f.Value); ok {
+			return veclite.LT(f.Key, n)
+		}
+	case "lte", "<=":
+		if n, ok := filterNumber(f.Value); ok {
+			return veclite.LTE(f.Key, n)
+		}
 	case "glob":
 		if s, ok := f.Value.(string); ok {
 			return veclite.Glob(f.Key, s)
@@ -716,6 +732,23 @@ func parseFilterRequest(f filterRequest) veclite.Filter {
 		return veclite.Exists(f.Key)
 	}
 	return nil
+}
+
+// filterNumber coerces a JSON filter value to float64 for numeric comparison
+// operators (JSON numbers decode to float64).
+func filterNumber(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	default:
+		return 0, false
+	}
 }
 
 // handleMetrics handles GET /metrics

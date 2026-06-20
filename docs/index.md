@@ -23,6 +23,6 @@ features:
     details: Use HNSW for approximate nearest neighbors, BM25 for keyword search, or hybrid ranking for both.
   - title: Go library first
     details: Import VecLite into applications that own chunking, media extraction, and embedding provider choices.
-  - title: Clear extension path
-    details: Use separate collections today and follow the named-vector-space roadmap for future multimodal records.
+  - title: Multimodal ready
+    details: Add named vector spaces for multiple embeddings per record (e.g. text + image) and fuse them, or use separate collections for unrelated data.
 ---

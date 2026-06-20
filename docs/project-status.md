@@ -74,14 +74,18 @@ It can add semantic text embeddings in the default space and frame/image embeddi
 - **Glyphrun behavior specs** under `specs/glyphrun/` pin the CLI contract.
 - **CI hygiene** — upstream actions bumped off the deprecated Node runtime; GoReleaser pinned to `~> v2`.
 
+## Docs Deployment
+
+The documentation site is built with VitePress (`task site`) and **deployed to Vercel** via
+`vercel.json` (the linked `.vercel` project auto-deploys on push to `main`). This is the single
+hosting path; the site is served at the domain root. Do not add a second deploy target.
+
 ## Remaining Work
 
-- Hosted docs deployment from this repo (a GitHub Pages workflow alongside the existing Vercel config).
 - Language drivers (Python, TypeScript, …) over the CLI/HTTP contract — planned, not started.
 - Cross-space fusion ergonomics (weighted multi-space + BM25 in one call) if app usage warrants it.
 
 ## Next Steps
 
 1. Adopt named vector spaces from `vidtrace` for multimodal evidence (text default space + `frame` space).
-2. Cut a minor release that advertises named vector spaces and the v4 format.
-3. Start the first language driver against the CLI/HTTP JSON contract once the surface settles.
+2. Start the first language driver against the CLI/HTTP JSON contract once the surface settles.

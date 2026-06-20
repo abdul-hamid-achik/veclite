@@ -5,8 +5,10 @@
 Accepted — **Implemented**. The additive named-vector-space and embedding-profile API described
 under "API Direction" now ships (storage format v4). See the
 [Named Vector Spaces](/guide/named-vector-spaces) guide for the delivered Go, CLI, and HTTP surface.
-This ADR is retained as the design record; the "API Direction" section below describes the shipped
-shape (`VectorSpaceConfig`, `RecordInput`, `EmbeddingProfile`, `SearchSpace`, `MultiSpaceSearch`).
+This ADR is retained as the historical design record: the "API Direction" section below is the
+original design sketch and is intentionally left in its future tense. The shapes it proposes shipped
+as `VectorSpaceConfig`, `RecordInput`, `EmbeddingProfile`, `SearchSpace`, and `MultiSpaceSearch` —
+see the [Named Vector Spaces](/guide/named-vector-spaces) guide for the delivered API.
 
 ## Context
 
@@ -108,4 +110,3 @@ The future API should allow:
 ### Remaining
 
 - Language drivers (Python, TypeScript, …) over the CLI/HTTP JSON contract — planned, not started.
-- Hosted docs deployment from the repository.

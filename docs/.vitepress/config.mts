@@ -1,21 +1,18 @@
 import { defineConfig } from "vitepress";
 
-// Base path is "/" for root deploys (Vercel, local preview) and "/veclite/" for
-// GitHub Pages project pages. The Pages workflow sets DOCS_BASE=/veclite/.
-// Head link hrefs are not auto-prefixed by VitePress, so we prefix them with base.
-const base = process.env.DOCS_BASE || "/";
-
+// The docs site is served at the domain root: it is deployed to Vercel via
+// vercel.json (the linked .vercel project auto-deploys on push). The base path is
+// therefore the VitePress default "/". Do not add a second deploy target.
 export default defineConfig({
-  base,
   title: "VecLite",
   description: "Embeddable vector database for Go.",
   cleanUrls: true,
   lastUpdated: true,
   head: [
-    ["link", { rel: "icon", type: "image/svg+xml", href: `${base}favicon.svg` }],
-    ["link", { rel: "icon", type: "image/png", sizes: "32x32", href: `${base}favicon-32x32.png` }],
-    ["link", { rel: "icon", type: "image/png", sizes: "16x16", href: `${base}favicon-16x16.png` }],
-    ["link", { rel: "apple-touch-icon", href: `${base}apple-touch-icon.png` }],
+    ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
+    ["link", { rel: "icon", type: "image/png", sizes: "32x32", href: "/favicon-32x32.png" }],
+    ["link", { rel: "icon", type: "image/png", sizes: "16x16", href: "/favicon-16x16.png" }],
+    ["link", { rel: "apple-touch-icon", href: "/apple-touch-icon.png" }],
     ["meta", { name: "theme-color", content: "#7C3AED" }],
   ],
   themeConfig: {
