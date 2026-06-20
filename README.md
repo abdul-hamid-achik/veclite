@@ -9,6 +9,7 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
 - [Features](#features)
 - [Quick Start](#quick-start)
 - [Installation](#installation)
+- [Documentation Site](#documentation-site)
 - [Use as a Go Library](#use-as-a-go-library)
 - [Embedding Strategy](#embedding-strategy)
 - [Library API](#library-api)
@@ -131,6 +132,16 @@ go install github.com/abdul-hamid-achik/veclite/cmd/veclite@latest
 ```
 
 Pre-built binaries are available on the [Releases](https://github.com/abdul-hamid-achik/veclite/releases) page.
+
+## Documentation Site
+
+The documentation site uses VitePress and Bun. Build it locally with:
+
+```bash
+task site
+```
+
+Use `task site-dev` while editing documentation and `task site-preview` to preview the production build.
 
 ## Use as a Go Library
 

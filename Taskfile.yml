@@ -36,12 +36,30 @@ tasks:
     cmds:
       - go test -coverprofile=coverage.out ./...
       - go tool cover -html=coverage.out -o coverage.html
-      - echo "Coverage report generated: coverage.html"
+      - 'echo "Coverage report generated: coverage.html"'
 
   bench:
     desc: Run benchmarks
     cmds:
       - go test -bench=. -benchmem ./...
+
+  site:
+    desc: Build the VitePress documentation site
+    cmds:
+      - bun install --frozen-lockfile
+      - bun run site
+
+  site-dev:
+    desc: Start the VitePress documentation dev server
+    cmds:
+      - bun install --frozen-lockfile
+      - bun run site:dev -- --host 0.0.0.0
+
+  site-preview:
+    desc: Preview the built VitePress documentation site
+    cmds:
+      - bun install --frozen-lockfile
+      - bun run site:preview -- --host 0.0.0.0
 
   check:
     desc: Run all checks (fmt, lint, test)
@@ -53,7 +71,7 @@ tasks:
   clean:
     desc: Clean build artifacts
     cmds:
-      - rm -rf bin/ dist/ coverage.out coverage.html
+      - rm -rf bin/ dist/ docs/.vitepress/dist/ docs/.vitepress/cache/ node_modules/ coverage.out coverage.html
       - rm -f *.veclite *.veclite.tmp *.veclite.bak
 
   install:

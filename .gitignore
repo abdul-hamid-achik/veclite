@@ -36,6 +36,9 @@ Thumbs.db
 # Build
 dist/
 bin/
+node_modules/
+docs/.vitepress/cache/
+docs/.vitepress/dist/
 
 # ONNX embedder dependencies (download separately)
 models/
