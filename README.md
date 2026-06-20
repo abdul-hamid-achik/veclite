@@ -12,6 +12,7 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
 - [Documentation Site](#documentation-site)
 - [Use as a Go Library](#use-as-a-go-library)
 - [Embedding Strategy](#embedding-strategy)
+- [Project Status](#project-status)
 - [Library API](#library-api)
   - [Opening a Database](#opening-a-database)
   - [Collections](#collections)
@@ -158,6 +159,10 @@ Applications can bring their own embedding pipeline and use VecLite for durable 
 Current VecLite releases store one vector per record. Use one collection when all records share the same provider, model, dimensions, modality, and distance metric. Use separate collections when embedding types are incompatible.
 
 VecLite's long-term multimodal direction is named vector spaces: one logical record can hold vectors such as `text`, `frame_clip`, or `audio`, each with its own dimension and index settings. That API is planned, not current behavior; see [ADR-0001](docs/adr/0001-embedding-boundary-and-named-vector-spaces.md).
+
+## Project Status
+
+See [docs/project-status.md](docs/project-status.md) for the current implementation boundary, related-project usage notes, and missing work.
 
 ## Library API
 

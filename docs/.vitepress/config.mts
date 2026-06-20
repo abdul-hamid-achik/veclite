@@ -9,6 +9,7 @@ export default defineConfig({
     nav: [
       { text: "Guide", link: "/guide/getting-started" },
       { text: "Embeddings", link: "/embeddings" },
+      { text: "Status", link: "/project-status" },
       {
         text: "Architecture",
         link: "/adr/0001-embedding-boundary-and-named-vector-spaces",
@@ -22,6 +23,7 @@ export default defineConfig({
           { text: "Getting Started", link: "/guide/getting-started" },
           { text: "Using VecLite", link: "/guide/using-veclite" },
           { text: "Embedding Strategy", link: "/embeddings" },
+          { text: "Project Status", link: "/project-status" },
         ],
       },
       {
