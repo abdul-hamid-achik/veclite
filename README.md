@@ -48,7 +48,6 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
   - [Episodic Memory](#episodic-memory)
   - [Memory Pressure Handling](#memory-pressure-handling)
   - [Knowledge Graph](#knowledge-graph)
-- [OpenClaw Integration](#openclaw-integration)
 - [CLI Usage](#cli-usage)
 - [HTTP Server](#http-server)
 - [MCP Tool Server](#mcp-tool-server)
@@ -1562,70 +1561,6 @@ kg.DeleteRelationship("rel-1")
 outgoing := kg.GetRelationships("alice", "outgoing")
 incoming := kg.GetRelationships("alice", "incoming")
 all := kg.GetRelationships("alice", "both")
-```
-
-## OpenClaw Integration
-
-VecLite includes a dedicated integration package for AI assistant memory systems like OpenClaw:
-
-```go
-import "github.com/abdul-hamid-achik/veclite/integrations/openclaw"
-
-// Create a memory store
-mem, err := openclaw.New(openclaw.Config{
-    DBPath:   "agent-memory.veclite",
-    Embedder: embedder,  // Your embedder implementation
-})
-defer mem.Close()
-
-// Remember something
-id, err := mem.Remember("The user prefers dark mode", openclaw.RememberOptions{
-    Importance: 0.8,
-    Tags:       []string{"preference", "ui"},
-    TTL:        30 * 24 * time.Hour,  // Remember for 30 days
-    Metadata:   map[string]any{"source": "settings"},
-})
-
-// Recall memories by semantic similarity
-entries, err := mem.Recall("user interface preferences", openclaw.RecallOptions{
-    Limit:         10,
-    MinImportance: 0.5,
-    Tags:          []string{"preference"},
-})
-
-for _, entry := range entries {
-    fmt.Printf("Memory: %s (importance: %.2f)\n", entry.Content, entry.Importance)
-}
-
-// Recall recent memories
-recent, err := mem.RecallRecent(5, openclaw.RecallOptions{})
-
-// Forget memories by criteria
-deleted, err := mem.Forget(openclaw.ForgetOptions{
-    Tags:            []string{"temporary"},
-    BelowImportance: 0.3,
-    OlderThan:       7 * 24 * time.Hour,
-})
-
-// Get memory statistics
-stats := mem.Stats()
-fmt.Printf("Total: %d, Avg Importance: %.2f\n",
-    stats.TotalMemories, stats.AverageImportance)
-
-// Export memories to markdown files
-err = mem.ExportMarkdown("./memory-export")
-
-// Import from session files (JSON or JSONL)
-imported, err := mem.ImportSession("session.json", openclaw.ImportOptions{
-    DefaultImportance: 0.5,
-    Tags:              []string{"imported"},
-    FilterRole:        "assistant",  // Only import assistant messages
-})
-
-// Import plain text (splits into chunks)
-imported, err = mem.ImportText(longDocument, 1000, openclaw.ImportOptions{
-    DefaultImportance: 0.6,
-})
 ```
 
 ## CLI Usage

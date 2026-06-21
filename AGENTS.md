@@ -47,6 +47,10 @@ veclite/
 │                        #   (CurrentVersion + Migrate live in internal/storage/storage.go)
 ├── storage_file.go     # File-based persistence
 ├── storage_memory.go   # In-memory storage
+├── config.go           # YAML config loading (Config, EmbedderConfig, LoadConfig)
+├── embedder.go         # Embedder interface
+├── embedder_factory.go # NewEmbedderFromConfig (default build)
+├── embedder_factory_onnx.go # NewEmbedderFromConfig (onnx build tag)
 ├── internal/
 │   ├── floats/         # Distance functions (cosine, euclidean, dot)
 │   └── hnsw/           # HNSW implementation
@@ -58,11 +62,17 @@ veclite/
 │       ├── delete.go   # Soft delete and compaction
 │       ├── serialize.go # Snapshot/restore
 │       └── errors.go   # HNSW-specific errors
+├── embed/              # Embedder provider implementations (build-tag isolated)
+│   ├── common/         # Shared HTTP/normalize helpers
+│   ├── ollama/         # Ollama embedder
+│   ├── onnx/           # ONNX embedder (onnx build tag)
+│   └── openai/         # OpenAI embedder
 └── cmd/veclite/        # CLI application
     ├── main.go         # CLI entry point, read/write commands
     ├── spaces.go       # Named-space CLI (space-add, spaces, record-insert, search-space, fuse-search)
     ├── server.go       # HTTP server mode (serve command)
     ├── server_spaces.go# HTTP handlers for named vector spaces
+    ├── mcp.go          # MCP tool server
     └── maintenance.go  # compact, validate, benchmark commands
 ```
 
@@ -297,7 +307,9 @@ All checks must pass before merging.
 
 ## Documentation Site and Deployment
 
-The documentation lives in `docs/` and is a **VitePress** site (Bun-based tooling).
+The documentation lives in `docs/` and is a **VitePress** site (Bun-based tooling). This is the
+**public website** — it is *only* for published user-facing documentation, not for working notes,
+handoffs, TODOs, or scratch content.
 
 - **Build/preview locally:** `task site`, `task site-dev`, `task site-preview` (or `bun run site*`).
 - **Hosting — already solved, do not duplicate:** the site is **deployed to Vercel** via
@@ -313,6 +325,42 @@ The documentation lives in `docs/` and is a **VitePress** site (Bun-based toolin
 > General rule this encodes: before adding infrastructure (deploy, CI, tooling), check what the repo
 > already does — `vercel.json`, `.vercel`, `glyphrun.config.yml`, `Taskfile.yml`, `.goreleaser.yml`,
 > `.github/workflows/` — and extend the existing mechanism instead of introducing a parallel one.
+
+## Working Notes and the Obsidian Vault
+
+**Do not put notes, handoffs, journals, or scratch content in the repo** (not in `docs/`, not in a
+`NOTES.md`, not in stray `.md` files). The `docs/` folder is the VitePress website only — polluting it
+mixes working state with published docs and can ship internal notes to the public site on push.
+
+Notes live in the **Obsidian vault** at `~/notes`, and per-project notes go in
+`~/notes/projects/<project>/`. The vault already has a `veclite/` project folder (with an `index.md`
+and release handoffs) and a sibling `vecgrep/` folder.
+
+Use the **`obsidian-cli` skill** to interact with the vault from the terminal — load it with the
+skill tool (`obsidian-cli`) and follow its instructions. Typical operations:
+
+```bash
+# Create a project note (extension auto-added)
+obsidian create path="projects/veclite/<Note Title>" content="..."
+# Append to an existing note
+obsidian append path="projects/veclite/index.md" content="- new bullet"
+# Add frontmatter
+obsidian property:set path="projects/veclite/<Note>.md" name="project" value="veclite"
+# Search the vault
+obsidian search query="named vector spaces" path="projects"
+```
+
+### What goes where
+
+| Content | Location |
+|---------|----------|
+| Published user docs (guides, API reference, ADRs) | `docs/` (VitePress site) |
+| README-level usage / CLI reference | `README.md` |
+| Release handoffs, session journals, design scratch, TODOs | `~/notes/projects/veclite/` (Obsidian) |
+| Cross-project context (e.g. how vecgrep uses veclite) | `~/notes/projects/<project>/` (Obsidian) |
+
+When you finish a chunk of work, write a dated note in `~/notes/projects/veclite/` (or the relevant
+sibling project folder) via the obsidian-cli skill instead of dropping a markdown file in the repo.
 
 ## Release and Deployment Summary
 

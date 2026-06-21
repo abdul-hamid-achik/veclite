@@ -43,10 +43,18 @@ contract**. Keep them additive and stable, and back every CLI behavior with a
   additive (gob tolerates new fields).
 - **Locks:** DB → Collection → Index, outermost to innermost (see AGENTS.md). Named-space
   searches take the Collection `RLock`; never call a method that re-locks while holding it.
-- **Docs are already hosted — don't add a deploy target.** The `docs/` VitePress site is deployed
-  to **Vercel** (`vercel.json` + linked `.vercel` project, auto-deploys on push, served at root).
-  There is no GitHub Pages and there should not be — a redundant Pages workflow was added once and
-  removed. Build locally with `task site`; new assets go in `docs/.vitepress/public/` (root paths).
+- **Docs are already hosted — don't add a deploy target, and don't put notes there.** The `docs/`
+  folder is the **VitePress public website only** (deployed to **Vercel** via `vercel.json` + the
+  linked `.vercel` project, auto-deploys on push, served at root). There is no GitHub Pages and
+  there should not be — a redundant Pages workflow was added once and removed. Build locally with
+  `task site`; new assets go in `docs/.vitepress/public/` (root paths). **Do not** drop working
+  notes, handoffs, journals, or scratch `.md` files into `docs/` or anywhere else in the repo —
+  that mixes internal state with published docs and can ship private notes to the public site.
+- **Notes go in the Obsidian vault, not the repo.** Working notes live in `~/notes` and
+  per-project notes in `~/notes/projects/<project>/` (the vault already has `veclite/` and sibling
+  `vecgrep/` folders). Use the **`obsidian-cli` skill** (load via the skill tool) to create/append/
+  search notes from the terminal — e.g. `obsidian create path="projects/veclite/<Note Title>" content="..."`.
+  Write a dated note there when you finish a chunk of work instead of adding a markdown file to the repo.
 - **Check before you build infra.** Before adding any deploy/CI/tooling, look at what exists —
   `vercel.json`, `.vercel`, `.goreleaser.yml`, `glyphrun.config.yml`, `Taskfile.yml`,
   `.github/workflows/` — and extend it rather than introducing a parallel mechanism.
@@ -64,3 +72,5 @@ glyph run specs/glyphrun/cli_fuse_search.yml
 ```
 
 Keep `README.md`, the `docs/` site, and `AGENTS.md` in sync with any API or CLI change.
+Working notes (handoffs, journals, TODOs) go in the Obsidian vault at `~/notes/projects/veclite/`
+via the `obsidian-cli` skill — never as stray `.md` files in the repo or in `docs/`.

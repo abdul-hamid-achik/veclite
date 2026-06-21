@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/abdul-hamid-achik/veclite"
-	"github.com/abdul-hamid-achik/veclite/config"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -56,7 +55,7 @@ func (s *MCPServer) initEmbedder() {
 	provider := os.Getenv("VECLITE_EMBEDDER")
 	if provider == "" {
 		// Try loading from config file
-		cfg, err := config.LoadConfig("")
+		cfg, err := veclite.LoadConfig("")
 		if err == nil && cfg.Embedder.Provider != "" {
 			provider = cfg.Embedder.Provider
 		}
@@ -74,7 +73,7 @@ func (s *MCPServer) initEmbedder() {
 		model := os.Getenv("VECLITE_OPENAI_MODEL")
 		if apiKey == "" {
 			// Try loading from config file
-			cfg, err := config.LoadConfig("")
+			cfg, err := veclite.LoadConfig("")
 			if err == nil {
 				apiKey = cfg.Embedder.OpenAI.APIKey
 				if baseURL == "" {
@@ -97,7 +96,7 @@ func (s *MCPServer) initEmbedder() {
 		baseURL := os.Getenv("VECLITE_OLLAMA_BASE_URL")
 		model := os.Getenv("VECLITE_OLLAMA_MODEL")
 		if baseURL == "" || model == "" {
-			cfg, err := config.LoadConfig("")
+			cfg, err := veclite.LoadConfig("")
 			if err == nil {
 				if baseURL == "" {
 					baseURL = cfg.Embedder.Ollama.BaseURL
@@ -117,7 +116,7 @@ func (s *MCPServer) initEmbedder() {
 	case "onnx":
 		modelDir := os.Getenv("VECLITE_MODEL_DIR")
 		model := os.Getenv("VECLITE_ONNX_MODEL")
-		cfg, err := config.LoadConfig("")
+		cfg, err := veclite.LoadConfig("")
 		if err == nil {
 			if modelDir == "" {
 				modelDir = cfg.Embedder.ONNX.ModelDir
