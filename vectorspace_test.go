@@ -419,3 +419,180 @@ func TestSetRecordVectorAddsSpace(t *testing.T) {
 		t.Fatalf("SetRecordVector should make the record searchable in the image space: %+v", res)
 	}
 }
+
+func TestUpsertRecordByKeyInsertThenReplace(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, err := db.CreateCollection("evidence",
+		WithTextIndex("evidence_id"),
+		WithVectorSpace(VectorSpaceConfig{Name: "text", Dimension: 3, Distance: DistanceCosine, Modality: "text"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert a new record by natural key.
+	id1, inserted, err := coll.UpsertRecordByKey("evidence_id", "doc-1", RecordInput{
+		Content: "clicking the task does nothing",
+		Payload: map[string]any{"evidence_id": "doc-1", "bundle": "/b"},
+		Vectors: map[string][]float32{"text": {1, 0, 0}},
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if !inserted {
+		t.Fatalf("first upsert should report inserted=true")
+	}
+	if id1 == 0 {
+		t.Fatal("inserted ID should be non-zero")
+	}
+
+	// Confirm it is searchable in the named text space.
+	res, err := coll.SearchSpace("text", []float32{1, 0, 0}, TopK(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || res[0].Record.ID != id1 {
+		t.Fatalf("expected the inserted record, got %+v", res)
+	}
+
+	// Capture CreatedAt so we can assert it is preserved on replace.
+	before, _ := coll.Get(id1)
+	createdAt := before.CreatedAt
+
+	// Replace the same natural key with new content, payload, and vector.
+	id2, inserted2, err := coll.UpsertRecordByKey("evidence_id", "doc-1", RecordInput{
+		Content: "clicking the task opens the wrong screen",
+		Payload: map[string]any{"evidence_id": "doc-1", "bundle": "/b-revised"},
+		Vectors: map[string][]float32{"text": {0, 1, 0}},
+	})
+	if err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	if inserted2 {
+		t.Fatalf("replace upsert should report inserted=false")
+	}
+	if id2 != id1 {
+		t.Fatalf("replace should reuse the same ID: got %d, want %d", id2, id1)
+	}
+
+	// No duplicate records by the natural key.
+	dupes, _ := coll.Find(Equal("evidence_id", "doc-1"))
+	if len(dupes) != 1 {
+		t.Fatalf("expected exactly one record with evidence_id=doc-1, got %d", len(dupes))
+	}
+
+	// CreatedAt preserved, payload + content updated.
+	after, _ := coll.Get(id2)
+	if !after.CreatedAt.Equal(createdAt) {
+		t.Fatalf("CreatedAt should be preserved on replace: before %v, after %v", createdAt, after.CreatedAt)
+	}
+	if got := after.Payload["bundle"]; got != "/b-revised" {
+		t.Fatalf("payload should be updated on replace: got %v", got)
+	}
+	if after.Content != "clicking the task opens the wrong screen" {
+		t.Fatalf("content should be updated on replace: got %q", after.Content)
+	}
+
+	// The new vector is searchable; the collection must not have grown.
+	resNew, err := coll.SearchSpace("text", []float32{0, 1, 0}, TopK(10))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resNew) != 1 || resNew[0].Record.ID != id2 {
+		t.Fatalf("expected the replaced record to be searchable with the new vector, got %+v", resNew)
+	}
+	if count := coll.Count(); count != 1 {
+		t.Fatalf("replace should not grow the collection: got %d records", count)
+	}
+}
+
+func TestUpsertRecordByKeyEmptyKeyFieldRejected(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+	coll, _ := db.CreateCollection("c", WithTextIndex("k"))
+
+	if _, _, err := coll.UpsertRecordByKey("", "v", RecordInput{Content: "x"}); !errors.Is(err, ErrInvalidVectorSpace) {
+		t.Fatalf("empty keyField should return ErrInvalidVectorSpace, got %v", err)
+	}
+}
+
+func TestUpsertRecordByKeyRejectsUnknownSpace(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+	coll, _ := db.CreateCollection("c", WithTextIndex("evidence_id"))
+
+	if _, _, err := coll.UpsertRecordByKey("evidence_id", "doc-1", RecordInput{
+		Vectors: map[string][]float32{"unknown": {1, 0, 0}},
+	}); !errors.Is(err, ErrVectorSpaceNotFound) {
+		t.Fatalf("unknown space should return ErrVectorSpaceNotFound, got %v", err)
+	}
+}
+
+func TestHybridSearchSpaceNamedSpace(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+
+	coll, err := db.CreateCollection("evidence",
+		WithTextIndex("kind"),
+		WithVectorSpace(VectorSpaceConfig{Name: "text", Dimension: 3, Distance: DistanceCosine, Modality: "text"}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Two records: one about "checkout failure", one about "login bug".
+	if _, _, err := coll.UpsertRecordByKey("kind", "a", RecordInput{
+		Content: "checkout fails when the cart is empty",
+		Payload: map[string]any{"kind": "a"},
+		Vectors: map[string][]float32{"text": {1, 0, 0}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := coll.UpsertRecordByKey("kind", "b", RecordInput{
+		Content: "login screen throws a 500 on the second attempt",
+		Payload: map[string]any{"kind": "b"},
+		Vectors: map[string][]float32{"text": {0, 1, 0}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Hybrid query: a vector aligned with record "a" AND text mentioning "checkout".
+	res, err := coll.HybridSearchSpace("text", []float32{1, 0, 0}, "checkout", TopK(10))
+	if err != nil {
+		t.Fatalf("HybridSearchSpace: %v", err)
+	}
+	if len(res) == 0 {
+		t.Fatal("expected at least one hybrid result")
+	}
+	// Record "a" must be ranked first: it wins both the vector and the BM25 half.
+	if res[0].Record.Payload["kind"] != "a" {
+		t.Fatalf("expected record a to rank first, got %+v", res[0].Record.Payload)
+	}
+
+	// Sanity: HybridSearchSpace on DefaultVectorSpace behaves like a vector
+	// search against the default space. With no default-space vectors present,
+	// the vector half returns nothing and only BM25 contributes.
+	bm25Only, err := coll.HybridSearchSpace(DefaultVectorSpace, []float32{1, 0, 0}, "login", TopK(10))
+	if err != nil {
+		t.Fatalf("HybridSearchSpace default space: %v", err)
+	}
+	if len(bm25Only) == 0 {
+		t.Fatal("expected BM25-only results when the default space is empty")
+	}
+	if bm25Only[0].Record.Payload["kind"] != "b" {
+		t.Fatalf("expected record b to win the BM25-only query, got %+v", bm25Only[0].Record.Payload)
+	}
+}
+
+func TestHybridSearchSpaceRequiresTextIndex(t *testing.T) {
+	db, _ := Open(":memory:")
+	defer db.Close()
+	coll, _ := db.CreateCollection("c",
+		WithVectorSpace(VectorSpaceConfig{Name: "text", Dimension: 3}))
+
+	if _, err := coll.HybridSearchSpace("text", []float32{1, 0, 0}, "q"); err == nil {
+		t.Fatal("expected error when text index is not enabled")
+	}
+}

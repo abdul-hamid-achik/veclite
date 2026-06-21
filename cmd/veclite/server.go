@@ -400,9 +400,23 @@ func (s *Server) handleCollection(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
 			}
 			return
+		case "records-upsert-by-key":
+			if r.Method == "POST" {
+				s.upsertRecordByKey(w, r, collName)
+			} else {
+				writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+			}
+			return
 		case "search-space":
 			if r.Method == "POST" {
 				s.searchVectorSpace(w, r, collName)
+			} else {
+				writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+			}
+			return
+		case "hybrid-search-space":
+			if r.Method == "POST" {
+				s.hybridSearchSpace(w, r, collName)
 			} else {
 				writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
 			}

@@ -1,0 +1,97 @@
+version: 1
+name: cli_named_space_upsert_and_hybrid
+
+metadata:
+  feature: named-vector-spaces
+  owner: core
+  priority: high
+  tags:
+    - named-vectors
+    - cli
+    - agent
+    - hybrid-search
+
+intent: |
+  Verify the veclite CLI can upsert a logical record by a payload key
+  carrying a vector in a named space, replace the same key idempotently
+  (preserving the record id), and run a hybrid search over that named
+  space fusing vector and BM25 results with RRF. This covers the
+  v0.17.0 named-space API surface that closes the gap with the pre-1.0
+  UpsertTextDocumentByKey + HybridSearch pair.
+
+target:
+  cmd:
+    - "/bin/sh"
+    - "-c"
+    - "./bin/veclite hybrid-search-space .glyphrun/tmp/hs/items.veclite items text --query='[1,0]' --text='apple' --top-k=2 --json"
+  cwd: "."
+  timeoutMs: 20000
+
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: forbid
+
+preconditions:
+  commands:
+    - run: "go build -o ./bin/veclite ./cmd/veclite"
+      timeoutMs: 120000
+    - run: "rm -rf .glyphrun/tmp/hs && mkdir -p .glyphrun/tmp/hs"
+      timeoutMs: 5000
+    - run: "./bin/veclite create-collection .glyphrun/tmp/hs/items.veclite items --dimension=2 --text-index=label"
+      timeoutMs: 10000
+    - run: "./bin/veclite space-add .glyphrun/tmp/hs/items.veclite items --name=text --dim=2 --hnsw"
+      timeoutMs: 10000
+    # Insert 'apple' by key=evidence_id:apple (vector [1,0], content 'apple').
+    - run: "./bin/veclite record-upsert-by-key .glyphrun/tmp/hs/items.veclite items --key-field=evidence_id --key-value=apple --vectors='{\"text\":[1,0]}' --content='apple' --payload='{\"evidence_id\":\"apple\",\"label\":\"A\"}'"
+      timeoutMs: 10000
+    # Insert 'banana' by key=evidence_id:banana (vector [0,1], content 'banana').
+    - run: "./bin/veclite record-upsert-by-key .glyphrun/tmp/hs/items.veclite items --key-field=evidence_id --key-value=banana --vectors='{\"text\":[0,1]}' --content='banana' --payload='{\"evidence_id\":\"banana\",\"label\":\"B\"}'"
+      timeoutMs: 10000
+    # Replace 'apple' by the same key — content changes, label stays the same,
+    # and the record id must be preserved (idempotency).
+    - run: "./bin/veclite record-upsert-by-key .glyphrun/tmp/hs/items.veclite items --key-field=evidence_id --key-value=apple --vectors='{\"text\":[1,0]}' --content='apple crisp' --payload='{\"evidence_id\":\"apple\",\"label\":\"A\"}' --json"
+      timeoutMs: 10000
+
+steps:
+  - wait:
+      process:
+        exitCode: 0
+      timeoutMs: 20000
+  - snapshot: result
+
+outcomes:
+  - id: clean_exit
+    description: hybrid-search-space exits successfully
+    verify:
+      process:
+        exitCode: 0
+  - id: hybrid_ranked_apple_first
+    description: the record nearest the query vector and matching the BM25 text ranks first
+    verify:
+      command:
+        run: "./bin/veclite hybrid-search-space .glyphrun/tmp/hs/items.veclite items text --query='[1,0]' --text='apple' --top-k=2 --json | jq -e '.[0].payload.label == \"A\"' >/dev/null"
+  - id: hybrid_returns_two_results
+    description: both indexed records appear in the fused ranking
+    verify:
+      command:
+        run: "./bin/veclite hybrid-search-space .glyphrun/tmp/hs/items.veclite items text --query='[1,0]' --text='apple' --top-k=2 --json | jq -e 'length == 2' >/dev/null"
+  - id: upsert_replaced_preserves_id
+    description: re-upserting the same key reports status=replaced and the same record id as the first upsert
+    verify:
+      command:
+        run: |
+          FIRST=$(./bin/veclite record-upsert-by-key .glyphrun/tmp/hs/items.veclite items --key-field=evidence_id --key-value=apple --vectors='{\"text\":[1,0]}' --content='apple crisp' --payload='{\"evidence_id\":\"apple\",\"label\":\"A\"}' --json | jq -r '.id')
+          SECOND=$(./bin/veclite record-upsert-by-key .glyphrun/tmp/hs/items.veclite items --key-field=evidence_id --key-value=apple --vectors='{\"text\":[1,0]}' --content='apple crisp' --payload='{\"evidence_id\":\"apple\",\"label\":\"A\"}' --json | jq -r '.id')
+          test "$FIRST" = "$SECOND" && ./bin/veclite record-upsert-by-key .glyphrun/tmp/hs/items.veclite items --key-field=evidence_id --key-value=apple --vectors='{\"text\":[1,0]}' --content='apple crisp' --payload='{\"evidence_id\":\"apple\",\"label\":\"A\"}' --json | jq -e '.status == \"replaced\"' >/dev/null
+  - id: hybrid_search_default_space_when_space_omitted
+    description: calling hybrid-search-space without a space positional runs against the default space
+    verify:
+      command:
+        run: "./bin/veclite hybrid-search-space .glyphrun/tmp/hs/items.veclite items --query='[1,0]' --text='apple' --top-k=1 --json | jq -e 'length >= 1' >/dev/null"
+  - id: hybrid_search_unknown_space_is_rejected
+    description: searching an undeclared space fails
+    verify:
+      command:
+        run: "! ./bin/veclite hybrid-search-space .glyphrun/tmp/hs/items.veclite items audio --query='[1,0]' --text='apple' --top-k=1 --json 2>/dev/null"

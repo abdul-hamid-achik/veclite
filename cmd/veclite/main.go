@@ -77,6 +77,10 @@ func main() {
 		err = cmdSearchSpace(args)
 	case "fuse-search":
 		err = cmdFuseSearch(args)
+	case "record-upsert-by-key":
+		err = cmdRecordUpsertByKey(args)
+	case "hybrid-search-space":
+		err = cmdHybridSearchSpace(args)
 	case "serve":
 		err = cmdServe(args)
 	case "mcp":
@@ -132,8 +136,10 @@ Named Vector Spaces:
   spaces <file> <collection>       List a collection's vector spaces
   space-add <file> <collection>    Declare a named vector space (--name, --dim, ...)
   record-insert <file> <collection> Insert a record with vectors in several spaces
+  record-upsert-by-key <file> <collection>  Insert or replace a record by payload key
   search-space <file> <collection> <space>  Search one named vector space
   fuse-search <file> <collection>  Search several spaces and fuse with RRF
+  hybrid-search-space <file> <collection> [space]  Search a named space + BM25, fuse with RRF
 
 Server Mode:
   serve <file>             Start HTTP server for multi-client access
@@ -160,6 +166,8 @@ Examples:
   veclite record-insert data.veclite items --vectors='{"default":[0.1,0.2],"image":[0.3,0.4]}'
   veclite search-space data.veclite items image --query='[0.3,0.4]' --top-k=5
   veclite fuse-search data.veclite items --queries='{"default":[0.1,0.2],"image":[0.3,0.4]}'
+  veclite record-upsert-by-key data.veclite evidence --key-field=evidence_id --key-value=doc-1 --vectors='{"text":[0.1,0.2,0.3]}' --content='checkout fails'
+  veclite hybrid-search-space data.veclite evidence text --query='[0.1,0.2,0.3]' --text='checkout' --top-k=5
   veclite serve data.veclite --port=8080`)
 }
 
@@ -423,6 +431,7 @@ func cmdCreateCollection(args []string) error {
 	hnsw := fs.Bool("hnsw", false, "Enable HNSW indexing")
 	hnswM := fs.Int("hnsw-m", 16, "HNSW M parameter (max connections per node)")
 	hnswEf := fs.Int("hnsw-ef", 200, "HNSW efConstruction parameter")
+	textIndex := fs.String("text-index", "", "Comma-separated payload fields to BM25-index in addition to Content (enables TextSearch/HybridSearch)")
 	jsonOutput := fs.Bool("json", false, "Output as JSON")
 	fs.Usage = func() {
 		fmt.Println("Usage: veclite create-collection [options] <file> <name>")
@@ -468,6 +477,13 @@ func cmdCreateCollection(args []string) error {
 	}
 	if *hnsw {
 		opts = append(opts, veclite.WithHNSW(*hnswM, *hnswEf))
+	}
+	if *textIndex != "" {
+		fields := strings.Split(*textIndex, ",")
+		for i := range fields {
+			fields[i] = strings.TrimSpace(fields[i])
+		}
+		opts = append(opts, veclite.WithTextIndex(fields...))
 	}
 
 	_, err = db.CreateCollection(name, opts...)

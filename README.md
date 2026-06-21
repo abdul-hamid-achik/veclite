@@ -429,6 +429,24 @@ BM25, or externally produced rankings). Attach a first-class `EmbeddingProfile` 
 (`WithEmbeddingProfile`) or a space (`VectorSpaceConfig.Profile`) to validate inserts and detect
 index-invalidating provider/model changes via `EmbeddingProfile.Compatible`.
 
+Named spaces also have the upsert-by-key and hybrid-search analogs of the single-space API:
+
+```go
+// Upsert by a payload key, carrying vectors in several spaces atomically.
+// Returns (id, inserted, err) — inserted=false means an existing record was replaced
+// (its CreatedAt and AccessCount are preserved).
+id, inserted, err := coll.UpsertRecordByKey("evidence_id", "doc-1", veclite.RecordInput{
+    Content: "checkout fails",
+    Payload: map[string]any{"evidence_id": "doc-1"},
+    Vectors: map[string][]float32{"text": textVec},
+})
+
+// Hybrid search over a named space: fuses vector results from the space with
+// BM25 text results via Reciprocal Rank Fusion. Passing "" or DefaultVectorSpace
+// is equivalent to HybridSearch.
+results, err := coll.HybridSearchSpace("text", queryVec, "checkout", veclite.TopK(10))
+```
+
 See the full guide: **[Named Vector Spaces](https://github.com/abdul-hamid-achik/veclite/blob/main/docs/guide/named-vector-spaces.md)**.
 
 ### Streaming Results
@@ -563,6 +581,49 @@ id, wasInsert, err := coll.UpsertByKey("file", "main.go", vector, map[string]any
     "line": 100,
 })
 ```
+
+### Migrating a Collection Layout
+
+When your application changes its collection layout across versions (e.g. merging
+two collections into one with a named vector space), use the read-transform-insert-drop
+pattern with the existing API. There is no built-in `RenameCollection` because the
+transformation is almost always application-specific.
+
+```go
+// Example: merge a BM25-only collection and a vector collection into one
+// collection that uses a named "text" space for vectors.
+oldText, _ := db.GetCollection("evidence_text")   // vectors + BM25
+oldKeyword, _ := db.GetCollection("evidence_keyword") // BM25 only
+
+merged, _ := db.CreateCollection("evidence",
+    veclite.WithTextIndex("evidence_id"),
+    veclite.WithVectorSpace(veclite.VectorSpaceConfig{Name: "text", Dimension: dim}),
+)
+
+// 1. Copy keyword records (Content + Payload, no vector yet).
+for _, r := range oldKeyword.All() {
+    merged.InsertRecord(veclite.RecordInput{
+        Content: r.Content, Payload: r.Payload,
+    })
+}
+
+// 2. Attach the matching vector from the text collection by natural key.
+for _, r := range oldText.All() {
+    key := r.Payload["evidence_id"]
+    merged.UpsertRecordByKey("evidence_id", key, veclite.RecordInput{
+        Content: r.Content, Payload: r.Payload,
+        Vectors: map[string][]float32{"text": r.Vector},
+    })
+}
+
+// 3. Drop the old collections.
+db.DropCollection("evidence_text")
+db.DropCollection("evidence_keyword")
+```
+
+This keeps the migration logic in the consumer (where the schema lives) and uses
+only stable public APIs (`GetCollection`, `All`, `InsertRecord`, `UpsertRecordByKey`,
+`DropCollection`).
 
 ### Updating Records
 
@@ -1608,7 +1669,9 @@ veclite <command> [arguments]
 | `spaces <file> <collection>` | List a collection's vector spaces |
 | `space-add <file> <collection>` | Declare a named vector space (`--name`, `--dim`, `--distance`, `--modality`, `--hnsw`) |
 | `record-insert <file> <collection>` | Insert a record with vectors in several spaces (`--vectors`, `--input`) |
+| `record-upsert-by-key <file> <collection>` | Insert or replace a multi-space record by a payload key (`--key-field`, `--key-value`, `--vectors`) |
 | `search-space <file> <collection> <space>` | Search a single named vector space |
+| `hybrid-search-space <file> <collection> <space>` | Hybrid vector+BM25 search over a named space (`--query`, `--text`) |
 | `fuse-search <file> <collection>` | Search several spaces and fuse with RRF (`--queries`) |
 
 #### Server Mode
@@ -1654,6 +1717,13 @@ veclite spaces data.veclite items --json
 veclite search-space data.veclite items image --query='[0.3,0.4]' --top-k=5
 veclite fuse-search data.veclite items \
     --queries='{"default":[0.1,0.2],"image":[0.3,0.4]}' --top-k=10
+
+# Named spaces: upsert by a payload key (idempotent), then hybrid search over a named space
+veclite record-upsert-by-key data.veclite evidence \
+    --key-field=evidence_id --key-value=doc-1 \
+    --vectors='{"text":[0.1,0.2,0.3]}' --content='checkout fails'
+veclite hybrid-search-space data.veclite evidence text \
+    --query='[0.1,0.2,0.3]' --text='checkout' --top-k=5
 
 # Upsert
 veclite upsert data.veclite embeddings \
@@ -1715,7 +1785,9 @@ veclite serve data.veclite --port=8080 --host=127.0.0.1 --cors
 | GET | `/collections/{name}/spaces` | List vector spaces |
 | POST | `/collections/{name}/spaces` | Add a named vector space |
 | POST | `/collections/{name}/records` | Insert a multi-space record |
+| POST | `/collections/{name}/records-upsert-by-key` | Upsert a multi-space record by a payload key |
 | POST | `/collections/{name}/search-space` | Search one named vector space |
+| POST | `/collections/{name}/hybrid-search-space` | Hybrid vector+BM25 search over a named space |
 | POST | `/collections/{name}/fuse-search` | Fuse search across vector spaces |
 | POST | `/collections/{name}/upsert` | Upsert vector |
 | POST | `/collections/{name}/find` | Find records by filter |

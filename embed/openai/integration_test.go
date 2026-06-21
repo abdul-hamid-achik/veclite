@@ -72,12 +72,12 @@ func TestUnicodeTextIntegration(t *testing.T) {
 	defer e.Close()
 
 	unicodeTexts := []string{
-		"Hello 世界",           // Chinese
-		"Привет мир",          // Russian
-		"مرحبا بالعالم",       // Arabic
-		"こんにちは世界",       // Japanese
+		"Hello 世界",          // Chinese
+		"Привет мир",        // Russian
+		"مرحبا بالعالم",     // Arabic
+		"こんにちは世界",           // Japanese
 		"🌍 Earth 🌎 Globe 🌏", // Emoji
-		"café résumé naïve",   // Accented Latin
+		"café résumé naïve", // Accented Latin
 	}
 
 	for _, text := range unicodeTexts {

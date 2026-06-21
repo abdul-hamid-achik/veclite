@@ -19,7 +19,7 @@ func newTestServer(t *testing.T) *Server {
 		t.Fatalf("open: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if _, err := db.CreateCollection("items", veclite.WithDimension(2)); err != nil {
+	if _, err := db.CreateCollection("items", veclite.WithDimension(2), veclite.WithTextIndex("label")); err != nil {
 		t.Fatalf("create collection: %v", err)
 	}
 	return &Server{db: db, dbPath: ":memory:"}
@@ -147,5 +147,101 @@ func TestHTTPSearchUnknownSpaceFails(t *testing.T) {
 		map[string]any{"space": "nope", "query": []float64{1, 0}, "top_k": 1})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for unknown space, got %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestHTTPUpsertRecordByKeyAndHybridSearchSpace covers the new named-space
+// endpoints end to end: declare a text space, upsert two records by a
+// payload key (insert then replace), and run a hybrid search over the space.
+func TestHTTPUpsertRecordByKeyAndHybridSearchSpace(t *testing.T) {
+	s := newTestServer(t)
+
+	// Declare a dimension-2 text space.
+	rec := do(t, s, http.MethodPost, "/collections/items/spaces",
+		map[string]any{"name": "text", "dimension": 2, "hnsw": true})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("add space: status %d body %s", rec.Code, rec.Body.String())
+	}
+
+	// Insert record A by key.
+	rec = do(t, s, http.MethodPost, "/collections/items/records-upsert-by-key",
+		map[string]any{
+			"key_field": "evidence_id", "key_value": "a",
+			"content": "alpha", "payload": map[string]any{"evidence_id": "a", "label": "A"},
+			"vectors": map[string][]float64{"text": {1, 0}},
+		})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upsert A: status %d body %s", rec.Code, rec.Body.String())
+	}
+	out := decode(t, rec)
+	if out["status"] != "inserted" {
+		t.Fatalf("expected inserted, got %v", out)
+	}
+	idA := out["id"].(float64)
+
+	// Replace A (same key) — should preserve id and switch status to "replaced".
+	rec = do(t, s, http.MethodPost, "/collections/items/records-upsert-by-key",
+		map[string]any{
+			"key_field": "evidence_id", "key_value": "a",
+			"content": "alpha prime", "payload": map[string]any{"evidence_id": "a", "label": "A"},
+			"vectors": map[string][]float64{"text": {1, 0}},
+		})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upsert A (replace): status %d body %s", rec.Code, rec.Body.String())
+	}
+	out = decode(t, rec)
+	if out["status"] != "replaced" || out["id"].(float64) != idA {
+		t.Fatalf("expected replaced at same id, got %v", out)
+	}
+
+	// Insert record B.
+	rec = do(t, s, http.MethodPost, "/collections/items/records-upsert-by-key",
+		map[string]any{
+			"key_field": "evidence_id", "key_value": "b",
+			"content": "beta", "payload": map[string]any{"evidence_id": "b", "label": "B"},
+			"vectors": map[string][]float64{"text": {0, 1}},
+		})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upsert B: status %d body %s", rec.Code, rec.Body.String())
+	}
+
+	// Hybrid search over the text space with query near A.
+	rec = do(t, s, http.MethodPost, "/collections/items/hybrid-search-space",
+		map[string]any{"space": "text", "query": []float64{1, 0}, "text": "alpha", "top_k": 2})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("hybrid-search-space: status %d body %s", rec.Code, rec.Body.String())
+	}
+	results := decode(t, rec)["results"].([]any)
+	if len(results) == 0 {
+		t.Fatalf("expected at least one result")
+	}
+	top := results[0].(map[string]any)
+	if top["payload"].(map[string]any)["label"] != "A" {
+		t.Errorf("expected A first, got %v", top)
+	}
+}
+
+func TestHTTPHybridSearchSpaceDefaultsToDefaultSpace(t *testing.T) {
+	s := newTestServer(t)
+
+	// Insert one record into the default space.
+	rec := do(t, s, http.MethodPost, "/collections/items/records",
+		map[string]any{
+			"content": "login failure", "payload": map[string]any{"k": "v"},
+			"vectors": map[string][]float64{"default": {1, 0}},
+		})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("insert: status %d body %s", rec.Code, rec.Body.String())
+	}
+
+	// Hybrid search without specifying a space — should hit the default space.
+	rec = do(t, s, http.MethodPost, "/collections/items/hybrid-search-space",
+		map[string]any{"query": []float64{1, 0}, "text": "login", "top_k": 1})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("hybrid-search-space (default): status %d body %s", rec.Code, rec.Body.String())
+	}
+	out := decode(t, rec)
+	if int(out["count"].(float64)) != 1 {
+		t.Fatalf("expected 1 result, got %v", out)
 	}
 }

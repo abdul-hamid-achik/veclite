@@ -181,8 +181,8 @@ func (m *Memory) ImportText(content string, chunkSize int, opts ImportOptions) (
 		}
 
 		metadata := map[string]any{
-			"source":      "text_import",
-			"chunk_index": i,
+			"source":       "text_import",
+			"chunk_index":  i,
 			"total_chunks": len(chunks),
 		}
 

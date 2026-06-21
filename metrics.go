@@ -17,10 +17,10 @@ type Metrics struct {
 
 // MetricsSnapshot is a point-in-time snapshot of database metrics.
 type MetricsSnapshot struct {
-	SearchCount    int64         `json:"search_count"`
-	InsertCount    int64         `json:"insert_count"`
-	DeleteCount    int64         `json:"delete_count"`
-	AvgSearchTime  time.Duration `json:"avg_search_time_ns"`
+	SearchCount   int64         `json:"search_count"`
+	InsertCount   int64         `json:"insert_count"`
+	DeleteCount   int64         `json:"delete_count"`
+	AvgSearchTime time.Duration `json:"avg_search_time_ns"`
 }
 
 func newMetrics() *Metrics {

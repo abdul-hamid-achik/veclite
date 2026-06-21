@@ -713,8 +713,8 @@ func TestExpandConsolidationRecord(t *testing.T) {
 
 	// Create a consolidation record manually
 	_, _ = coll.Insert([]float32{0.95, 0.05, 0}, map[string]any{
-		PayloadKeyIsConsolidation:   true,
-		PayloadKeyConsolidatedFrom:  []uint64{id1, id2},
+		PayloadKeyIsConsolidation:    true,
+		PayloadKeyConsolidatedFrom:   []uint64{id1, id2},
 		PayloadKeyConsolidationGroup: "group1",
 	})
 

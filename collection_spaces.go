@@ -1,6 +1,7 @@
 package veclite
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -721,5 +722,153 @@ func (c *Collection) MultiSpaceSearch(queries map[string][]float32, opts ...Sear
 	}
 
 	fused := FuseRRF(sets, WithFusionTopK(config.effectiveTopK()))
+	return config.applyPagination(fused), nil
+}
+
+// UpsertRecordByKey inserts or replaces the record identified by a payload key,
+// carrying vectors across several named vector spaces atomically. It is the
+// named-vector-space analog of UpsertTextDocumentByKey: it scans for an
+// existing record whose payload[keyField] equals keyValue and, if found,
+// replaces that record's content, payload, and vectors with in's; otherwise it
+// inserts a new record.
+//
+// On replace, the existing record's CreatedAt, ExpiresAt, Importance,
+// AccessCount, and LastAccessedAt are preserved (matching UpsertTextDocumentByKey
+// semantics). Vectors for every space the record previously participated in are
+// removed from their indexes before the new vectors are inserted, so a space
+// that the replacement no longer carries is correctly dropped.
+//
+// Returns (id, inserted, error) where inserted is true when a new record was
+// created and false when an existing record was replaced.
+//
+// keyField must be a non-empty payload key. keyValue is compared with the same
+// type-aware rules as payload filters (see Equal). Each key of in.Vectors must
+// be DefaultVectorSpace (or "") or a space declared via AddVectorSpace.
+func (c *Collection) UpsertRecordByKey(keyField string, keyValue any, in RecordInput) (uint64, bool, error) {
+	if err := c.checkReadOnly(); err != nil {
+		return 0, false, err
+	}
+	if keyField == "" {
+		return 0, false, fmt.Errorf("%w: keyField is empty", ErrInvalidVectorSpace)
+	}
+
+	c.mu.Lock()
+	var existingID uint64
+	var existing *Record
+	for id, rec := range c.records {
+		if rec.Payload == nil {
+			continue
+		}
+		if v, ok := rec.Payload[keyField]; ok && compareValues(v, keyValue) {
+			existingID = id
+			existing = rec
+			break
+		}
+	}
+
+	// If found, route through InsertRecord with the resolved ID so the existing
+	// replace path (which clears old vectors from every index and preserves
+	// CreatedAt/bookkeeping) handles the update atomically.
+	in.ID = existingID
+	c.mu.Unlock()
+
+	id, err := c.insertRecordLocked(in)
+	if err != nil {
+		return 0, false, err
+	}
+
+	if c.db != nil && c.db.metrics != nil {
+		c.db.metrics.recordInsert()
+	}
+	c.enforceMemoryLimitIfConfigured()
+	c.syncIfNeeded()
+
+	if record, err := c.Get(id); err == nil {
+		c.notifySubscribers(record)
+	}
+
+	inserted := existing == nil
+	return id, inserted, nil
+}
+
+// HybridSearchSpace performs vector search over a named vector space and BM25
+// text search over the collection, then fuses the two result sets with
+// Reciprocal Rank Fusion (k=60). It is the named-space analog of HybridSearch:
+// use it when the query vector lives in a named space declared via
+// AddVectorSpace rather than the default space.
+//
+// Passing DefaultVectorSpace (or "") is equivalent to HybridSearch. Requires
+// text indexing to be enabled via WithTextIndex. Use WithVectorWeight and
+// WithTextWeight to control the fusion balance.
+func (c *Collection) HybridSearchSpace(space string, query []float32, text string, opts ...SearchOption) ([]Result, error) {
+	if c.textIndex == nil {
+		return nil, errors.New("veclite: text index not enabled on this collection")
+	}
+	if len(query) == 0 {
+		return nil, ErrEmptyVector
+	}
+	if text == "" {
+		return nil, errors.New("veclite: empty text query for hybrid search")
+	}
+
+	config := defaultSearchConfig()
+	for _, opt := range opts {
+		opt.apply(config)
+	}
+
+	// Fetch more results from each source for better fusion.
+	fetchK := config.effectiveTopK() * 2
+	if fetchK < 20 {
+		fetchK = 20
+	}
+
+	// Vector half: search the named space (SearchSpace handles the default
+	// space transparently when space is "" or DefaultVectorSpace).
+	vectorOpts := []SearchOption{TopK(fetchK), WithContent(config.includeContent)}
+	if config.threshold != nil {
+		vectorOpts = append(vectorOpts, Threshold(*config.threshold))
+	}
+	for _, f := range config.filters {
+		vectorOpts = append(vectorOpts, WithFilter(f))
+	}
+	if config.efSearch > 0 {
+		vectorOpts = append(vectorOpts, WithEfSearch(config.efSearch))
+	}
+	vectorResults, err := c.SearchSpace(space, query, vectorOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Text half: BM25 over the collection's single text index.
+	textOpts := []SearchOption{TopK(fetchK), WithContent(config.includeContent)}
+	for _, f := range config.filters {
+		textOpts = append(textOpts, WithFilter(f))
+	}
+	textResults, err := c.TextSearch(text, textOpts...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine weights.
+	vectorWeight := 1.0
+	textWeight := 1.0
+	if config.vectorWeight > 0 {
+		vectorWeight = config.vectorWeight
+	}
+	if config.textWeight > 0 {
+		textWeight = config.textWeight
+	}
+
+	fused := reciprocalRankFusion(
+		[][]Result{vectorResults, textResults},
+		60,
+		[]float64{vectorWeight, textWeight},
+	)
+
+	effectiveK := config.effectiveTopK()
+	if len(fused) > effectiveK {
+		fused = fused[:effectiveK]
+	}
+
 	return config.applyPagination(fused), nil
 }

@@ -251,3 +251,99 @@ func writeSearchResults(w http.ResponseWriter, results []veclite.Result) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"results": out, "count": len(out)})
 }
+
+// upsertRecordByKey handles POST /collections/{name}/records-upsert-by-key.
+// It inserts or replaces the record identified by a payload key, carrying
+// vectors across several named vector spaces atomically.
+func (s *Server) upsertRecordByKey(w http.ResponseWriter, r *http.Request, collName string) {
+	coll := s.db.Collection(collName)
+
+	var req struct {
+		KeyField string               `json:"key_field"`
+		KeyValue any                  `json:"key_value"`
+		Content  string               `json:"content"`
+		Payload  map[string]any       `json:"payload"`
+		Vectors  map[string][]float64 `json:"vectors"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
+		return
+	}
+	if req.KeyField == "" {
+		writeError(w, http.StatusBadRequest, "key_field is required", "MISSING_KEY_FIELD")
+		return
+	}
+	if req.KeyValue == nil {
+		writeError(w, http.StatusBadRequest, "key_value is required", "MISSING_KEY_VALUE")
+		return
+	}
+
+	vectors := make(map[string][]float32, len(req.Vectors))
+	for name, vec := range req.Vectors {
+		vectors[name] = toFloat32(vec)
+	}
+
+	id, inserted, err := coll.UpsertRecordByKey(req.KeyField, req.KeyValue, veclite.RecordInput{
+		Content: req.Content,
+		Payload: req.Payload,
+		Vectors: vectors,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error(), "UPSERT_ERROR")
+		return
+	}
+	status := "inserted"
+	if !inserted {
+		status = "replaced"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":     status,
+		"id":         id,
+		"inserted":   inserted,
+		"collection": collName,
+	})
+}
+
+// hybridSearchSpace handles POST /collections/{name}/hybrid-search-space.
+// It runs a vector search over a named space and a BM25 text search, then
+// fuses the two result sets with RRF.
+func (s *Server) hybridSearchSpace(w http.ResponseWriter, r *http.Request, collName string) {
+	coll, err := s.db.GetCollection(collName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Collection not found", "NOT_FOUND")
+		return
+	}
+
+	var req struct {
+		Space     string          `json:"space"`
+		Query     []float64       `json:"query"`
+		Text      string          `json:"text"`
+		TopK      int             `json:"top_k"`
+		Threshold *float64        `json:"threshold"`
+		Filters   []filterRequest `json:"filters"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid JSON", "INVALID_JSON")
+		return
+	}
+	if len(req.Query) == 0 {
+		writeError(w, http.StatusBadRequest, "Query vector is required", "MISSING_QUERY")
+		return
+	}
+	if req.Text == "" {
+		writeError(w, http.StatusBadRequest, "Text query is required", "MISSING_TEXT")
+		return
+	}
+
+	space := req.Space
+	if space == "" {
+		space = veclite.DefaultVectorSpace
+	}
+	opts := buildSearchOpts(req.TopK, req.Threshold, req.Filters)
+	results, err := coll.HybridSearchSpace(space, toFloat32(req.Query), req.Text, opts...)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error(), "SEARCH_ERROR")
+		return
+	}
+	writeSearchResults(w, results)
+}

@@ -321,7 +321,7 @@ func TestHybridSearch(t *testing.T) {
 	// Hybrid search: query vector is close to doc 1, text query matches doc 2
 	results, err := coll.HybridSearch(
 		[]float32{0.85, 0.15, 0.1}, // close to "Vector DB"
-		"text search retrieval",     // matches "Text Search"
+		"text search retrieval",    // matches "Text Search"
 		TopK(3),
 	)
 	if err != nil {

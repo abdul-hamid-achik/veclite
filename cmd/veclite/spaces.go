@@ -463,6 +463,164 @@ func cmdFuseSearch(args []string) error {
 	return outputSearchResults(results, "fused", *jsonOutput)
 }
 
+// cmdRecordUpsertByKey inserts or replaces a record identified by a payload key.
+func cmdRecordUpsertByKey(args []string) error {
+	fs := flag.NewFlagSet("record-upsert-by-key", flag.ExitOnError)
+	keyField := fs.String("key-field", "", "Payload key whose value identifies the record (required)")
+	keyValue := fs.String("key-value", "", "Value of the payload key (required)")
+	vectorsStr := fs.String("vectors", "", `Vectors as JSON object, e.g. '{"default":[0.1,0.2],"image":[0.3,0.4]}'`)
+	content := fs.String("content", "", "Text content (indexed by BM25 when text indexing is enabled)")
+	payloadStr := fs.String("payload", "", "Payload as JSON object")
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Println("Usage: veclite record-upsert-by-key [options] <file> <collection>")
+		fmt.Println("\nInsert or replace a logical record identified by a payload key,")
+		fmt.Println("carrying vectors in one or more named spaces. Idempotent by keyField/keyValue.")
+		fmt.Println("\nOptions:")
+		fs.PrintDefaults()
+		fmt.Println("\nExamples:")
+		fmt.Println(`  veclite record-upsert-by-key data.veclite evidence --key-field=evidence_id --key-value=doc-1 --vectors='{"text":[0.1,0.2,0.3]}' --content='checkout fails'`)
+	}
+	_ = fs.Parse(args)
+
+	if fs.NArg() < 2 {
+		fs.Usage()
+		return fmt.Errorf("missing required arguments: file and collection")
+	}
+	if *keyField == "" {
+		return fmt.Errorf("--key-field is required")
+	}
+	if *keyValue == "" {
+		return fmt.Errorf("--key-value is required")
+	}
+	if *vectorsStr == "" {
+		return fmt.Errorf("--vectors is required")
+	}
+
+	path := fs.Arg(0)
+	collName := fs.Arg(1)
+
+	vectors, err := parseVectorMap(*vectorsStr)
+	if err != nil {
+		return err
+	}
+	var payload map[string]any
+	if *payloadStr != "" {
+		if err := json.Unmarshal([]byte(*payloadStr), &payload); err != nil {
+			return fmt.Errorf("parsing payload: %w", err)
+		}
+	}
+	in := veclite.RecordInput{Content: *content, Payload: payload, Vectors: vectors}
+
+	db, err := veclite.Open(path)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer db.Close()
+
+	coll := db.Collection(collName)
+	id, inserted, err := coll.UpsertRecordByKey(*keyField, *keyValue, in)
+	if err != nil {
+		return fmt.Errorf("upserting record by key: %w", err)
+	}
+	if err := db.Sync(); err != nil {
+		return fmt.Errorf("syncing database: %w", err)
+	}
+
+	if *jsonOutput {
+		return encodeJSON(map[string]any{
+			"status":     statusString(inserted),
+			"collection": collName,
+			"id":         id,
+			"inserted":   inserted,
+			"key_field":  *keyField,
+			"key_value":  *keyValue,
+		})
+	}
+	fmt.Printf("Upserted record by %s=%s: id=%d, inserted=%v\n", *keyField, *keyValue, id, inserted)
+	return nil
+}
+
+// cmdHybridSearchSpace runs a vector search over a named space and a BM25 text
+// search, then fuses the results with RRF.
+func cmdHybridSearchSpace(args []string) error {
+	fs := flag.NewFlagSet("hybrid-search-space", flag.ExitOnError)
+	queryStr := fs.String("query", "", "Query vector as JSON array (required)")
+	textQuery := fs.String("text", "", "Text query for BM25 (required)")
+	topK := fs.Int("top-k", 10, "Number of fused results to return")
+	threshold := fs.Float64("threshold", 0, "Minimum similarity threshold (0 = disabled)")
+	filterStr := fs.String("filter", "", "Filter expression applied to both halves")
+	jsonOutput := fs.Bool("json", false, "Output as JSON")
+	fs.Usage = func() {
+		fmt.Println("Usage: veclite hybrid-search-space [options] <file> <collection> <space>")
+		fmt.Println("\nSearch a named vector space and BM25, then fuse with RRF.")
+		fmt.Println("'default' (or omitted space) is equivalent to hybrid-search.")
+		fmt.Println("\nOptions:")
+		fs.PrintDefaults()
+		fmt.Println("\nExamples:")
+		fmt.Println("  veclite hybrid-search-space data.veclite evidence text --query='[0.1,0.2,0.3]' --text='checkout' --top-k=5")
+	}
+	_ = fs.Parse(args)
+
+	if fs.NArg() < 2 {
+		fs.Usage()
+		return fmt.Errorf("missing required arguments: file and collection (space is optional, defaults to 'default')")
+	}
+	if *queryStr == "" {
+		return fmt.Errorf("--query is required")
+	}
+	if *textQuery == "" {
+		return fmt.Errorf("--text is required")
+	}
+
+	path := fs.Arg(0)
+	collName := fs.Arg(1)
+	space := veclite.DefaultVectorSpace
+	if fs.NArg() >= 3 {
+		space = fs.Arg(2)
+	}
+
+	query, err := parseFloat32Array(*queryStr)
+	if err != nil {
+		return err
+	}
+
+	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer db.Close()
+
+	coll, err := db.GetCollection(collName)
+	if err != nil {
+		return fmt.Errorf("getting collection: %w", err)
+	}
+
+	opts := []veclite.SearchOption{veclite.TopK(*topK)}
+	if *threshold > 0 {
+		opts = append(opts, veclite.Threshold(float32(*threshold)))
+	}
+	if *filterStr != "" {
+		if f := parseFilter(*filterStr); f != nil {
+			opts = append(opts, veclite.WithFilter(f))
+		}
+	}
+
+	results, err := coll.HybridSearchSpace(space, query, *textQuery, opts...)
+	if err != nil {
+		return fmt.Errorf("hybrid space search: %w", err)
+	}
+
+	return outputSearchResults(results, "hybrid:"+space, *jsonOutput)
+}
+
+func statusString(inserted bool) string {
+	if inserted {
+		return "inserted"
+	}
+	return "replaced"
+}
+
 // parseFloat32Array parses a JSON numeric array into []float32.
 func parseFloat32Array(s string) ([]float32, error) {
 	var f64 []float64

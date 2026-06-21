@@ -27,9 +27,9 @@ const (
 
 // Known model dimensions for common models.
 var knownDimensions = map[string]int{
-	"nomic-embed-text":  768,
-	"mxbai-embed-large": 1024,
-	"all-minilm":        384,
+	"nomic-embed-text":       768,
+	"mxbai-embed-large":      1024,
+	"all-minilm":             384,
 	"snowflake-arctic-embed": 1024,
 }
 

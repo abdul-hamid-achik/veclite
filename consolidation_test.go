@@ -138,11 +138,11 @@ func TestConsolidate(t *testing.T) {
 		embedder := &testConsolidationEmbedder{dim: 4}
 
 		result, err := coll2.Consolidate(ConsolidationConfig{
-			SimilarityThreshold:  0.9,
-			MinGroupSize:         2,
-			SummaryGenerator:     summaryGenerator,
-			Embedder:             embedder,
-			ArchiveOriginals:     true,
+			SimilarityThreshold: 0.9,
+			MinGroupSize:        2,
+			SummaryGenerator:    summaryGenerator,
+			Embedder:            embedder,
+			ArchiveOriginals:    true,
 		})
 		if err != nil {
 			t.Fatalf("Consolidate failed: %v", err)
