@@ -35,7 +35,7 @@ func cmdMCP(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	srv := &MCPServer{
 		db:           db,

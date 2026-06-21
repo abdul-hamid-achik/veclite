@@ -9,7 +9,7 @@ func TestKnowledgeGraphEntity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, err := db.CreateKnowledgeGraph("test")
 	if err != nil {
@@ -113,7 +113,7 @@ func TestKnowledgeGraphRelationship(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 
@@ -223,7 +223,7 @@ func TestKnowledgeGraphTraversal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 
@@ -344,7 +344,7 @@ func TestKnowledgeGraphSearchWithExpansion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 
@@ -392,7 +392,7 @@ func TestKnowledgeGraphStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 
@@ -474,7 +474,7 @@ func TestCreateKnowledgeGraphNoName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	_, err = db.CreateKnowledgeGraph("")
 	if err == nil {
@@ -487,7 +487,7 @@ func TestAddEntityNoID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 	err = kg.AddEntity(Entity{Name: "No ID"})
@@ -501,7 +501,7 @@ func TestAddRelationshipNoID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 	_ = kg.AddEntity(Entity{ID: "a"})
@@ -570,7 +570,7 @@ func TestKnowledgeGraphPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open for restore failed: %v", err)
 	}
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 
 	kg2, err := db2.GetKnowledgeGraph("persist-test")
 	if err != nil {

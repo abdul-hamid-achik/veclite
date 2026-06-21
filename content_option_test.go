@@ -7,7 +7,7 @@ func TestWithContentControlsSearchResultContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("docs",
 		WithDimension(3),
@@ -96,7 +96,7 @@ func TestSearchExplainAppliesPaginationOptions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 
 			coll, err := db.CreateCollection("docs", tt.opts...)
 			if err != nil {

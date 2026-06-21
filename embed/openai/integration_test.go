@@ -20,7 +20,7 @@ func TestConcurrentEmbedIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	const numGoroutines = 5
 	texts := []string{
@@ -69,7 +69,7 @@ func TestUnicodeTextIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	unicodeTexts := []string{
 		"Hello 世界",          // Chinese
@@ -100,7 +100,7 @@ func TestLongTextIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	// Create a long text (~6000 tokens, under 8192 limit)
 	// Each sentence is ~11 tokens, so 500 sentences ≈ 5500 tokens
@@ -128,7 +128,7 @@ func TestMinimalTextIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	minimalTexts := []string{"a", ".", "1", " "}
 
@@ -152,7 +152,7 @@ func TestMixedBatchIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	texts := []string{
 		"Short",
@@ -189,7 +189,7 @@ func TestEmbeddingConsistencyIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	text := "The quick brown fox jumps over the lazy dog."
 
@@ -218,7 +218,7 @@ func TestLargeModelIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	if e.Dimension() != DimensionLarge {
 		t.Errorf("expected dimension %d for large model, got %d", DimensionLarge, e.Dimension())
@@ -245,7 +245,7 @@ func TestReducedDimensionsIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	if e.Dimension() != 512 {
 		t.Errorf("expected dimension 512, got %d", e.Dimension())
@@ -281,7 +281,7 @@ func TestSemanticClusteringIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	// Animals cluster
 	cat, _ := e.Embed("cat")
@@ -316,7 +316,7 @@ func TestLargeBatchIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	const batchSize = 50
 	texts := make([]string, batchSize)
@@ -344,7 +344,7 @@ func BenchmarkEmbedOpenAI(b *testing.B) {
 	if err != nil {
 		b.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	text := "This is a sample text for benchmarking OpenAI embedding performance."
 

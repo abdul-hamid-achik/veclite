@@ -63,7 +63,7 @@ func TestInsertWithOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open db: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -193,7 +193,7 @@ func TestCleanupExpired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open db: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -261,7 +261,7 @@ func TestTTLPersistence(t *testing.T) {
 		if err != nil {
 			t.Fatalf("failed to open db: %v", err)
 		}
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 
 		coll := db.Collection("test")
 		vec := []float32{0.1, 0.2, 0.3}
@@ -280,7 +280,7 @@ func TestTTLPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to reopen db: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.GetCollection("test")
 	if err != nil {

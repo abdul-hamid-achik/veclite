@@ -13,7 +13,7 @@ func TestSearchPagination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 	// Insert 10 vectors
@@ -80,7 +80,7 @@ func TestWithLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 	for i := 0; i < 5; i++ {
@@ -105,7 +105,7 @@ func TestIterator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 	for i := 0; i < 10; i++ {
@@ -167,7 +167,7 @@ func TestForEach(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 	for i := 0; i < 5; i++ {
@@ -205,7 +205,7 @@ func TestInsertDocument(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("docs")
 	id, err := coll.InsertDocument(
@@ -249,14 +249,14 @@ func TestContentPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
+	_ = db.Close()
 
 	// Reopen and verify
 	db, err = Open(path, WithReadOnly(true))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err = db.GetCollection("docs")
 	if err != nil {
@@ -280,7 +280,7 @@ func TestHybridSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("hybrid",
 		WithDimension(3),
@@ -344,7 +344,7 @@ func TestHybridSearchWeights(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("weighted",
 		WithDimension(3),
@@ -404,7 +404,7 @@ func TestSearchStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("stream")
 	for i := 0; i < 5; i++ {
@@ -476,7 +476,7 @@ func TestInsertText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("embed",
 		WithDimension(4),
@@ -510,7 +510,7 @@ func TestSearchText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("embed",
 		WithDimension(4),
@@ -539,7 +539,7 @@ func TestNoEmbedderError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("no-embedder")
 	_, err = coll.InsertText("test", nil)
@@ -560,7 +560,7 @@ func TestMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("metrics")
 
@@ -636,7 +636,7 @@ func TestWithLogger(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// The logger is configured, that's the test
 	if db.logger == nil {
@@ -682,14 +682,14 @@ func TestBM25Persistence(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	db.Close()
+	_ = db.Close()
 
 	// Reopen and verify text search works
 	db, err = Open(path, WithReadOnly(true))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err = db.GetCollection("docs")
 	if err != nil {
@@ -718,7 +718,7 @@ func TestBackwardCompatEmptyContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -754,14 +754,14 @@ func TestBackwardCompatPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	db.Close()
+	_ = db.Close()
 
 	// Reopen - should load without errors
 	db, err = Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err = db.GetCollection("old")
 	if err != nil {

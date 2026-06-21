@@ -56,7 +56,7 @@ func (m *Memory) ImportSession(sessionPath string, opts ImportOptions) (int, err
 	if err != nil {
 		return 0, fmt.Errorf("openclaw: failed to open session file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Set defaults
 	if opts.DefaultImportance <= 0 || opts.DefaultImportance > 1 {

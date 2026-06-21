@@ -11,7 +11,7 @@ func TestSubscription(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -23,7 +23,7 @@ func TestSubscription(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Subscribe failed: %v", err)
 		}
-		defer sub.Close()
+		defer func() { _ = sub.Close() }()
 
 		// Insert a matching record
 		id, _ := coll.Insert([]float32{0.9, 0.1, 0, 0}, nil)
@@ -58,7 +58,7 @@ func TestSubscription(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Subscribe failed: %v", err)
 		}
-		defer sub.Close()
+		defer func() { _ = sub.Close() }()
 
 		// Insert a record that doesn't meet threshold
 		id, _ := threshColl.Insert([]float32{0.5, 0.5, 0, 0}, nil)
@@ -84,7 +84,7 @@ func TestSubscription(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Subscribe failed: %v", err)
 		}
-		defer sub.Close()
+		defer func() { _ = sub.Close() }()
 
 		// Insert non-matching record
 		id1, _ := coll.Insert([]float32{0.9, 0.1, 0, 0}, map[string]any{"type": "regular"})
@@ -169,7 +169,7 @@ func TestSubscriptionConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -186,7 +186,7 @@ func TestSubscriptionConcurrency(t *testing.T) {
 	}
 	defer func() {
 		for _, sub := range subs {
-			sub.Close()
+			_ = sub.Close()
 		}
 	}()
 
@@ -233,7 +233,7 @@ func TestSubscriptionBufferSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -245,7 +245,7 @@ func TestSubscriptionBufferSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Subscribe failed: %v", err)
 	}
-	defer sub.Close()
+	defer func() { _ = sub.Close() }()
 
 	sm := db.getSubscriptionManager(coll)
 

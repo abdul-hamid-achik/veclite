@@ -149,7 +149,7 @@ func (e *Embedder) Embed(text string) ([]float32, error) {
 		// Check for connection refused
 		return nil, fmt.Errorf("ollama: request failed (is Ollama running at %s?): %w", e.cfg.baseURL, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

@@ -24,8 +24,8 @@ func TestDefaultConfig(t *testing.T) {
 
 func TestExpandEnvVars(t *testing.T) {
 	// Set up test env var
-	os.Setenv("TEST_VAR", "test_value")
-	defer os.Unsetenv("TEST_VAR")
+	_ = os.Setenv("TEST_VAR", "test_value")
+	defer func() { _ = os.Unsetenv("TEST_VAR") }()
 
 	tests := []struct {
 		input    string
@@ -82,8 +82,8 @@ embedder:
 }
 
 func TestLoadConfigWithEnvExpansion(t *testing.T) {
-	os.Setenv("TEST_API_KEY", "expanded-key")
-	defer os.Unsetenv("TEST_API_KEY")
+	_ = os.Setenv("TEST_API_KEY", "expanded-key")
+	defer func() { _ = os.Unsetenv("TEST_API_KEY") }()
 
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "veclite.yaml")
@@ -121,8 +121,8 @@ func TestLoadConfigDefaults(t *testing.T) {
 }
 
 func TestExpandPath(t *testing.T) {
-	os.Setenv("TEST_DIR", "/test/dir")
-	defer os.Unsetenv("TEST_DIR")
+	_ = os.Setenv("TEST_DIR", "/test/dir")
+	defer func() { _ = os.Unsetenv("TEST_DIR") }()
 
 	tests := []struct {
 		input    string

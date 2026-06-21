@@ -84,7 +84,7 @@ func get(path string) string {
 		log.Printf("GET %s failed: %v", path, err)
 		return fmt.Sprintf("Error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return readBody(resp)
 }
 
@@ -95,7 +95,7 @@ func post(path string, body any) string {
 		log.Printf("POST %s failed: %v", path, err)
 		return fmt.Sprintf("Error: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return readBody(resp)
 }
 

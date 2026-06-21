@@ -10,7 +10,7 @@ func TestCreateEpisode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("memories")
 
@@ -64,7 +64,7 @@ func TestDetectEpisodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("memories")
 
@@ -124,7 +124,7 @@ func TestExpandEpisode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("memories")
 
@@ -168,7 +168,7 @@ func TestEpisodeOperations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("memories")
 	id1, _ := coll.Insert([]float32{1, 0, 0, 0}, nil)
@@ -236,7 +236,7 @@ func TestSearchWithEpisodeExpansion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("memories")
 
@@ -282,7 +282,7 @@ func TestSearchEpisodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("memories")
 
@@ -370,7 +370,7 @@ func TestEpisodeStorePersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open for restore failed: %v", err)
 	}
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 
 	es2, err := db2.GetEpisodeStore("ep-data")
 	if err != nil {

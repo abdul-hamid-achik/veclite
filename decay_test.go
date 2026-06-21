@@ -143,7 +143,7 @@ func TestSearchWithDecay(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open db: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -197,7 +197,7 @@ func TestSearchWithImportanceBoost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open db: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -227,7 +227,7 @@ func TestAccessTracking(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open db: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 

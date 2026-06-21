@@ -32,7 +32,7 @@ func setupBenchCollection(b *testing.B, n, dim int, useHNSW bool) *Collection {
 	if err != nil {
 		b.Fatalf("Failed to open database: %v", err)
 	}
-	b.Cleanup(func() { db.Close() })
+	b.Cleanup(func() { _ = db.Close() })
 
 	var coll *Collection
 	if useHNSW {
@@ -114,7 +114,7 @@ func BenchmarkSearchWithFilters(b *testing.B) {
 	size := 10000
 
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("bench",
 		WithDimension(dim),
@@ -166,7 +166,7 @@ func BenchmarkInsertSingle(b *testing.B) {
 
 	b.Run("brute", func(b *testing.B) {
 		db, _ := Open(":memory:")
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 		coll, _ := db.CreateCollection("bench", WithDimension(dim))
 
 		b.ResetTimer()
@@ -178,7 +178,7 @@ func BenchmarkInsertSingle(b *testing.B) {
 
 	b.Run("hnsw", func(b *testing.B) {
 		db, _ := Open(":memory:")
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 		coll, _ := db.CreateCollection("bench",
 			WithDimension(dim),
 			WithHNSW(16, 100),
@@ -209,7 +209,7 @@ func BenchmarkBatchInsert(b *testing.B) {
 				db, _ := Open(":memory:")
 				coll, _ := db.CreateCollection("bench", WithDimension(dim))
 				_, _ = coll.InsertBatch(vectors, nil)
-				db.Close()
+				_ = db.Close()
 			}
 		})
 
@@ -227,7 +227,7 @@ func BenchmarkBatchInsert(b *testing.B) {
 					WithHNSW(16, 100),
 				)
 				_, _ = coll.InsertBatch(vectors, nil)
-				db.Close()
+				_ = db.Close()
 			}
 		})
 	}
@@ -239,7 +239,7 @@ func BenchmarkHybridSearch(b *testing.B) {
 	size := 5000
 
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("bench",
 		WithDimension(dim),
@@ -288,7 +288,7 @@ func BenchmarkHybridSearch(b *testing.B) {
 // BenchmarkGraphTraverse benchmarks knowledge graph traversal.
 func BenchmarkGraphTraverse(b *testing.B) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, _ := db.CreateKnowledgeGraph("bench")
 
@@ -350,7 +350,7 @@ func BenchmarkMemoryOperations(b *testing.B) {
 
 	b.Run("remember", func(b *testing.B) {
 		db, _ := Open(":memory:")
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 		coll, _ := db.CreateCollection("memories",
 			WithDimension(dim),
 			WithHNSW(16, 100),
@@ -366,7 +366,7 @@ func BenchmarkMemoryOperations(b *testing.B) {
 
 	b.Run("recall", func(b *testing.B) {
 		db, _ := Open(":memory:")
-		defer db.Close()
+		defer func() { _ = db.Close() }()
 		coll, _ := db.CreateCollection("memories",
 			WithDimension(dim),
 			WithHNSW(16, 100),
@@ -394,7 +394,7 @@ func BenchmarkConsolidation(b *testing.B) {
 	size := 500
 
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("memories",
 		WithDimension(dim),
@@ -432,7 +432,7 @@ func BenchmarkEpisodeDetection(b *testing.B) {
 	size := 500
 
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("memories",
 		WithDimension(dim),

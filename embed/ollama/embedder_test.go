@@ -171,7 +171,7 @@ func TestEmbedWithMockServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	// Test single embed
 	vec, err := e.Embed("Hello world")
@@ -209,7 +209,7 @@ func TestEmbedBatchWithMockServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	texts := []string{"First", "Second", "Third"}
 	vecs, err := e.EmbedBatch(texts)
@@ -244,7 +244,7 @@ func TestEmbedAPIError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	_, err = e.Embed("test")
 	if err == nil {
@@ -273,7 +273,7 @@ func TestEmptyEmbeddingError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	_, err = e.Embed("test")
 	if err == nil {
@@ -294,7 +294,7 @@ func skipWithoutOllama(t *testing.T) {
 	if err != nil {
 		t.Skip("Ollama not running at localhost:11434")
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 func TestEmbedIntegration(t *testing.T) {
@@ -304,7 +304,7 @@ func TestEmbedIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	vec, err := e.Embed("Hello, world!")
 	if err != nil {
@@ -328,7 +328,7 @@ func TestEmbedBatchIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	texts := []string{
 		"The quick brown fox jumps over the lazy dog.",
@@ -360,7 +360,7 @@ func TestSemanticSimilarityIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	similar1, _ := e.Embed("The cat sat on the mat.")
 	similar2, _ := e.Embed("A kitten was sitting on a rug.")

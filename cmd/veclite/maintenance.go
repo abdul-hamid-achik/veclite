@@ -36,7 +36,7 @@ func cmdCompact(args []string) error {
 		return fmt.Errorf("opening database: %w", err)
 	}
 	statsBefore := db.Stats()
-	db.Close()
+	_ = db.Close()
 
 	// Get file size before
 	fileBefore, err := os.Stat(path)
@@ -52,11 +52,11 @@ func cmdCompact(args []string) error {
 	}
 
 	if err := db.Sync(); err != nil {
-		db.Close()
+		_ = db.Close()
 		return fmt.Errorf("syncing database: %w", err)
 	}
 
-	db.Close()
+	_ = db.Close()
 
 	// Get file size after
 	fileAfter, err := os.Stat(path)
@@ -124,7 +124,7 @@ func cmdValidate(args []string) error {
 		outputValidation(*jsonOutput, path, fileInfo.Size(), issues, warnings, false)
 		return fmt.Errorf("database validation failed")
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Validate each collection
 	for _, collName := range db.Collections() {
@@ -252,7 +252,7 @@ func cmdBenchmark(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.GetCollection(*collection)
 	if err != nil {

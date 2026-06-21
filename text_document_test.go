@@ -12,7 +12,7 @@ func TestTextDocumentSearchExplainAndStreamSkipTextOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("evidence",
 		WithDimension(3),
@@ -93,7 +93,7 @@ func TestTextDocumentPersistenceAndHNSWPromotion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err = db.GetCollection("evidence")
 	if err != nil {
@@ -195,7 +195,7 @@ func TestInsertTextDocumentWithOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("docs", WithTextIndex("kind"))
 	if err != nil {

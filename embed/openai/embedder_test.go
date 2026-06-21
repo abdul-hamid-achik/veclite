@@ -52,10 +52,10 @@ func TestOptions(t *testing.T) {
 func TestNewEmbedderNoAPIKey(t *testing.T) {
 	// Ensure env var is not set for this test
 	orig := os.Getenv("OPENAI_API_KEY")
-	os.Unsetenv("OPENAI_API_KEY")
+	_ = os.Unsetenv("OPENAI_API_KEY")
 	defer func() {
 		if orig != "" {
-			os.Setenv("OPENAI_API_KEY", orig)
+			_ = os.Setenv("OPENAI_API_KEY", orig)
 		}
 	}()
 
@@ -68,12 +68,12 @@ func TestNewEmbedderNoAPIKey(t *testing.T) {
 // TestNewEmbedderWithEnvKey verifies API key from environment.
 func TestNewEmbedderWithEnvKey(t *testing.T) {
 	orig := os.Getenv("OPENAI_API_KEY")
-	os.Setenv("OPENAI_API_KEY", "env-test-key")
+	_ = os.Setenv("OPENAI_API_KEY", "env-test-key")
 	defer func() {
 		if orig != "" {
-			os.Setenv("OPENAI_API_KEY", orig)
+			_ = os.Setenv("OPENAI_API_KEY", orig)
 		} else {
-			os.Unsetenv("OPENAI_API_KEY")
+			_ = os.Unsetenv("OPENAI_API_KEY")
 		}
 	}()
 
@@ -220,7 +220,7 @@ func TestEmbedWithMockServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	// Test single embed
 	vec, err := e.Embed("Hello world")
@@ -262,7 +262,7 @@ func TestEmbedAPIError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	_, err = e.Embed("test")
 	if err == nil {
@@ -297,7 +297,7 @@ func TestEmbedIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	vec, err := e.Embed("Hello, world!")
 	if err != nil {
@@ -316,7 +316,7 @@ func TestEmbedBatchIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	texts := []string{
 		"The quick brown fox jumps over the lazy dog.",
@@ -347,7 +347,7 @@ func TestSemanticSimilarityIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create embedder: %v", err)
 	}
-	defer e.Close()
+	defer func() { _ = e.Close() }()
 
 	similar1, _ := e.Embed("The cat sat on the mat.")
 	similar2, _ := e.Embed("A kitten was sitting on a rug.")

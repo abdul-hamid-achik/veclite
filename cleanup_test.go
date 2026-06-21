@@ -12,7 +12,7 @@ func TestTTLCleanerStartStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	var cleanupCount int32
 
@@ -38,7 +38,7 @@ func TestTTLCleanerRemovesExpired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("test", WithDimension(3))
 	if err != nil {
@@ -97,7 +97,7 @@ func TestTTLCleanerDoubleStop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	stop := db.StartTTLCleaner(100*time.Millisecond, nil)
 
@@ -112,7 +112,7 @@ func TestMemoryLimiterEnforcesLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 
@@ -147,7 +147,7 @@ func TestMemoryLimiterFIFO(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 
@@ -187,7 +187,7 @@ func TestMemoryLimiterImportance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 
@@ -232,7 +232,7 @@ func TestMemoryLimiterBackground(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 
@@ -264,7 +264,7 @@ func TestMemoryLimiterUnderLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 
@@ -293,7 +293,7 @@ func TestWithMemoryLimitsEvictsOnInsert(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("test",
 		WithDimension(3),
@@ -325,7 +325,7 @@ func TestMemoryLimiterSkipsArchived(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to open database: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 

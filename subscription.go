@@ -171,7 +171,7 @@ func (sm *subscriptionManager) unsubscribe(id string) bool {
 	sm.mu.Unlock()
 
 	if ok {
-		sub.Close()
+		_ = sub.Close()
 	}
 	return ok
 }

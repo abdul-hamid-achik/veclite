@@ -16,7 +16,7 @@ func TestOpenMemory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open(:memory:) failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if db.Path() != ":memory:" {
 		t.Errorf("Path() = %v, want :memory:", db.Path())
@@ -53,7 +53,7 @@ func TestOpenFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reopen failed: %v", err)
 	}
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 
 	coll2, err := db2.GetCollection("test")
 	if err != nil {
@@ -133,7 +133,7 @@ func TestDatabaseAndCollectionMetadataPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if got := db.Metadata()["app"]; got != "vecgrep" {
 		t.Fatalf("db metadata app = %v, want vecgrep", got)
@@ -181,7 +181,7 @@ func TestDatabaseAndCollectionMetadataPersistence(t *testing.T) {
 
 func TestCollectionGetOrCreate(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// First call creates
 	coll1 := db.Collection("test")
@@ -198,7 +198,7 @@ func TestCollectionGetOrCreate(t *testing.T) {
 
 func TestCreateCollection(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("test", WithDimension(128))
 	if err != nil {
@@ -219,7 +219,7 @@ func TestCreateCollection(t *testing.T) {
 
 func TestDropCollection(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	db.Collection("test")
 	if !db.HasCollection("test") {
@@ -243,7 +243,7 @@ func TestDropCollection(t *testing.T) {
 
 func TestInsertAndGet(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 	vector := []float32{1, 2, 3, 4, 5}
@@ -279,7 +279,7 @@ func TestInsertAndGet(t *testing.T) {
 
 func TestInsertDimensionLocking(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -308,7 +308,7 @@ func TestInsertDimensionLocking(t *testing.T) {
 
 func TestInsertEmptyVector(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -320,7 +320,7 @@ func TestInsertEmptyVector(t *testing.T) {
 
 func TestInsertBatch(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -351,7 +351,7 @@ func TestInsertBatch(t *testing.T) {
 
 func TestDelete(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 	id, _ := coll.Insert([]float32{1, 2, 3}, nil)
@@ -373,7 +373,7 @@ func TestDelete(t *testing.T) {
 
 func TestDeleteWhere(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 	if _, err := coll.Insert([]float32{1, 2, 3}, map[string]any{"lang": "go"}); err != nil {
@@ -402,7 +402,7 @@ func TestDeleteWhere(t *testing.T) {
 
 func TestSearch(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -434,7 +434,7 @@ func TestSearch(t *testing.T) {
 
 func TestSearchWithFilter(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -461,7 +461,7 @@ func TestSearchWithFilter(t *testing.T) {
 
 func TestSearchWithThreshold(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -480,7 +480,7 @@ func TestSearchWithThreshold(t *testing.T) {
 
 func TestFind(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 	_, _ = coll.Insert([]float32{1, 2, 3}, map[string]any{"type": "function", "file": "main.go"})
@@ -500,7 +500,7 @@ func TestFind(t *testing.T) {
 
 func TestFindOne(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 	_, _ = coll.Insert([]float32{1, 2, 3}, map[string]any{"file": "main.go"})
@@ -535,7 +535,7 @@ func TestDistanceTypes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			db, _ := Open(":memory:")
-			defer db.Close()
+			defer func() { _ = db.Close() }()
 
 			coll, _ := db.CreateCollection("test", WithDistanceType(tt.distanceType))
 			_, _ = coll.Insert([]float32{1, 0, 0}, nil)
@@ -555,7 +555,7 @@ func TestDistanceTypes(t *testing.T) {
 
 func TestConcurrentAccess(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -619,14 +619,14 @@ func TestPersistenceRoundTrip(t *testing.T) {
 		)
 	}
 
-	db.Close()
+	_ = db.Close()
 
 	// Reopen and verify
 	db2, err := Open(path)
 	if err != nil {
 		t.Fatalf("Reopen failed: %v", err)
 	}
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 
 	coll2, err := db2.GetCollection("embeddings")
 	if err != nil {
@@ -650,7 +650,7 @@ func TestPersistenceRoundTrip(t *testing.T) {
 
 func TestDatabaseStats(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll1 := db.Collection("coll1")
 	if _, err := coll1.Insert([]float32{1, 2, 3}, nil); err != nil {
@@ -678,7 +678,7 @@ func TestDatabaseStats(t *testing.T) {
 
 func TestCollectionClear(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 	_, _ = coll.Insert([]float32{1, 2, 3}, nil)
@@ -725,7 +725,7 @@ func TestRecordClone(t *testing.T) {
 
 func BenchmarkInsert(b *testing.B) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 	vector := make([]float32, 384)
@@ -741,7 +741,7 @@ func BenchmarkInsert(b *testing.B) {
 
 func BenchmarkInsertBatch(b *testing.B) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -761,7 +761,7 @@ func BenchmarkInsertBatch(b *testing.B) {
 
 func BenchmarkSearch10K(b *testing.B) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -789,7 +789,7 @@ func BenchmarkSearch10K(b *testing.B) {
 
 func TestHNSWCollection(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("test", WithDimension(4), WithHNSW(16, 200))
 	if err != nil {
@@ -833,7 +833,7 @@ func TestHNSWCollection(t *testing.T) {
 
 func TestHNSWSearchWithEf(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(32), WithHNSW(16, 200))
 
@@ -864,7 +864,7 @@ func TestHNSWSearchWithEf(t *testing.T) {
 
 func TestHNSWExplain(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(4), WithHNSW(16, 200))
 
@@ -929,14 +929,14 @@ func TestHNSWPersistence(t *testing.T) {
 		refIDs[i] = r.Record.ID
 	}
 
-	db.Close()
+	_ = db.Close()
 
 	// Reopen
 	db2, err := Open(path)
 	if err != nil {
 		t.Fatalf("Reopen failed: %v", err)
 	}
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 
 	coll2, _ := db2.GetCollection("embeddings")
 
@@ -965,7 +965,7 @@ func TestHNSWPersistence(t *testing.T) {
 
 func TestHNSWFallbackToFilteredSearch(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(4), WithHNSW(16, 200))
 
@@ -992,7 +992,7 @@ func TestHNSWFallbackToFilteredSearch(t *testing.T) {
 
 func BenchmarkHNSWSearch10K(b *testing.B) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(128), WithHNSW(16, 200))
 
@@ -1020,7 +1020,7 @@ func BenchmarkHNSWSearch10K(b *testing.B) {
 
 func BenchmarkBruteForceSearch10K(b *testing.B) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test") // No HNSW
 
@@ -1050,7 +1050,7 @@ func BenchmarkBruteForceSearch10K(b *testing.B) {
 
 func TestHNSWWithThreshold(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(4), WithHNSW(16, 200))
 
@@ -1080,7 +1080,7 @@ func TestHNSWWithThreshold(t *testing.T) {
 
 func TestHNSWWithHighThreshold(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(4), WithHNSW(16, 200))
 
@@ -1107,7 +1107,7 @@ func TestHNSWWithHighThreshold(t *testing.T) {
 
 func TestUpsertNewRecord(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -1133,7 +1133,7 @@ func TestUpsertNewRecord(t *testing.T) {
 
 func TestUpsertExistingRecord(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -1167,7 +1167,7 @@ func TestUpsertExistingRecord(t *testing.T) {
 
 func TestUpsertWithSpecificID(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -1190,7 +1190,7 @@ func TestUpsertWithSpecificID(t *testing.T) {
 
 func TestUpsertEmptyVector(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -1202,7 +1202,7 @@ func TestUpsertEmptyVector(t *testing.T) {
 
 func TestUpsertDimensionMismatch(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -1218,7 +1218,7 @@ func TestUpsertDimensionMismatch(t *testing.T) {
 
 func TestUpsertWithHNSW(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3), WithHNSW(16, 200))
 
@@ -1244,7 +1244,7 @@ func TestUpsertWithHNSW(t *testing.T) {
 
 func TestUpsertByKeyInsert(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -1272,7 +1272,7 @@ func TestUpsertByKeyInsert(t *testing.T) {
 
 func TestUpsertByKeyUpdate(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -1314,7 +1314,7 @@ func TestUpsertByKeyUpdate(t *testing.T) {
 
 func TestUpsertByKeyWithHNSW(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3), WithHNSW(16, 200))
 
@@ -1341,7 +1341,7 @@ func TestUpsertByKeyWithHNSW(t *testing.T) {
 
 func TestUpsertByKeyEmptyVector(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -1353,7 +1353,7 @@ func TestUpsertByKeyEmptyVector(t *testing.T) {
 
 func TestUpdateVector(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -1380,7 +1380,7 @@ func TestUpdateVector(t *testing.T) {
 
 func TestUpdateVectorWithHNSW(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3), WithHNSW(16, 200))
 
@@ -1406,7 +1406,7 @@ func TestUpdateVectorWithHNSW(t *testing.T) {
 
 func TestUpdateVectorDimensionMismatch(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 	id, _ := coll.Insert([]float32{1, 2, 3}, nil)
@@ -1419,7 +1419,7 @@ func TestUpdateVectorDimensionMismatch(t *testing.T) {
 
 func TestUpdateVectorEmptyVector(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 	id, _ := coll.Insert([]float32{1, 2, 3}, nil)
@@ -1432,7 +1432,7 @@ func TestUpdateVectorEmptyVector(t *testing.T) {
 
 func TestUpdateVectorNotFound(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 
@@ -1507,7 +1507,7 @@ func TestResetClearsNextID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open failed: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 

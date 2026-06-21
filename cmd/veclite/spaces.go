@@ -127,7 +127,7 @@ func cmdSpaceAdd(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection(collName)
 
@@ -189,7 +189,7 @@ func cmdSpaces(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.GetCollection(collName)
 	if err != nil {
@@ -309,7 +309,7 @@ func cmdRecordInsert(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection(collName)
 	ids := make([]uint64, 0, len(inputs))
@@ -379,7 +379,7 @@ func cmdSearchSpace(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.GetCollection(collName)
 	if err != nil {
@@ -441,7 +441,7 @@ func cmdFuseSearch(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.GetCollection(collName)
 	if err != nil {
@@ -516,7 +516,7 @@ func cmdRecordUpsertByKey(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection(collName)
 	id, inserted, err := coll.UpsertRecordByKey(*keyField, *keyValue, in)
@@ -589,7 +589,7 @@ func cmdHybridSearchSpace(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.GetCollection(collName)
 	if err != nil {

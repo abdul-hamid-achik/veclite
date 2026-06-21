@@ -45,7 +45,7 @@ func TestMemoryBasic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer mem.Close()
+	defer func() { _ = mem.Close() }()
 
 	t.Run("remember and recall", func(t *testing.T) {
 		id, err := mem.Remember("Test memory content", RememberOptions{
@@ -153,7 +153,7 @@ func TestMemoryFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer mem.Close()
+	defer func() { _ = mem.Close() }()
 
 	// Create memories with different properties
 	_, _ = mem.Remember("High importance memory", RememberOptions{Importance: 0.9, Tags: []string{"important"}})
@@ -197,7 +197,7 @@ func TestMemoryForget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer mem.Close()
+	defer func() { _ = mem.Close() }()
 
 	// Create some memories
 	_, _ = mem.Remember("To forget by tag", RememberOptions{Tags: []string{"delete-me"}})
@@ -244,7 +244,7 @@ func TestMemoryExportMarkdown(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer mem.Close()
+	defer func() { _ = mem.Close() }()
 
 	// Create some memories
 	_, _ = mem.Remember("First memory", RememberOptions{
@@ -289,7 +289,7 @@ func TestMemoryRecallRecent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer mem.Close()
+	defer func() { _ = mem.Close() }()
 
 	// Create memories
 	for i := 0; i < 5; i++ {
@@ -322,7 +322,7 @@ func TestMemoryStats(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer mem.Close()
+	defer func() { _ = mem.Close() }()
 
 	// Create some memories
 	_, _ = mem.Remember("Memory 1", RememberOptions{Importance: 0.8})
@@ -346,7 +346,7 @@ func TestMemoryWithPrecomputedVector(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer mem.Close()
+	defer func() { _ = mem.Close() }()
 
 	// Remember with pre-computed vector
 	vec := make([]float32, 128)

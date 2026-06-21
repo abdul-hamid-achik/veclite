@@ -8,7 +8,7 @@ import (
 // TC-GRAPH-001: Create knowledge graph and add entities
 func TestKnowledgeGraphAddEntity(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, err := db.CreateKnowledgeGraph("test")
 	if err != nil {
@@ -45,7 +45,7 @@ func TestKnowledgeGraphAddEntity(t *testing.T) {
 // TC-GRAPH-002: Duplicate entity ID fails
 func TestKnowledgeGraphDuplicateEntity(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 
@@ -60,7 +60,7 @@ func TestKnowledgeGraphDuplicateEntity(t *testing.T) {
 // TC-GRAPH-003: Add relationships between entities
 func TestKnowledgeGraphAddRelationship(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 
@@ -91,7 +91,7 @@ func TestKnowledgeGraphAddRelationship(t *testing.T) {
 // TC-GRAPH-004: Relationship with missing entity fails
 func TestKnowledgeGraphRelationshipMissingEntity(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 	_ = kg.AddEntity(Entity{ID: "alice", Type: "person"})
@@ -111,7 +111,7 @@ func TestKnowledgeGraphRelationshipMissingEntity(t *testing.T) {
 // TC-GRAPH-005: Graph traversal BFS
 func TestKnowledgeGraphTraversalBFS(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 
@@ -155,7 +155,7 @@ func TestKnowledgeGraphTraversalBFS(t *testing.T) {
 // TC-CONV-001: Add and retrieve conversation turns
 func TestConversationAddTurn(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("conv", WithDimension(3))
 
@@ -200,7 +200,7 @@ func TestConversationAddTurn(t *testing.T) {
 // TC-CONV-002: List sessions
 func TestConversationListSessions(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("conv", WithDimension(3))
 
@@ -220,7 +220,7 @@ func TestConversationListSessions(t *testing.T) {
 // TC-CONV-003: Search within session
 func TestConversationSearchInSession(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("conv", WithDimension(3))
 
@@ -251,7 +251,7 @@ func TestConversationSearchInSession(t *testing.T) {
 // TC-EPISODE-001: Manually create episode
 func TestEpisodeCreate(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("memories", WithDimension(3))
 
@@ -283,7 +283,7 @@ func TestEpisodeCreate(t *testing.T) {
 // TC-EPISODE-002: Get episode
 func TestEpisodeGet(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("memories", WithDimension(3))
 	id1, _ := coll.Insert([]float32{1, 0, 0}, nil)
@@ -308,7 +308,7 @@ func TestEpisodeGet(t *testing.T) {
 // TC-EPISODE-003: List episodes
 func TestEpisodeList(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("memories", WithDimension(3))
 	id1, _ := coll.Insert([]float32{1, 0, 0}, nil)
@@ -329,7 +329,7 @@ func TestEpisodeList(t *testing.T) {
 // TC-EPISODE-004: Expand episode returns records
 func TestEpisodeExpand(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("memories", WithDimension(3))
 	id1, _ := coll.InsertWithOptions([]float32{1, 0, 0}, nil, WithContentOption("First"))
@@ -351,7 +351,7 @@ func TestEpisodeExpand(t *testing.T) {
 // TC-CONSOLIDATION-001: Find similar clusters
 func TestConsolidationFindClusters(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 
@@ -383,7 +383,7 @@ func TestConsolidationFindClusters(t *testing.T) {
 // TC-CONSOLIDATION-002: Archive and unarchive records
 func TestConsolidationArchive(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 	id, _ := coll.Insert([]float32{1, 0, 0}, nil)
@@ -415,7 +415,7 @@ func TestConsolidationArchive(t *testing.T) {
 // TC-CONSOLIDATION-003: Archive non-existent record fails
 func TestConsolidationArchiveNotFound(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 
@@ -428,7 +428,7 @@ func TestConsolidationArchiveNotFound(t *testing.T) {
 // TC-CRUD-001: Get record by ID
 func TestCollectionGet(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 	id, _ := coll.Insert([]float32{1, 0, 0}, map[string]any{"name": "test"})
@@ -449,7 +449,7 @@ func TestCollectionGet(t *testing.T) {
 // TC-CRUD-002: Get non-existent record fails
 func TestCollectionGetNotFound(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 
@@ -462,7 +462,7 @@ func TestCollectionGetNotFound(t *testing.T) {
 // TC-CRUD-003: Update record payload
 func TestCollectionUpdatePayload(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 	id, _ := coll.Insert([]float32{1, 0, 0}, map[string]any{"name": "old"})
@@ -484,7 +484,7 @@ func TestCollectionUpdatePayload(t *testing.T) {
 // TC-CRUD-004: Update non-existent record fails
 func TestCollectionUpdateNotFound(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 
@@ -497,7 +497,7 @@ func TestCollectionUpdateNotFound(t *testing.T) {
 // TC-CRUD-005: Delete record by ID
 func TestCollectionDeleteByID(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 	id, _ := coll.Insert([]float32{1, 0, 0}, nil)
@@ -516,7 +516,7 @@ func TestCollectionDeleteByID(t *testing.T) {
 // TC-CRUD-006: Delete non-existent record fails
 func TestCollectionDeleteNotFound(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 
@@ -529,7 +529,7 @@ func TestCollectionDeleteNotFound(t *testing.T) {
 // TC-GRAPH-006: Delete entity removes relationships
 func TestKnowledgeGraphDeleteEntityCleansRelationships(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 
@@ -555,7 +555,7 @@ func TestKnowledgeGraphDeleteEntityCleansRelationships(t *testing.T) {
 // TC-GRAPH-007: Delete relationship
 func TestKnowledgeGraphDeleteRelationship(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 
@@ -579,7 +579,7 @@ func TestKnowledgeGraphDeleteRelationship(t *testing.T) {
 // TC-GRAPH-008: Delete non-existent relationship fails
 func TestKnowledgeGraphDeleteRelationshipNotFound(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 
@@ -592,7 +592,7 @@ func TestKnowledgeGraphDeleteRelationshipNotFound(t *testing.T) {
 // TC-GRAPH-009: List entities by type
 func TestKnowledgeGraphListEntitiesByType(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	kg, _ := db.CreateKnowledgeGraph("test")
 
@@ -619,7 +619,7 @@ func TestKnowledgeGraphListEntitiesByType(t *testing.T) {
 // TC-CLEANUP-001: Count expired records
 func TestCountExpiredMCP(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 
@@ -642,7 +642,7 @@ func TestCountExpiredMCP(t *testing.T) {
 // TC-CLEANUP-002: Cleanup expired records
 func TestCleanupExpiredMCP(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 
@@ -675,7 +675,7 @@ func TestCleanupExpiredMCP(t *testing.T) {
 // TC-MEMORY-001: Enforce memory limit
 func TestEnforceMemoryLimitMCP(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 
@@ -703,7 +703,7 @@ func TestEnforceMemoryLimitMCP(t *testing.T) {
 // TC-CONSOLIDATION-004: Expand consolidation record
 func TestExpandConsolidationRecord(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("test", WithDimension(3))
 
@@ -738,7 +738,7 @@ func TestExpandConsolidationRecord(t *testing.T) {
 // TC-CONV-004: Delete session
 func TestConversationDeleteSession(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("conv", WithDimension(3))
 
@@ -769,7 +769,7 @@ func TestConversationDeleteSession(t *testing.T) {
 // TC-CONV-005: Get session stats
 func TestConversationSessionStats(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("conv", WithDimension(3))
 
@@ -797,7 +797,7 @@ func TestConversationSessionStats(t *testing.T) {
 // TC-COLLECTION-001: Create collection with options
 func TestCreateCollectionWithOptions(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("test",
 		WithDimension(128),
@@ -819,7 +819,7 @@ func TestCreateCollectionWithOptions(t *testing.T) {
 // TC-COLLECTION-002: Drop collection
 func TestDropCollectionMCP(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	_, _ = db.CreateCollection("test", WithDimension(3))
 
@@ -837,7 +837,7 @@ func TestDropCollectionMCP(t *testing.T) {
 // TC-COLLECTION-003: Drop non-existent collection fails
 func TestDropCollectionNotFound(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	err := db.DropCollection("non-existent")
 	if err == nil {
@@ -848,7 +848,7 @@ func TestDropCollectionNotFound(t *testing.T) {
 // TC-DB-001: Sync database
 func TestDatabaseSync(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 	_, _ = coll.Insert([]float32{1, 0, 0}, nil)
@@ -862,7 +862,7 @@ func TestDatabaseSync(t *testing.T) {
 // TC-DB-002: Get metrics
 func TestDatabaseMetrics(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("test")
 	_, _ = coll.Insert([]float32{1, 0, 0}, nil)
@@ -877,7 +877,7 @@ func TestDatabaseMetrics(t *testing.T) {
 // TC-INTEGRATION-001: Full agent memory workflow
 func TestAgentMemoryWorkflow(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, _ := db.CreateCollection("memories",
 		WithDimension(3),

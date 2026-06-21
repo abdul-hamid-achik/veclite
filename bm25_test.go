@@ -180,7 +180,7 @@ func TestCollectionTextSearch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("docs",
 		WithDimension(3),
@@ -239,7 +239,7 @@ func TestCollectionTextSearchNoIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("no-text")
 	_, err = coll.Insert([]float32{0.1, 0.2, 0.3}, nil)
@@ -258,7 +258,7 @@ func TestTextDocumentSearchAndVectorSearchSkip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("evidence",
 		WithDimension(3),
@@ -326,7 +326,7 @@ func TestTextDocumentUpsertReindexesAndRemovesVector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("docs",
 		WithDimension(3),
@@ -392,7 +392,7 @@ func TestTextDocumentCanReceiveVectorLater(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("evidence",
 		WithHNSW(16, 200),
@@ -469,7 +469,7 @@ func TestTextIndexReindexedOnPayloadMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("docs",
 		WithDimension(3),

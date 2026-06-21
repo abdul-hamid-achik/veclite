@@ -48,7 +48,7 @@ func TestDefaultVectorSpaceAlwaysExists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection("c")
 	if !coll.HasVectorSpace(DefaultVectorSpace) {
@@ -65,7 +65,7 @@ func TestDefaultVectorSpaceAlwaysExists(t *testing.T) {
 
 func TestAddVectorSpaceValidation(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	coll := db.Collection("c")
 
 	if err := coll.AddVectorSpace(VectorSpaceConfig{Name: DefaultVectorSpace, Dimension: 3}); !errors.Is(err, ErrInvalidVectorSpace) {
@@ -84,7 +84,7 @@ func TestAddVectorSpaceValidation(t *testing.T) {
 
 func TestInsertRecordAndSearchSpaces(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("multi",
 		WithDimension(3),
@@ -160,7 +160,7 @@ func TestInsertRecordAndSearchSpaces(t *testing.T) {
 
 func TestMultiSpaceSearchFusion(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	coll, _ := db.CreateCollection("m", WithDimension(2),
 		WithVectorSpace(VectorSpaceConfig{Name: "image", Dimension: 2}))
 
@@ -191,7 +191,7 @@ func TestMultiSpaceSearchFusion(t *testing.T) {
 
 func TestEmbeddingProfileValidationOnInsert(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	coll, _ := db.CreateCollection("p",
 		WithEmbeddingProfile(EmbeddingProfile{Provider: "openai", Model: "m", Dimension: 3, Distance: DistanceCosine}))
 
@@ -217,7 +217,9 @@ func TestNamedSpacePersistenceRoundTrip(t *testing.T) {
 	coll, _ := db.CreateCollection("docs", WithDimension(3),
 		WithVectorSpace(VectorSpaceConfig{Name: "image", Dimension: 2, Modality: "image",
 			HNSW: &HNSWConfig{M: 8, EfConstruction: 64, EfSearch: 32, UseHeuristic: true}}))
-	coll.SetEmbeddingProfile(EmbeddingProfile{Provider: "openai", Model: "text-3", Dimension: 3, Distance: DistanceCosine})
+	if err := coll.SetEmbeddingProfile(EmbeddingProfile{Provider: "openai", Model: "text-3", Dimension: 3, Distance: DistanceCosine}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := coll.InsertRecord(RecordInput{
 		Content: "hello",
 		Payload: map[string]any{"label": "x"},
@@ -234,7 +236,7 @@ func TestNamedSpacePersistenceRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db2.Close()
+	defer func() { _ = db2.Close() }()
 	coll2, err := db2.GetCollection("docs")
 	if err != nil {
 		t.Fatal(err)
@@ -305,7 +307,7 @@ func TestFuseRRFPublic(t *testing.T) {
 
 func TestDeleteRemovesNamedSpaceVectors(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	coll, _ := db.CreateCollection("d", WithDimension(2),
 		WithVectorSpace(VectorSpaceConfig{Name: "image", Dimension: 2,
 			HNSW: &HNSWConfig{M: 8, EfConstruction: 64, EfSearch: 32, UseHeuristic: true}}))
@@ -373,7 +375,7 @@ func TestDeleteRemovesNamedSpaceVectors(t *testing.T) {
 
 func TestDefaultProfileValidatesPrimaryInsert(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Profile set AFTER creation must still be enforced by the primary Insert path.
 	coll := db.Collection("p")
@@ -399,7 +401,7 @@ func TestDefaultProfileValidatesPrimaryInsert(t *testing.T) {
 
 func TestSetRecordVectorAddsSpace(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	coll, _ := db.CreateCollection("s", WithDimension(2),
 		WithVectorSpace(VectorSpaceConfig{Name: "image", Dimension: 2}))
 
@@ -422,7 +424,7 @@ func TestSetRecordVectorAddsSpace(t *testing.T) {
 
 func TestUpsertRecordByKeyInsertThenReplace(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("evidence",
 		WithTextIndex("evidence_id"),
@@ -510,7 +512,7 @@ func TestUpsertRecordByKeyInsertThenReplace(t *testing.T) {
 
 func TestUpsertRecordByKeyEmptyKeyFieldRejected(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	coll, _ := db.CreateCollection("c", WithTextIndex("k"))
 
 	if _, _, err := coll.UpsertRecordByKey("", "v", RecordInput{Content: "x"}); !errors.Is(err, ErrInvalidVectorSpace) {
@@ -520,7 +522,7 @@ func TestUpsertRecordByKeyEmptyKeyFieldRejected(t *testing.T) {
 
 func TestUpsertRecordByKeyRejectsUnknownSpace(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	coll, _ := db.CreateCollection("c", WithTextIndex("evidence_id"))
 
 	if _, _, err := coll.UpsertRecordByKey("evidence_id", "doc-1", RecordInput{
@@ -532,7 +534,7 @@ func TestUpsertRecordByKeyRejectsUnknownSpace(t *testing.T) {
 
 func TestHybridSearchSpaceNamedSpace(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.CreateCollection("evidence",
 		WithTextIndex("kind"),
@@ -588,7 +590,7 @@ func TestHybridSearchSpaceNamedSpace(t *testing.T) {
 
 func TestHybridSearchSpaceRequiresTextIndex(t *testing.T) {
 	db, _ := Open(":memory:")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	coll, _ := db.CreateCollection("c",
 		WithVectorSpace(VectorSpaceConfig{Name: "text", Dimension: 3}))
 

@@ -199,7 +199,7 @@ func cmdInfo(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	stats := db.Stats()
 
@@ -242,7 +242,7 @@ func cmdCollections(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	collections := db.Collections()
 
@@ -307,7 +307,7 @@ func cmdStats(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	stats := db.Stats()
 
@@ -358,7 +358,7 @@ func cmdDump(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	type recordDump struct {
 		ID      uint64         `json:"id"`
@@ -466,7 +466,7 @@ func cmdCreateCollection(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Build collection options
 	opts := []veclite.CollectionOption{
@@ -536,7 +536,7 @@ func cmdDropCollection(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	err = db.DropCollection(name)
 	if err != nil {
@@ -616,7 +616,7 @@ func cmdInsert(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection(collName)
 	id, err := coll.Insert(vector, payload)
@@ -678,7 +678,7 @@ func cmdBatchInsert(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening input file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	type vectorInput struct {
 		Vector  []float64      `json:"vector"`
@@ -733,7 +733,7 @@ func cmdBatchInsert(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection(collName)
 	ids, err := coll.InsertBatch(vectors, payloads)
@@ -812,7 +812,7 @@ func cmdSearch(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.GetCollection(collName)
 	if err != nil {
@@ -907,7 +907,7 @@ func cmdDelete(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.GetCollection(collName)
 	if err != nil {
@@ -969,7 +969,7 @@ func cmdGet(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.GetCollection(collName)
 	if err != nil {
@@ -1085,7 +1085,7 @@ func cmdUpsert(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll := db.Collection(collName)
 
@@ -1164,7 +1164,7 @@ func cmdUpdate(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.GetCollection(collName)
 	if err != nil {
@@ -1246,7 +1246,7 @@ func cmdDeleteWhere(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.GetCollection(collName)
 	if err != nil {
@@ -1299,7 +1299,7 @@ func cmdFind(args []string) error {
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	coll, err := db.GetCollection(collName)
 	if err != nil {

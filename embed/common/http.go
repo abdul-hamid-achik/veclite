@@ -78,7 +78,7 @@ func DoWithRetry(ctx context.Context, client *http.Client, req *http.Request, cf
 
 		// Check if we should retry
 		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			lastErr = NewAPIError("http", resp.StatusCode, "retryable error")
 			continue
 		}
