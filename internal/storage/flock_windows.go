@@ -46,3 +46,13 @@ func unlockFile(f *os.File) error {
 	}
 	return nil
 }
+
+// isProcessAlive returns true if a process with the given PID is currently running.
+// On Windows, stale lock detection is not supported via kill(pid, 0); we conservatively
+// return true so the retry path is used instead of the stale-lock-clear path.
+func isProcessAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	return true
+}

@@ -89,9 +89,60 @@ func readLockInfo(f *os.File) string {
 	return fmt.Sprintf("PID %d, locked %s ago", pid, age)
 }
 
+// readLockPID reads the PID from the first line of a lock file.
+// Returns 0 if the file cannot be read or the PID cannot be parsed.
+func readLockPID(f *os.File) int {
+	_, _ = f.Seek(0, 0)
+	buf := make([]byte, 64)
+	n, err := f.Read(buf)
+	if err != nil || n == 0 {
+		return 0
+	}
+	lines := strings.SplitN(strings.TrimSpace(string(buf[:n])), "\n", 2)
+	if len(lines) == 0 {
+		return 0
+	}
+	pid, err := strconv.Atoi(lines[0])
+	if err != nil {
+		return 0
+	}
+	return pid
+}
+
+// LockConfig controls the retry and stale-lock behaviour of LockWithConfig.
+//
+// MaxRetries is the number of additional attempts after the first failure.
+// InitialDelay is the backoff before the first retry; it doubles on each
+// subsequent retry (exponential backoff).
+type LockConfig struct {
+	MaxRetries   int
+	InitialDelay time.Duration
+}
+
+// DefaultLockConfig returns sensible defaults for interactive MCP server startup:
+// 3 retries with 100ms initial backoff (100ms -> 200ms -> 400ms, ~700ms total max wait).
+func DefaultLockConfig() LockConfig {
+	return LockConfig{
+		MaxRetries:   3,
+		InitialDelay: 100 * time.Millisecond,
+	}
+}
+
 // Lock acquires an exclusive file lock on a .lock file adjacent to the database.
 // This prevents multiple processes from opening the same database.
+//
+// Lock uses DefaultLockConfig (3 retries with exponential backoff) and handles
+// stale lock files left by crashed processes. Use LockWithConfig to customise
+// retry behaviour.
 func (f *File) Lock() error {
+	return f.LockWithConfig(DefaultLockConfig())
+}
+
+// LockWithConfig acquires an exclusive file lock with the given retry configuration.
+// On contention it checks whether the holding PID is still alive: if the PID is
+// dead (stale lock from a crashed process), the lock file is removed and retried
+// immediately; if the PID is alive, it backs off and retries up to cfg.MaxRetries times.
+func (f *File) LockWithConfig(cfg LockConfig) error {
 	lockPath := f.path + ".lock"
 
 	// Ensure parent directory exists
@@ -102,25 +153,49 @@ func (f *File) Lock() error {
 		}
 	}
 
-	lf, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return &Error{Op: "open lock file", Err: err}
+	delay := cfg.InitialDelay
+	if delay < 0 {
+		delay = 0
 	}
 
-	if err := lockFile(lf); err != nil {
-		info := readLockInfo(lf)
-		_ = lf.Close()
-		if info != "" {
-			return &Error{Op: "acquire lock", Err: fmt.Errorf("%w (%s)", ErrFileLocked, info)}
+	for attempt := 0; attempt <= cfg.MaxRetries; attempt++ {
+		lf, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+		if err != nil {
+			return &Error{Op: "open lock file", Err: err}
 		}
-		return &Error{Op: "acquire lock", Err: ErrFileLocked}
+
+		if err := lockFile(lf); err != nil {
+			// flock failed — check if the holding PID is dead (stale lock)
+			pid := readLockPID(lf)
+			if pid > 0 && !isProcessAlive(pid) {
+				// Stale lock from a crashed process: remove it and retry immediately
+				_ = lf.Close()
+				_ = os.Remove(lockPath)
+				continue
+			}
+			// PID is alive (or unknown) — retry with backoff or fail
+			info := readLockInfo(lf)
+			_ = lf.Close()
+			if attempt < cfg.MaxRetries {
+				time.Sleep(delay)
+				delay *= 2
+				continue
+			}
+			// Final attempt failed
+			if info != "" {
+				return &Error{Op: "acquire lock", Err: fmt.Errorf("%w (%s)", ErrFileLocked, info)}
+			}
+			return &Error{Op: "acquire lock", Err: ErrFileLocked}
+		}
+
+		// Write diagnostic info for other processes to read
+		writeLockInfo(lf)
+
+		f.lockFile = lf
+		return nil
 	}
 
-	// Write diagnostic info for other processes to read
-	writeLockInfo(lf)
-
-	f.lockFile = lf
-	return nil
+	return &Error{Op: "acquire lock", Err: ErrFileLocked}
 }
 
 // Unlock releases the file lock.
