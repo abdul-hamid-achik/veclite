@@ -31,7 +31,7 @@ func cmdCompact(args []string) error {
 	path := fs.Arg(0)
 
 	// Get stats before compaction
-	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	db, err := veclite.Open(path, veclite.WithReadOnly(true), veclite.WithSharedRead(true))
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -118,7 +118,7 @@ func cmdValidate(args []string) error {
 	warnings := make([]string, 0)
 
 	// Try to open and read the database
-	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	db, err := veclite.Open(path, veclite.WithReadOnly(true), veclite.WithSharedRead(true))
 	if err != nil {
 		issues = append(issues, fmt.Sprintf("Failed to open database: %v", err))
 		outputValidation(*jsonOutput, path, fileInfo.Size(), issues, warnings, false)
@@ -248,7 +248,7 @@ func cmdBenchmark(args []string) error {
 
 	path := fs.Arg(0)
 
-	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	db, err := veclite.Open(path, veclite.WithReadOnly(true), veclite.WithSharedRead(true))
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}

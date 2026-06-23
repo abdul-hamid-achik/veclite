@@ -17,6 +17,7 @@ package veclite
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -25,7 +26,7 @@ import (
 )
 
 // Version is the library version.
-const Version = "0.19.0"
+const Version = "0.20.0"
 
 // DB represents a VecLite database.
 type DB struct {
@@ -68,9 +69,21 @@ func Open(path string, opts ...Option) (*DB, error) {
 		store = storage.NewMemory()
 	} else {
 		fs := storage.NewFile(path)
-		// Acquire file lock to prevent concurrent access
-		if err := fs.Lock(); err != nil {
-			return nil, err
+		// Acquire file lock to prevent concurrent access.
+		// Use a shared (read) lock for read-only databases opened with
+		// WithSharedRead, allowing multiple read-only processes to coexist.
+		// Use the default exclusive lock otherwise.
+		if config.sharedRead {
+			if !config.readOnly {
+				return nil, fmt.Errorf("veclite: %w", ErrSharedReadRequiresReadOnly)
+			}
+			if err := fs.LockShared(); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := fs.Lock(); err != nil {
+				return nil, err
+			}
 		}
 		store = fs
 	}
@@ -439,6 +452,133 @@ func (db *DB) loadFromSnapshot(snapshot *storage.DatabaseSnapshot) {
 		es.loadFromSnapshot(epSnap)
 		db.episodeStores[name] = es
 	}
+}
+
+// Reload re-reads the database from storage, rebuilding all in-memory state
+// (collections, HNSW indexes, BM25 inverted indexes, knowledge graphs,
+// episode stores). It is intended for read-only databases opened with
+// WithSharedRead so they can pick up writes performed by another process
+// without closing and reopening.
+//
+// Reload acquires the DB write lock for the duration of the rebuild. It is not
+// safe to call concurrently with reads or writes on the same DB instance.
+//
+// Background workers (TTL cleaner, memory limiter) are stopped before reload
+// because they reference the old collection structs that are replaced during
+// reload; callers that need those workers must restart them after Reload
+// returns.
+//
+// Reload returns an error if the database is closed, if the storage backend
+// does not support reloading (e.g. in-memory), or if the reloaded snapshot is
+// corrupt. On error, the in-memory state is left unchanged.
+func (db *DB) Reload() error {
+	// Stop background workers before taking the DB lock — workers may need DB
+	// read locks while they shut down (same pattern as Close).
+	db.stopMu.Lock()
+	stopFuncs := append([]func(){}, db.stopFuncs...)
+	db.stopFuncs = nil
+	db.stopMu.Unlock()
+
+	for _, stop := range stopFuncs {
+		stop()
+	}
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if db.closed {
+		return ErrDatabaseClosed
+	}
+
+	// In-memory storage returns the same pointer it was given, so reloading
+	// would just re-import the in-memory state — a no-op at best, confusing at
+	// worst. Only file-backed storage has an external source of truth.
+	if db.path == ":memory:" {
+		return nil
+	}
+
+	snapshot, err := db.storage.Load()
+	if err != nil {
+		return err
+	}
+
+	// If nothing was ever persisted, leave the in-memory state as-is.
+	if snapshot == nil {
+		return nil
+	}
+
+	// Rebuild in-memory state from the fresh snapshot. We build into new maps
+	// so that if anything fails mid-way, the old state is still intact.
+	newCollections := make(map[string]*Collection, len(snapshot.Collections))
+	newGraphs := make(map[string]*KnowledgeGraph, len(snapshot.KnowledgeGraphs))
+	newEpisodes := make(map[string]*EpisodeStore, len(snapshot.EpisodeStores))
+
+	snapshot = storage.Migrate(snapshot)
+
+	newMetadata := deepCopyMap(snapshot.Metadata)
+	if newMetadata == nil {
+		newMetadata = make(map[string]any)
+	}
+
+	for name, collSnapshot := range snapshot.Collections {
+		coll := newCollection(name, defaultCollectionConfig(), db)
+		coll.loadFromSnapshot(collSnapshot)
+		newCollections[name] = coll
+	}
+
+	for name, graphSnap := range snapshot.KnowledgeGraphs {
+		collName := "_kg_" + name
+		coll, ok := newCollections[collName]
+		if !ok {
+			coll = newCollection(collName, defaultCollectionConfig(), db)
+			newCollections[collName] = coll
+		}
+		kg := &KnowledgeGraph{
+			db:            db,
+			name:          name,
+			entities:      make(map[string]*Entity),
+			relationships: make(map[string]*Relationship),
+			outgoing:      make(map[string][]string),
+			incoming:      make(map[string][]string),
+			collection:    coll,
+			distanceFunc:  floats.GetDistanceFunc(coll.distanceType),
+			higherBetter:  floats.IsHigherBetter(coll.distanceType),
+		}
+		kg.loadFromSnapshot(graphSnap)
+		newGraphs[name] = kg
+	}
+
+	for name, epSnap := range snapshot.EpisodeStores {
+		coll, ok := newCollections[epSnap.CollectionName]
+		if !ok {
+			coll = newCollection(epSnap.CollectionName, defaultCollectionConfig(), db)
+			newCollections[epSnap.CollectionName] = coll
+		}
+		es := &EpisodeStore{
+			collection:   coll,
+			episodes:     make(map[string]*Episode),
+			distanceFunc: floats.GetDistanceFunc(coll.distanceType),
+			higherBetter: floats.IsHigherBetter(coll.distanceType),
+		}
+		es.loadFromSnapshot(epSnap)
+		newEpisodes[name] = es
+	}
+
+	// Atomic swap: replace all in-memory state at once.
+	db.metadata = newMetadata
+	db.collections = newCollections
+	db.knowledgeGraphs = newGraphs
+	db.episodeStores = newEpisodes
+	db.createdAt = snapshot.CreatedAt
+	db.updatedAt = snapshot.UpdatedAt
+
+	// Clear subscription managers — they reference old collections. New ones
+	// will be created lazily on the next subscribe call.
+	db.subMu.Lock()
+	db.subscriptions = make(map[string]*subscriptionManager)
+	db.subMu.Unlock()
+
+	return nil
 }
 
 // Stats returns statistics about the database.

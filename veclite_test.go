@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/abdul-hamid-achik/veclite/internal/floats"
+	"github.com/abdul-hamid-achik/veclite/internal/storage"
 )
 
 func TestOpenMemory(t *testing.T) {
@@ -1623,5 +1624,354 @@ func TestCloseStopsTTLCleanerWithoutDeadlock(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("Close timed out with active TTL cleaner")
+	}
+}
+
+// --- Shared read and Reload tests ---
+
+func TestSharedReadRequiresReadOnly(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.veclite")
+
+	_, err := Open(path, WithSharedRead(true))
+	if err == nil {
+		t.Fatal("Open with WithSharedRead(true) but without WithReadOnly(true) should fail")
+	}
+	if !errors.Is(err, ErrSharedReadRequiresReadOnly) {
+		t.Errorf("expected ErrSharedReadRequiresReadOnly, got: %v", err)
+	}
+}
+
+func TestSharedReadOpensWhileExclusiveHeld(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.veclite")
+
+	// Writer opens exclusively, inserts data, syncs, and closes.
+	writer, err := Open(path)
+	if err != nil {
+		t.Fatalf("writer Open failed: %v", err)
+	}
+	coll, err := writer.CreateCollection("test",
+		WithDimension(3),
+		WithDistanceType(DistanceCosine),
+	)
+	if err != nil {
+		t.Fatalf("CreateCollection failed: %v", err)
+	}
+	_, err = coll.Insert([]float32{1, 0, 0}, map[string]any{"label": "first"})
+	if err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
+	if err := writer.Sync(); err != nil {
+		t.Fatalf("Sync failed: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("writer Close failed: %v", err)
+	}
+
+	// Reader opens with shared read-only — should succeed since writer released its lock.
+	reader, err := Open(path, WithReadOnly(true), WithSharedRead(true))
+	if err != nil {
+		t.Fatalf("reader Open with WithSharedRead failed: %v", err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	// Reader should see the data the writer inserted.
+	rColl, err := reader.GetCollection("test")
+	if err != nil {
+		t.Fatalf("reader GetCollection failed: %v", err)
+	}
+	results, err := rColl.Search([]float32{1, 0, 0}, TopK(1))
+	if err != nil {
+		t.Fatalf("reader Search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Record.Payload["label"] != "first" {
+		t.Errorf("expected label 'first', got %v", results[0].Record.Payload["label"])
+	}
+}
+
+func TestReloadSeesConcurrentWrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.veclite")
+
+	// Phase 1: writer creates the DB and inserts one record, then closes.
+	writer, err := Open(path)
+	if err != nil {
+		t.Fatalf("writer Open failed: %v", err)
+	}
+	coll, err := writer.CreateCollection("docs",
+		WithDimension(2),
+		WithDistanceType(DistanceCosine),
+	)
+	if err != nil {
+		t.Fatalf("CreateCollection failed: %v", err)
+	}
+	_, err = coll.Insert([]float32{1, 0}, map[string]any{"id": "a"})
+	if err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
+	if err := writer.Sync(); err != nil {
+		t.Fatalf("Sync failed: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("writer Close failed: %v", err)
+	}
+
+	// Phase 2: reader opens shared read-only.
+	reader, err := Open(path, WithReadOnly(true), WithSharedRead(true))
+	if err != nil {
+		t.Fatalf("reader Open failed: %v", err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	// Verify reader sees 1 record.
+	rColl, err := reader.GetCollection("docs")
+	if err != nil {
+		t.Fatalf("reader GetCollection failed: %v", err)
+	}
+	results, err := rColl.Search([]float32{1, 0}, TopK(10))
+	if err != nil {
+		t.Fatalf("reader Search failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result before reload, got %d", len(results))
+	}
+
+	// Phase 3: a second writer opens (after reader released its shared lock? No —
+	// flock on macOS is per-fd, and the reader's shared lock blocks the writer's
+	// exclusive lock even in the same process). So we need to close the reader,
+	// write, and reopen. But that defeats the purpose of testing reload.
+	//
+	// Instead, we use the storage layer directly to write a new snapshot to
+	// the file, bypassing the flock. This simulates another process writing
+	// while we hold a shared read lock.
+	fs := storage.NewFile(path)
+	snap := storage.NewDatabaseSnapshot()
+	snap.CreatedAt = time.Now()
+	snap.UpdatedAt = time.Now()
+	collSnap := storage.NewCollectionSnapshot("docs", 2, floats.DistanceCosine)
+	collSnap.Records = append(collSnap.Records, &storage.RecordSnapshot{
+		ID:      1,
+		Vector:  []float32{1, 0},
+		Payload: map[string]any{"id": "a"},
+	})
+	collSnap.Records = append(collSnap.Records, &storage.RecordSnapshot{
+		ID:      2,
+		Vector:  []float32{0, 1},
+		Payload: map[string]any{"id": "b"},
+	})
+	collSnap.NextID = 3
+	snap.Collections["docs"] = collSnap
+	if err := fs.Save(snap); err != nil {
+		t.Fatalf("direct Save failed: %v", err)
+	}
+
+	// Phase 4: reader reloads — should now see 2 records.
+	if err := reader.Reload(); err != nil {
+		t.Fatalf("Reload failed: %v", err)
+	}
+
+	rColl, err = reader.GetCollection("docs")
+	if err != nil {
+		t.Fatalf("reader GetCollection after reload failed: %v", err)
+	}
+	results, err = rColl.Search([]float32{1, 1}, TopK(10))
+	if err != nil {
+		t.Fatalf("reader Search after reload failed: %v", err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results after reload, got %d", len(results))
+	}
+
+	ids := map[string]bool{}
+	for _, r := range results {
+		ids[r.Record.Payload["id"].(string)] = true
+	}
+	if !ids["a"] || !ids["b"] {
+		t.Errorf("missing records after reload: got %v", ids)
+	}
+}
+
+func TestReloadRebuildsHNSW(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.veclite")
+
+	// Phase 1: writer creates DB with HNSW index, inserts 20 vectors, closes.
+	writer, err := Open(path)
+	if err != nil {
+		t.Fatalf("writer Open failed: %v", err)
+	}
+	coll, err := writer.CreateCollection("hnsw_test",
+		WithDimension(4),
+		WithDistanceType(DistanceCosine),
+		WithHNSW(8, 100),
+	)
+	if err != nil {
+		t.Fatalf("CreateCollection failed: %v", err)
+	}
+	for i := 0; i < 20; i++ {
+		vec := make([]float32, 4)
+		vec[0] = float32(i)
+		vec[1] = float32(i % 3)
+		vec[2] = float32(i % 5)
+		vec[3] = 1
+		_, err = coll.Insert(vec, map[string]any{"idx": i})
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+	}
+	if err := writer.Sync(); err != nil {
+		t.Fatalf("Sync failed: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("writer Close failed: %v", err)
+	}
+
+	// Phase 2: reader opens, searches, verifies 5 results.
+	reader, err := Open(path, WithReadOnly(true), WithSharedRead(true))
+	if err != nil {
+		t.Fatalf("reader Open failed: %v", err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	rColl, err := reader.GetCollection("hnsw_test")
+	if err != nil {
+		t.Fatalf("reader GetCollection failed: %v", err)
+	}
+	query := []float32{5, 2, 0, 1}
+	results, err := rColl.Search(query, TopK(5))
+	if err != nil {
+		t.Fatalf("reader Search failed: %v", err)
+	}
+	if len(results) != 5 {
+		t.Fatalf("expected 5 results, got %d", len(results))
+	}
+
+	// Phase 3: simulate another process writing 10 more records by writing
+	// directly to the storage layer (bypassing the flock).
+	fs := storage.NewFile(path)
+	snap := storage.NewDatabaseSnapshot()
+	snap.CreatedAt = time.Now()
+	snap.UpdatedAt = time.Now()
+	collSnap := storage.NewCollectionSnapshot("hnsw_test", 4, floats.DistanceCosine)
+	collSnap.HNSWConfig = &storage.HNSWConfig{M: 8, EfConstruction: 100, EfSearch: 16}
+	collSnap.NextID = 30
+	for i := 0; i < 30; i++ {
+		vec := make([]float32, 4)
+		vec[0] = float32(i)
+		vec[1] = float32(i % 3)
+		vec[2] = float32(i % 5)
+		vec[3] = 1
+		collSnap.Records = append(collSnap.Records, &storage.RecordSnapshot{
+			ID:      uint64(i + 1),
+			Vector:  vec,
+			Payload: map[string]any{"idx": i},
+		})
+	}
+	snap.Collections["hnsw_test"] = collSnap
+	if err := fs.Save(snap); err != nil {
+		t.Fatalf("direct Save failed: %v", err)
+	}
+
+	// Phase 4: reader reloads and searches again — should see 10 results.
+	if err := reader.Reload(); err != nil {
+		t.Fatalf("Reload failed: %v", err)
+	}
+
+	rColl, err = reader.GetCollection("hnsw_test")
+	if err != nil {
+		t.Fatalf("reader GetCollection after reload failed: %v", err)
+	}
+	results, err = rColl.Search(query, TopK(10))
+	if err != nil {
+		t.Fatalf("reader Search after reload failed: %v", err)
+	}
+	if len(results) != 10 {
+		t.Fatalf("expected 10 results after reload, got %d", len(results))
+	}
+}
+
+func TestReloadOnClosedDB(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.veclite")
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	if err := db.Reload(); !errors.Is(err, ErrDatabaseClosed) {
+		t.Errorf("expected ErrDatabaseClosed, got: %v", err)
+	}
+}
+
+func TestReloadOnMemoryDB(t *testing.T) {
+	db, err := Open(":memory:")
+	if err != nil {
+		t.Fatalf("Open(:memory:) failed: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	// Reload on in-memory DB should be a no-op (returns nil)
+	if err := db.Reload(); err != nil {
+		t.Errorf("Reload on :memory: should return nil, got: %v", err)
+	}
+}
+
+func TestReloadPreservesMetadata(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.veclite")
+
+	// Phase 1: writer sets metadata and syncs, then closes.
+	writer, err := Open(path)
+	if err != nil {
+		t.Fatalf("writer Open failed: %v", err)
+	}
+	if err := writer.SetMetadataValue("version", "1.0"); err != nil {
+		t.Fatalf("SetMetadataValue failed: %v", err)
+	}
+	if err := writer.Sync(); err != nil {
+		t.Fatalf("Sync failed: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("writer Close failed: %v", err)
+	}
+
+	// Phase 2: reader opens, checks metadata.
+	reader, err := Open(path, WithReadOnly(true), WithSharedRead(true))
+	if err != nil {
+		t.Fatalf("reader Open failed: %v", err)
+	}
+	defer func() { _ = reader.Close() }()
+
+	meta := reader.Metadata()
+	if meta["version"] != "1.0" {
+		t.Errorf("expected version '1.0', got %v", meta["version"])
+	}
+
+	// Phase 3: simulate another process updating metadata by writing directly
+	// to the storage layer.
+	fs := storage.NewFile(path)
+	snap := storage.NewDatabaseSnapshot()
+	snap.CreatedAt = time.Now()
+	snap.UpdatedAt = time.Now()
+	snap.Metadata["version"] = "2.0"
+	if err := fs.Save(snap); err != nil {
+		t.Fatalf("direct Save failed: %v", err)
+	}
+
+	// Phase 4: reader reloads and sees updated metadata.
+	if err := reader.Reload(); err != nil {
+		t.Fatalf("Reload failed: %v", err)
+	}
+	meta = reader.Metadata()
+	if meta["version"] != "2.0" {
+		t.Errorf("expected version '2.0' after reload, got %v", meta["version"])
 	}
 }

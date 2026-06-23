@@ -39,12 +39,29 @@ var ErrCorruptedFile = errors.New("veclite: corrupted file")
 // ErrInvalidVersion is returned when the file version is not supported.
 var ErrInvalidVersion = errors.New("veclite: unsupported file version")
 
+// LockMode controls the type of file lock acquired by LockWithConfig.
+type LockMode int
+
+const (
+	// LockExclusive acquires an exclusive lock (LOCK_EX). Only one process
+	// can hold it; no other exclusive or shared lock can coexist. This is the
+	// default and the only valid mode for writers.
+	LockExclusive LockMode = iota
+	// LockShared acquires a shared lock (LOCK_SH). Multiple processes can hold
+	// a shared lock simultaneously, but no process can hold an exclusive lock
+	// while any shared lock is held. Only valid for read-only access.
+	LockShared
+)
+
 // File is a file-based storage implementation.
 // Uses gob encoding with atomic writes for durability.
-// Acquires an exclusive file lock to prevent concurrent access from multiple processes.
+// Acquires an exclusive file lock by default to prevent concurrent access
+// from multiple processes; use LockWithConfig with LockShared for multi-reader
+// read-only access.
 type File struct {
 	path     string
 	lockFile *os.File // held open for the duration to maintain the flock
+	shared   bool     // true if the current lock is shared (read-only)
 }
 
 // NewFile creates a new file storage for the given path.
@@ -114,9 +131,13 @@ func readLockPID(f *os.File) int {
 // MaxRetries is the number of additional attempts after the first failure.
 // InitialDelay is the backoff before the first retry; it doubles on each
 // subsequent retry (exponential backoff).
+// Mode selects exclusive (default, for writers) or shared (for read-only
+// multi-reader access) locking. A shared lock lets multiple read-only processes
+// open the same database simultaneously, but cannot be used for writes.
 type LockConfig struct {
 	MaxRetries   int
 	InitialDelay time.Duration
+	Mode         LockMode
 }
 
 // DefaultLockConfig returns sensible defaults for interactive MCP server startup:
@@ -133,9 +154,23 @@ func DefaultLockConfig() LockConfig {
 //
 // Lock uses DefaultLockConfig (3 retries with exponential backoff) and handles
 // stale lock files left by crashed processes. Use LockWithConfig to customise
-// retry behaviour.
+// retry behaviour or request a shared (multi-reader) lock.
 func (f *File) Lock() error {
 	return f.LockWithConfig(DefaultLockConfig())
+}
+
+// LockShared acquires a shared (read) file lock on a .lock file adjacent to the
+// database. Multiple processes can hold a shared lock simultaneously, enabling
+// multi-process read-only access to the same database. A shared lock should only
+// be used when the database is opened read-only — concurrent writes would
+// silently clobber each other's full-snapshot saves.
+//
+// LockShared uses DefaultLockConfig for retry behaviour and handles stale
+// lock files left by crashed processes.
+func (f *File) LockShared() error {
+	cfg := DefaultLockConfig()
+	cfg.Mode = LockShared
+	return f.LockWithConfig(cfg)
 }
 
 // LockWithConfig acquires an exclusive file lock with the given retry configuration.
@@ -164,7 +199,13 @@ func (f *File) LockWithConfig(cfg LockConfig) error {
 			return &Error{Op: "open lock file", Err: err}
 		}
 
-		if err := lockFile(lf); err != nil {
+		var lockErr error
+		if cfg.Mode == LockShared {
+			lockErr = lockFileShared(lf)
+		} else {
+			lockErr = lockFile(lf)
+		}
+		if lockErr != nil {
 			// flock failed — check if the holding PID is dead (stale lock)
 			pid := readLockPID(lf)
 			if pid > 0 && !isProcessAlive(pid) {
@@ -192,6 +233,7 @@ func (f *File) LockWithConfig(cfg LockConfig) error {
 		writeLockInfo(lf)
 
 		f.lockFile = lf
+		f.shared = cfg.Mode == LockShared
 		return nil
 	}
 
@@ -212,6 +254,7 @@ func (f *File) Unlock() error {
 	err := unlockFile(f.lockFile)
 	_ = f.lockFile.Close()
 	f.lockFile = nil
+	f.shared = false
 	_ = os.Remove(lockPath)
 
 	if err != nil {

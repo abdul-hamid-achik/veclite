@@ -273,3 +273,177 @@ func TestUnlockWhenNotLocked(t *testing.T) {
 		t.Errorf("Unlock() on unlocked file should not error: %v", err)
 	}
 }
+
+// --- Shared (multi-reader) lock tests ---
+
+func TestSharedLockMultipleReaders(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	// First reader acquires a shared lock
+	f1 := NewFile(dbPath)
+	if err := f1.LockShared(); err != nil {
+		t.Fatalf("first LockShared() failed: %v", err)
+	}
+	defer func() { _ = f1.Unlock() }()
+
+	// Second reader should also be able to acquire a shared lock
+	f2 := NewFile(dbPath)
+	if err := f2.LockShared(); err != nil {
+		t.Fatalf("second LockShared() should succeed with shared lock held: %v", err)
+	}
+	defer func() { _ = f2.Unlock() }()
+
+	// Third reader for good measure
+	f3 := NewFile(dbPath)
+	if err := f3.LockShared(); err != nil {
+		t.Fatalf("third LockShared() should succeed with shared locks held: %v", err)
+	}
+	defer func() { _ = f3.Unlock() }()
+
+	if !f1.shared || !f2.shared || !f3.shared {
+		t.Error("shared flag should be set after LockShared()")
+	}
+}
+
+func TestSharedReaderBlocksExclusiveWriter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping contention test in short mode")
+	}
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	// Reader acquires a shared lock
+	reader := NewFile(dbPath)
+	if err := reader.LockShared(); err != nil {
+		t.Fatalf("LockShared() failed: %v", err)
+	}
+	defer func() { _ = reader.Unlock() }()
+
+	// Writer tries to acquire exclusive lock — should fail
+	writer := NewFile(dbPath)
+	cfg := LockConfig{MaxRetries: 1, InitialDelay: 1 * time.Millisecond, Mode: LockExclusive}
+
+	err := writer.LockWithConfig(cfg)
+	if err == nil {
+		_ = writer.Unlock()
+		t.Fatal("exclusive Lock() should fail while shared lock is held")
+	}
+	if !errors.Is(err, ErrFileLocked) {
+		t.Errorf("expected ErrFileLocked, got: %v", err)
+	}
+}
+
+func TestExclusiveWriterBlocksSharedReaders(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping contention test in short mode")
+	}
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	// Writer acquires an exclusive lock
+	writer := NewFile(dbPath)
+	if err := writer.Lock(); err != nil {
+		t.Fatalf("Lock() failed: %v", err)
+	}
+	defer func() { _ = writer.Unlock() }()
+
+	// Reader tries to acquire shared lock — should fail
+	reader := NewFile(dbPath)
+	cfg := LockConfig{MaxRetries: 1, InitialDelay: 1 * time.Millisecond, Mode: LockShared}
+
+	err := reader.LockWithConfig(cfg)
+	if err == nil {
+		_ = reader.Unlock()
+		t.Fatal("LockShared() should fail while exclusive lock is held")
+	}
+	if !errors.Is(err, ErrFileLocked) {
+		t.Errorf("expected ErrFileLocked, got: %v", err)
+	}
+}
+
+func TestSharedLockReleasedAllowsExclusive(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	// Reader acquires shared, then releases
+	reader := NewFile(dbPath)
+	if err := reader.LockShared(); err != nil {
+		t.Fatalf("LockShared() failed: %v", err)
+	}
+	if err := reader.Unlock(); err != nil {
+		t.Fatalf("Unlock() failed: %v", err)
+	}
+
+	// Writer should now succeed
+	writer := NewFile(dbPath)
+	if err := writer.Lock(); err != nil {
+		t.Fatalf("Lock() should succeed after shared lock released: %v", err)
+	}
+	_ = writer.Unlock()
+}
+
+func TestSharedLockReleasedAllowsAnotherShared(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	// First reader
+	r1 := NewFile(dbPath)
+	if err := r1.LockShared(); err != nil {
+		t.Fatalf("first LockShared() failed: %v", err)
+	}
+	_ = r1.Unlock()
+
+	// Second reader after first releases
+	r2 := NewFile(dbPath)
+	if err := r2.LockShared(); err != nil {
+		t.Fatalf("second LockShared() should succeed after first released: %v", err)
+	}
+	_ = r2.Unlock()
+}
+
+func TestLockSharedWithConfigStalePID(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	lockPath := dbPath + ".lock"
+
+	// Create a stale lock file with a dead PID
+	staleContent := []byte("999999\n0\n")
+	if err := os.WriteFile(lockPath, staleContent, 0644); err != nil {
+		t.Fatalf("failed to write stale lock file: %v", err)
+	}
+
+	f := NewFile(dbPath)
+	cfg := LockConfig{MaxRetries: 3, InitialDelay: 1 * time.Millisecond, Mode: LockShared}
+
+	if err := f.LockWithConfig(cfg); err != nil {
+		t.Fatalf("LockWithConfig(shared) should succeed with stale lock: %v", err)
+	}
+
+	if !f.shared {
+		t.Error("shared flag should be true after LockShared via LockWithConfig")
+	}
+
+	_ = f.Unlock()
+}
+
+func TestSharedFlagResetOnUnlock(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	f := NewFile(dbPath)
+	if err := f.LockShared(); err != nil {
+		t.Fatalf("LockShared() failed: %v", err)
+	}
+	if !f.shared {
+		t.Fatal("shared should be true after LockShared()")
+	}
+	if err := f.Unlock(); err != nil {
+		t.Fatalf("Unlock() failed: %v", err)
+	}
+	if f.shared {
+		t.Error("shared should be false after Unlock()")
+	}
+}

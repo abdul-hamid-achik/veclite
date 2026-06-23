@@ -34,6 +34,23 @@ func lockFile(f *os.File) error {
 	return nil
 }
 
+// lockFileShared acquires a shared (read), non-blocking lock on the given file
+// using LockFileEx. Multiple processes can hold a shared lock simultaneously.
+func lockFileShared(f *os.File) error {
+	var ol syscall.Overlapped
+	// 0 flags (no lockfileExclusiveLock) means a shared/0 lock
+	r1, _, err := procLockFileEx.Call(
+		uintptr(f.Fd()),
+		uintptr(lockfileFailImmediately),
+		0, 1, 0,
+		uintptr(unsafe.Pointer(&ol)),
+	)
+	if r1 == 0 {
+		return err
+	}
+	return nil
+}
+
 // unlockFile releases the lock on the given file using UnlockFileEx.
 func unlockFile(f *os.File) error {
 	var ol syscall.Overlapped

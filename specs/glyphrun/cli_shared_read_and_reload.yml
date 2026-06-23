@@ -1,0 +1,99 @@
+version: 1
+name: cli_shared_read_and_reload
+
+metadata:
+  feature: multi-process-access
+  owner: core
+  priority: high
+  tags:
+    - multi-process
+    - shared-read
+    - reload
+    - cli
+    - agent
+
+intent: |
+  Verify that read-only CLI commands open the database with a shared file lock,
+  so they succeed even when another process holds the exclusive (writer) lock.
+  Also verify that the HTTP server's /reload endpoint picks up external writes.
+
+target:
+  cmd:
+    - "/bin/sh"
+    - "-c"
+    - "./bin/veclite search .glyphrun/tmp/shared/items.veclite items --query='[1,0]' --top-k=1 --json"
+  cwd: "."
+  timeoutMs: 20000
+
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: forbid
+
+preconditions:
+  commands:
+    - run: "go build -o ./bin/veclite ./cmd/veclite"
+      timeoutMs: 120000
+    - run: "rm -rf .glyphrun/tmp/shared && mkdir -p .glyphrun/tmp/shared"
+      timeoutMs: 5000
+    - run: "./bin/veclite create-collection .glyphrun/tmp/shared/items.veclite items --dimension=2"
+      timeoutMs: 10000
+    - run: "./bin/veclite insert .glyphrun/tmp/shared/items.veclite items --vector='[1,0]' --payload='{\"label\":\"apple\"}'"
+      timeoutMs: 10000
+    # Start a writer process that holds the exclusive lock in the background.
+    # We use `veclite serve` as the lock holder because it opens RW and stays alive.
+    - run: "./bin/veclite serve .glyphrun/tmp/shared/items.veclite --port=18099 &"
+      timeoutMs: 5000
+    # Give the server a moment to acquire the lock.
+    - run: "sleep 1"
+      timeoutMs: 5000
+
+steps:
+  - wait:
+      process:
+        exitCode: 0
+      timeoutMs: 20000
+  - snapshot: result
+
+outcomes:
+  - id: clean_exit
+    description: the read-only CLI command succeeds despite another process holding the exclusive lock
+    verify:
+      process:
+        exitCode: 0
+  - id: returns_apple
+    description: the search returns the apple record
+    verify:
+      screen:
+        contains: '"label": "apple"'
+  - id: insert_via_server
+    description: a second record can be inserted via the running server
+    verify:
+      command:
+        run: "curl -s -X POST http://localhost:18099/collections/items/vectors -H 'Content-Type: application/json' -d '{\"vector\":[0,1],\"payload\":{\"label\":\"car\"}}' | grep -q inserted"
+  - id: sync_via_server
+    description: the server can sync to disk
+    verify:
+      command:
+        run: "curl -s -X POST http://localhost:18099/sync | grep -q synced"
+  - id: reload_via_server
+    description: the /reload endpoint picks up external changes
+    verify:
+      command:
+        run: "curl -s -X POST http://localhost:18099/reload | grep -q reloaded"
+  - id: server_search_finds_both
+    description: the server sees both records after reload
+    verify:
+      command:
+        run: "curl -s -X POST http://localhost:18099/collections/items/search -H 'Content-Type: application/json' -d '{\"query\":[1,0],\"top_k\":10}' | jq -e '.count == 2' >/dev/null"
+  - id: cli_read_succeeds_while_server_holds_lock
+    description: a read-only CLI search succeeds while the server holds the exclusive writer lock
+    verify:
+      command:
+        run: "./bin/veclite search .glyphrun/tmp/shared/items.veclite items --query='[0,1]' --top-k=1 --json | jq -e '.[0].payload.label == \"car\"' >/dev/null"
+  - id: cleanup_server
+    description: stop the background server to release the lock
+    verify:
+      command:
+        run: "kill $(lsof -ti:18099) 2>/dev/null || true"

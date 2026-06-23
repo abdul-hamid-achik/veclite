@@ -185,7 +185,7 @@ func cmdSpaces(args []string) error {
 	path := fs.Arg(0)
 	collName := fs.Arg(1)
 
-	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	db, err := veclite.Open(path, veclite.WithReadOnly(true), veclite.WithSharedRead(true))
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -375,7 +375,7 @@ func cmdSearchSpace(args []string) error {
 		return err
 	}
 
-	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	db, err := veclite.Open(path, veclite.WithReadOnly(true), veclite.WithSharedRead(true))
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -437,7 +437,7 @@ func cmdFuseSearch(args []string) error {
 		return err
 	}
 
-	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	db, err := veclite.Open(path, veclite.WithReadOnly(true), veclite.WithSharedRead(true))
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -585,7 +585,7 @@ func cmdHybridSearchSpace(args []string) error {
 		return err
 	}
 
-	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	db, err := veclite.Open(path, veclite.WithReadOnly(true), veclite.WithSharedRead(true))
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}

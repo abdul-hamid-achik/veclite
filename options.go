@@ -29,6 +29,7 @@ type Option interface {
 type dbConfig struct {
 	syncOnWrite bool
 	readOnly    bool
+	sharedRead  bool
 	logger      Logger
 }
 
@@ -40,6 +41,7 @@ func defaultDBConfig() *dbConfig {
 	return &dbConfig{
 		syncOnWrite: false,
 		readOnly:    false,
+		sharedRead:  false,
 	}
 }
 
@@ -63,6 +65,23 @@ func WithSyncOnWrite(enabled bool) Option {
 func WithReadOnly(enabled bool) Option {
 	return dbOptionFunc(func(c *dbConfig) {
 		c.readOnly = enabled
+	})
+}
+
+// WithSharedRead enables a shared file lock when opening a read-only database,
+// allowing multiple processes to open the same database file simultaneously for
+// read-only access. This is useful for scenarios where one process writes (e.g.
+// an indexer) while other processes read (e.g. search tools).
+//
+// SharedRead requires ReadOnly — opening a writable database with a shared
+// lock would risk data loss from concurrent full-snapshot saves. If SharedRead
+// is enabled without ReadOnly, Open returns an error.
+//
+// Readers opened with SharedRead see a point-in-time snapshot taken at Open.
+// Call Reload() to pick up writes from other processes.
+func WithSharedRead(enabled bool) Option {
+	return dbOptionFunc(func(c *dbConfig) {
+		c.sharedRead = enabled
 	})
 }
 

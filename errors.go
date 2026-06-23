@@ -33,6 +33,10 @@ var (
 	// ErrReadOnly is returned when a write operation is attempted on a read-only database.
 	ErrReadOnly = errors.New("veclite: database is read-only")
 
+	// ErrSharedReadRequiresReadOnly is returned when WithSharedRead is enabled
+	// without WithReadOnly. A shared file lock is only safe for read-only access.
+	ErrSharedReadRequiresReadOnly = errors.New("veclite: shared read requires read-only mode")
+
 	// ErrVectorSpaceExists is returned when declaring a vector space whose name
 	// is already in use (including the reserved "default" space).
 	ErrVectorSpaceExists = errors.New("veclite: vector space already exists")

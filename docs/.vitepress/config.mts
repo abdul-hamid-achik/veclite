@@ -35,6 +35,7 @@ export default defineConfig({
           { text: "Getting Started", link: "/guide/getting-started" },
           { text: "Using VecLite", link: "/guide/using-veclite" },
           { text: "Named Vector Spaces", link: "/guide/named-vector-spaces" },
+          { text: "Go Client", link: "/guide/go-client" },
           { text: "Embedding Strategy", link: "/embeddings" },
           { text: "Project Status", link: "/project-status" },
         ],

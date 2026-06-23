@@ -191,6 +191,7 @@ db, err := veclite.Open(":memory:")
 db, err := veclite.Open("vectors.veclite",
     veclite.WithSyncOnWrite(true),  // Sync after each write
     veclite.WithReadOnly(true),     // Read-only mode
+    veclite.WithSharedRead(true),   // Shared lock for multi-process reads
     veclite.WithLogger(myLogger),   // Structured logging
 )
 
@@ -201,6 +202,7 @@ defer db.Close()
 |-----------|-------------|
 | `WithSyncOnWrite(bool)` | Sync to disk after each write. Slower but durable. |
 | `WithReadOnly(bool)` | Open in read-only mode. Write operations return errors. |
+| `WithSharedRead(bool)` | Use a shared (non-exclusive) file lock. Requires `WithReadOnly(true)`. Allows multiple read-only processes to open the same DB simultaneously while a writer holds an exclusive lock. Readers see a point-in-time snapshot; call `db.Reload()` to pick up concurrent writes. |
 | `WithLogger(Logger)` | Set structured logger. Default is `NopLogger` (zero overhead). |
 
 ### Collections
@@ -1729,6 +1731,7 @@ veclite serve data.veclite --port=8080 --host=127.0.0.1 --cors
 | POST | `/collections/{name}/compact` | Compact collection |
 | POST | `/collections/{name}/validate` | Validate integrity |
 | POST | `/sync` | Force sync to disk |
+| POST | `/reload` | Reload database from disk (pick up external writes) |
 
 ### Streaming Results
 
@@ -1851,6 +1854,54 @@ r = requests.post(f"{base}/collections/embeddings/search", json={
 })
 print(r.json())  # {"results": [...], "count": 5}
 ```
+
+### Go Client
+
+For Go consumers that need multi-process access, use the `client` package to talk to a
+running `veclite serve` instance. The API mirrors the embedded library so you can swap
+between `veclite.Open(path)` (single-process) and `client.Open(url)` (multi-process) with
+minimal code change:
+
+```go
+import "github.com/abdul-hamid-achik/veclite/client"
+
+// Instead of:  db, _ := veclite.Open("data.veclite")
+// Use:          db, _ := client.Open("http://localhost:8080")
+
+db, err := client.Open("http://localhost:8080")
+if err != nil {
+    log.Fatal(err)
+}
+defer db.Close()
+
+// Create a collection
+coll, err := db.CreateCollection("docs",
+    client.WithDimension(384),
+    client.WithHNSW(16, 200),
+)
+
+// Insert
+id, err := coll.Insert([]float32{0.1, 0.2, 0.3}, map[string]any{"source": "wiki"})
+
+// Search
+results, err := coll.Search([]float32{0.1, 0.2, 0.3}, client.TopK(10))
+
+// Find by filter
+records, err := coll.Find(client.Equal("source", "wiki"))
+
+// Upsert by key
+id, inserted, err := coll.UpsertByKey("file", "main.go", vec, payload)
+
+// Sync and reload
+db.Sync()   // force write to disk
+db.Reload() // pick up external writes
+```
+
+The client supports the same filter operators (`Equal`, `GT`, `Glob`, `Prefix`, ...),
+search options (`TopK`, `Threshold`, `WithFilter`), and collection options
+(`WithDimension`, `WithHNSW`, `WithTextIndex`) as the embedded library.
+
+See the [Go client API reference](docs/guide/go-client.md) for the full surface.
 
 ## MCP Tool Server
 
@@ -2006,6 +2057,46 @@ VecLite is safe for concurrent access:
 - Metrics use atomic counters for lock-free reads
 - Use `WithSyncOnWrite(true)` for durability after each write
 
+### Multi-Process Access
+
+By default, VecLite uses an **exclusive file lock** — only one process can open
+the database at a time. This prevents data corruption from concurrent writes
+(VecLite is an in-memory DB that persists by rewriting the entire snapshot file).
+
+For **multi-process read access**, use `WithSharedRead(true)` together with
+`WithReadOnly(true)`:
+
+```go
+// Writer process — exclusive lock
+db, err := veclite.Open("data.veclite",
+    veclite.WithSyncOnWrite(true),
+)
+
+// Reader process(es) — shared lock, no conflict with writer
+reader, err := veclite.Open("data.veclite",
+    veclite.WithReadOnly(true),
+    veclite.WithSharedRead(true),
+)
+
+defer reader.Close()
+
+// Readers see a point-in-time snapshot taken at Open.
+// Call Reload() to pick up changes written by other processes:
+if err := reader.Reload(); err != nil {
+    log.Fatal(err)
+}
+```
+
+Key points:
+- **Writer** holds an exclusive lock (`LOCK_EX`) — only one writer at a time
+- **Readers** with `WithSharedRead(true)` hold a shared lock (`LOCK_SH`) — multiple readers can coexist
+- Readers see a **point-in-time snapshot** from when they opened; they do not auto-detect changes
+- Call `db.Reload()` to discard the in-memory state and re-load the latest snapshot from disk
+- `Reload()` rebuilds all collections, HNSW indexes, BM25 indexes, and knowledge graphs
+- All read-only CLI commands (`veclite search`, `veclite stats`, etc.) already use `WithSharedRead(true)`
+- The `veclite serve` HTTP server remains the canonical multi-client surface for write-heavy workloads
+- For multi-process **write** access, run `veclite serve` and use the [Go client](#go-client) from other processes
+
 ## Persistence
 
 Data is stored using Go's gob encoding in a single `.veclite` file:
@@ -2013,7 +2104,7 @@ Data is stored using Go's gob encoding in a single `.veclite` file:
 - Use `WithSyncOnWrite(true)` for automatic persistence after each write
 - `db.Close()` syncs before closing
 - HNSW indexes, BM25 inverted indexes, and record content are all persisted
-- File locking prevents concurrent process access
+- File locking prevents concurrent writer access; `WithSharedRead(true)` enables multi-process read-only access
 - CRC32 checksums validate data integrity on load
 
 ## Contributing

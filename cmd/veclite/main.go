@@ -195,7 +195,7 @@ func cmdInfo(args []string) error {
 	}
 
 	path := fs.Arg(0)
-	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	db, err := veclite.Open(path, veclite.WithReadOnly(true), veclite.WithSharedRead(true))
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -238,7 +238,7 @@ func cmdCollections(args []string) error {
 	}
 
 	path := fs.Arg(0)
-	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	db, err := veclite.Open(path, veclite.WithReadOnly(true), veclite.WithSharedRead(true))
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -303,7 +303,7 @@ func cmdStats(args []string) error {
 	}
 
 	path := fs.Arg(0)
-	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	db, err := veclite.Open(path, veclite.WithReadOnly(true), veclite.WithSharedRead(true))
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -354,7 +354,7 @@ func cmdDump(args []string) error {
 	}
 
 	path := fs.Arg(0)
-	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	db, err := veclite.Open(path, veclite.WithReadOnly(true), veclite.WithSharedRead(true))
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -808,7 +808,7 @@ func cmdSearch(args []string) error {
 		}
 	}
 
-	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	db, err := veclite.Open(path, veclite.WithReadOnly(true), veclite.WithSharedRead(true))
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -965,7 +965,7 @@ func cmdGet(args []string) error {
 	path := fs.Arg(0)
 	collName := fs.Arg(1)
 
-	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	db, err := veclite.Open(path, veclite.WithReadOnly(true), veclite.WithSharedRead(true))
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -1295,7 +1295,7 @@ func cmdFind(args []string) error {
 	path := fs.Arg(0)
 	collName := fs.Arg(1)
 
-	db, err := veclite.Open(path, veclite.WithReadOnly(true))
+	db, err := veclite.Open(path, veclite.WithReadOnly(true), veclite.WithSharedRead(true))
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}

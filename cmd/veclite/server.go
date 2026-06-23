@@ -80,6 +80,7 @@ func cmdServe(args []string) error {
 		fmt.Println("  POST   /collections/{name}/compact      Compact collection")
 		fmt.Println("  POST   /collections/{name}/validate     Validate collection integrity")
 		fmt.Println("  POST   /sync                            Force sync to disk")
+		fmt.Println("  POST   /reload                          Reload database from disk")
 		fmt.Println("\nExamples:")
 		fmt.Println("  veclite serve data.veclite --port=8080")
 		fmt.Println("  veclite serve data.veclite --host=0.0.0.0 --port=3000 --cors")
@@ -114,6 +115,7 @@ func cmdServe(args []string) error {
 	mux.HandleFunc("/collections", server.handleCollections)
 	mux.HandleFunc("/collections/", server.handleCollection)
 	mux.HandleFunc("/sync", server.handleSync)
+	mux.HandleFunc("/reload", server.handleReload)
 
 	// Wrap with CORS middleware if enabled
 	var handler http.Handler = mux
@@ -1099,5 +1101,25 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "synced",
+	})
+}
+
+// handleReload handles POST /reload.
+// It reloads the database from disk, picking up any changes written by another
+// process or a direct file edit. Useful when the server was started read-only
+// or when an external indexer wrote to the same file.
+func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		writeError(w, http.StatusMethodNotAllowed, "Method not allowed", "METHOD_NOT_ALLOWED")
+		return
+	}
+
+	if err := s.db.Reload(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error(), "RELOAD_ERROR")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "reloaded",
 	})
 }
