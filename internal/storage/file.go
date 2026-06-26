@@ -92,7 +92,7 @@ func ReadLockInfo(dbPath string) string {
 	if err != nil {
 		return ""
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return readLockInfo(f)
 }
 
@@ -134,7 +134,7 @@ func ReadLockPID(dbPath string) int {
 	if err != nil {
 		return 0
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return readLockPID(f)
 }
 

@@ -212,10 +212,7 @@ func (s *Session) ReloadIfStale(signal func() bool) error {
 		return nil
 	}
 
-	stale := false
-	if s.cfg.ReloadInterval > 0 && time.Since(s.lastReload) > s.cfg.ReloadInterval {
-		stale = true
-	}
+	stale := s.cfg.ReloadInterval > 0 && time.Since(s.lastReload) > s.cfg.ReloadInterval
 	if signal != nil && signal() {
 		stale = true
 	}
@@ -274,7 +271,7 @@ func lockAge(dbPath string) time.Duration {
 	if err != nil {
 		return 0
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	buf := make([]byte, 128)
 	n, err := f.Read(buf)
 	if err != nil || n == 0 {

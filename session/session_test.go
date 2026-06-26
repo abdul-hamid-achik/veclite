@@ -33,7 +33,7 @@ func TestNewIsLazy(t *testing.T) {
 
 func TestReadOnlyOpensWithSharedLock(t *testing.T) {
 	sess, _ := newTestSession(t, 0)
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	db, err := sess.ReadOnly()
 	if err != nil {
@@ -50,7 +50,7 @@ func TestReadOnlyOpensWithSharedLock(t *testing.T) {
 
 func TestReadOnlyIsCached(t *testing.T) {
 	sess, _ := newTestSession(t, 0)
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	db1, err := sess.ReadOnly()
 	if err != nil {
@@ -67,14 +67,14 @@ func TestReadOnlyIsCached(t *testing.T) {
 
 func TestReadWriteIsNotCached(t *testing.T) {
 	sess, _ := newTestSession(t, 0)
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	db, err := sess.ReadWrite()
 	if err != nil {
 		t.Fatalf("ReadWrite: %v", err)
 	}
 	// Caller must close the RW handle.
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// After closing, the session should not have a cached RW handle.
 	// Since we closed it externally, s.rw is still set but the DB is closed.
@@ -88,7 +88,7 @@ func TestReadWriteIsNotCached(t *testing.T) {
 
 func TestReadWriteClosesReadOnlyFirst(t *testing.T) {
 	sess, _ := newTestSession(t, 0)
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	// Open RO first.
 	roDB, err := sess.ReadOnly()
@@ -104,7 +104,7 @@ func TestReadWriteClosesReadOnlyFirst(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadWrite after ReadOnly: %v", err)
 	}
-	defer rwDB.Close()
+	defer func() { _ = rwDB.Close() }()
 
 	// Verify the RO handle was closed by checking that a new RO open works
 	// (it would fail if the old RO was still holding the shared lock and
@@ -118,16 +118,16 @@ func TestReadWriteReturnsLockErrorOnContention(t *testing.T) {
 
 	// Open a writer in session 1.
 	sess1 := New(Config{Path: dbPath, Dimensions: 4})
-	defer sess1.Close()
+	defer func() { _ = sess1.Close() }()
 	rwDB, err := sess1.ReadWrite()
 	if err != nil {
 		t.Fatalf("sess1 ReadWrite: %v", err)
 	}
-	defer rwDB.Close()
+	defer func() { _ = rwDB.Close() }()
 
 	// Try to open a writer in session 2 — should get LockError.
 	sess2 := New(Config{Path: dbPath, Dimensions: 4})
-	defer sess2.Close()
+	defer func() { _ = sess2.Close() }()
 	_, err = sess2.ReadWrite()
 	if err == nil {
 		t.Fatal("expected LockError, got nil")
@@ -166,14 +166,14 @@ func TestReadOnlyMultipleSessions(t *testing.T) {
 		}
 	}
 	_, _ = coll.Insert([]float32{1, 0, 0, 0}, map[string]any{"v": 1})
-	rwDB.Close()
-	sess1.Close()
+	_ = rwDB.Close()
+	_ = sess1.Close()
 
 	// Two sessions open RO simultaneously — both should succeed.
 	sess2 := New(Config{Path: dbPath, Dimensions: 4})
-	defer sess2.Close()
+	defer func() { _ = sess2.Close() }()
 	sess3 := New(Config{Path: dbPath, Dimensions: 4})
-	defer sess3.Close()
+	defer func() { _ = sess3.Close() }()
 
 	db2, err := sess2.ReadOnly()
 	if err != nil {
@@ -194,7 +194,7 @@ func TestReadOnlyMultipleSessions(t *testing.T) {
 
 func TestReloadIfStale(t *testing.T) {
 	sess, dbPath := newTestSession(t, 50*time.Millisecond)
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	// Open RO.
 	_, err := sess.ReadOnly()
@@ -219,7 +219,7 @@ func TestReloadIfStale(t *testing.T) {
 
 func TestReloadIfStaleWithSignal(t *testing.T) {
 	sess, _ := newTestSession(t, time.Hour) // long interval
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	_, err := sess.ReadOnly()
 	if err != nil {
@@ -242,7 +242,7 @@ func TestReloadIfStaleWithSignal(t *testing.T) {
 
 func TestReloadIfStaleNoReadOnly(t *testing.T) {
 	sess, _ := newTestSession(t, 0)
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	// No RO handle open — should be no-op.
 	if err := sess.ReloadIfStale(nil); err != nil {
@@ -252,7 +252,7 @@ func TestReloadIfStaleNoReadOnly(t *testing.T) {
 
 func TestReleaseReadOnly(t *testing.T) {
 	sess, _ := newTestSession(t, 0)
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 
 	_, err := sess.ReadOnly()
 	if err != nil {
@@ -277,7 +277,7 @@ func TestReadWriteAfterReadOnlyReleaseAllowsExternalWriter(t *testing.T) {
 
 	// Session 1: open RO.
 	sess1 := New(Config{Path: dbPath, Dimensions: 4})
-	defer sess1.Close()
+	defer func() { _ = sess1.Close() }()
 	_, err := sess1.ReadOnly()
 	if err != nil {
 		t.Fatalf("sess1 ReadOnly: %v", err)
@@ -290,12 +290,12 @@ func TestReadWriteAfterReadOnlyReleaseAllowsExternalWriter(t *testing.T) {
 
 	// Session 2: open RW — should succeed because RO was released.
 	sess2 := New(Config{Path: dbPath, Dimensions: 4})
-	defer sess2.Close()
+	defer func() { _ = sess2.Close() }()
 	rwDB, err := sess2.ReadWrite()
 	if err != nil {
 		t.Fatalf("sess2 ReadWrite after RO release: %v", err)
 	}
-	defer rwDB.Close()
+	defer func() { _ = rwDB.Close() }()
 }
 
 func TestCloseClosesBothHandles(t *testing.T) {
