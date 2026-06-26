@@ -69,12 +69,31 @@ func NewFile(path string) *File {
 	return &File{path: path}
 }
 
+// WriteLockInfo writes diagnostic info (PID and timestamp) to the lock file.
+func WriteLockInfo(f *os.File) {
+	writeLockInfo(f)
+}
+
 // writeLockInfo writes diagnostic info (PID and timestamp) to the lock file.
 func writeLockInfo(f *os.File) {
 	_ = f.Truncate(0)
 	_, _ = f.Seek(0, 0)
 	_, _ = fmt.Fprintf(f, "%d\n%d\n", os.Getpid(), time.Now().Unix())
 	_ = f.Sync()
+}
+
+// ReadLockInfo reads diagnostic info from a lock file and returns a
+// human-readable string. Returns empty string if the lock file cannot be read
+// or parsed. The path argument is the database file path; the lock file is
+// path + ".lock".
+func ReadLockInfo(dbPath string) string {
+	lockPath := dbPath + ".lock"
+	f, err := os.Open(lockPath)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	return readLockInfo(f)
 }
 
 // readLockInfo reads diagnostic info from a lock file and returns a human-readable string.
@@ -104,6 +123,19 @@ func readLockInfo(f *os.File) string {
 
 	age := time.Since(time.Unix(ts, 0)).Truncate(time.Second)
 	return fmt.Sprintf("PID %d, locked %s ago", pid, age)
+}
+
+// ReadLockPID reads the PID from the first line of a lock file.
+// The path argument is the database file path; the lock file is path + ".lock".
+// Returns 0 if the file cannot be read or the PID cannot be parsed.
+func ReadLockPID(dbPath string) int {
+	lockPath := dbPath + ".lock"
+	f, err := os.Open(lockPath)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	return readLockPID(f)
 }
 
 // readLockPID reads the PID from the first line of a lock file.

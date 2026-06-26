@@ -25,6 +25,12 @@ func unlockFile(f *os.File) error {
 	return syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 }
 
+// IsProcessAlive returns true if a process with the given PID is currently running.
+// Uses kill(pid, 0) which sends no signal but checks process existence.
+func IsProcessAlive(pid int) bool {
+	return isProcessAlive(pid)
+}
+
 // isProcessAlive returns true if a process with the given PID is currently running.
 // Uses kill(pid, 0) which sends no signal but checks process existence.
 func isProcessAlive(pid int) bool {
