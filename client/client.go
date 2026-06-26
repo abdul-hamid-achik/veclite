@@ -227,7 +227,7 @@ func (db *DB) do(ctx context.Context, method, path string, body any) (int, []byt
 	if err != nil {
 		return 0, nil, fmt.Errorf("client: request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return resp.StatusCode, nil, fmt.Errorf("client: read body: %w", err)

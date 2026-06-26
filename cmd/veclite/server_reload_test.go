@@ -119,7 +119,7 @@ func TestHTTPConcurrentMultiClient(t *testing.T) {
 				errs <- err
 				return
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			if resp.StatusCode != http.StatusOK {
 				errs <- &testErr{"reader " + strconv.Itoa(n) + ": status " + resp.Status}
 			}
@@ -144,7 +144,7 @@ func TestHTTPConcurrentMultiClient(t *testing.T) {
 				errs <- err
 				return
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			if resp.StatusCode != http.StatusCreated {
 				errs <- &testErr{"writer " + strconv.Itoa(n) + ": status " + resp.Status}
 			}
