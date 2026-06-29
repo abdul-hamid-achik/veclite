@@ -221,6 +221,80 @@ func TestDelete(t *testing.T) {
 	}
 }
 
+// TestInsertAfterEntryPointDeleted is the regression test for the
+// "index out of range [0] with length 0" panic in Insert: soft-deleting the
+// current entry point left idx.entryPoint pointing at a tombstoned node, so
+// the next Insert's searchLayer returned nil and was indexed at [0]. Delete
+// now updates the entry point, and Insert additionally re-seeds when no live
+// entry point exists.
+func TestInsertAfterEntryPointDeleted(t *testing.T) {
+	config := DefaultConfig()
+	idx := New(config, 4, floats.DistanceCosine)
+
+	for i := uint64(1); i <= 5; i++ {
+		vec := []float32{float32(i), 0, 0, 0}
+		floats.Normalize(vec)
+		if err := idx.Insert(i, vec); err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+	}
+	// Delete every node — the entry point is among them, so it becomes a
+	// tombstone. Before the fix, the next Insert panicked.
+	for i := uint64(1); i <= 5; i++ {
+		if err := idx.Delete(i); err != nil {
+			t.Fatalf("delete %d: %v", i, err)
+		}
+	}
+
+	// Insert must not panic and must re-seed the graph.
+	newVec := []float32{0.5, 0.5, 0, 0}
+	floats.Normalize(newVec)
+	if err := idx.Insert(6, newVec); err != nil {
+		t.Fatalf("insert after entry point deleted: %v", err)
+	}
+
+	res, err := idx.Search(newVec, 1)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res) != 1 || res[0].ID != 6 {
+		t.Fatalf("expected to find node 6, got %v", res)
+	}
+}
+
+// TestSearchAfterEntryPointDeleted verifies search still returns live nodes
+// after the entry point is soft-deleted (Delete updates the entry point to a
+// live node, so search doesn't silently return empty).
+func TestSearchAfterEntryPointDeleted(t *testing.T) {
+	config := DefaultConfig()
+	idx := New(config, 4, floats.DistanceCosine)
+
+	for i := uint64(1); i <= 5; i++ {
+		vec := []float32{float32(i), 0, 0, 0}
+		floats.Normalize(vec)
+		if err := idx.Insert(i, vec); err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+	}
+	// Delete node 1 — it may or may not be the entry point; either way the
+	// index must keep returning the remaining live nodes.
+	if err := idx.Delete(1); err != nil {
+		t.Fatalf("delete 1: %v", err)
+	}
+
+	// Search for node 2's vector — it must still be found (not silently empty
+	// because of a stale deleted entry point).
+	target := []float32{2, 0, 0, 0}
+	floats.Normalize(target)
+	res, err := idx.Search(target, 1)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(res) == 0 {
+		t.Fatal("search returned empty after deleting a non-entry-point node; live nodes should still be reachable")
+	}
+}
+
 func TestCompact(t *testing.T) {
 	config := DefaultConfig()
 	idx := New(config, 4, floats.DistanceCosine)

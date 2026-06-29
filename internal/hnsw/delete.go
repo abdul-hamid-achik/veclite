@@ -12,6 +12,14 @@ func (idx *Index) Delete(id uint64) error {
 	}
 
 	node.Deleted = true
+
+	// If we just soft-deleted the current entry point, pick a new live one so
+	// subsequent inserts/searches don't start from a tombstoned node (which
+	// makes searchLayer return nil — an Insert would panic at [0], and Search
+	// would silently return empty).
+	if idx.entryPoint == id {
+		idx.updateEntryPointLocked()
+	}
 	return nil
 }
 

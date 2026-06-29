@@ -165,12 +165,28 @@ func (idx *Index) Insert(id uint64, vector []float32) error {
 		idx.vectors[id] = vec
 	}
 
-	// First node becomes entry point
+	// First node becomes the entry point.
 	if len(idx.nodes) == 0 {
 		idx.nodes[id] = node
 		idx.entryPoint = id
 		idx.maxLevel = level
 		return nil
+	}
+
+	// The entry point may have been soft-deleted. A deleted entry point makes
+	// searchLayer return nil (and would panic at [0] below), so pick a new
+	// live entry point — the alive node with the highest level — before
+	// navigating. If no live nodes remain, this insert re-seeds the graph.
+	if ep := idx.nodes[idx.entryPoint]; ep == nil || ep.Deleted {
+		newEP, newLvl, ok := idx.pickLiveEntryPoint()
+		if !ok {
+			idx.nodes[id] = node
+			idx.entryPoint = id
+			idx.maxLevel = level
+			return nil
+		}
+		idx.entryPoint = newEP
+		idx.maxLevel = newLvl
 	}
 
 	// Find entry point for insertion
@@ -220,6 +236,22 @@ func (idx *Index) Insert(id uint64, vector []float32) error {
 	}
 
 	return nil
+}
+
+// pickLiveEntryPoint returns the live (non-deleted) node with the highest
+// level, to use as a new entry point after the current one was soft-deleted.
+// Returns ok=false if there are no live nodes left (the graph is entirely
+// tombstones). Callers must hold idx.mu.
+func (idx *Index) pickLiveEntryPoint() (id uint64, level int, ok bool) {
+	for nid, n := range idx.nodes {
+		if n == nil || n.Deleted {
+			continue
+		}
+		if !ok || n.Level > level {
+			id, level, ok = nid, n.Level, true
+		}
+	}
+	return
 }
 
 // searchLayer performs greedy search on a single layer.
