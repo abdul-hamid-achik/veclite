@@ -39,6 +39,12 @@ var ErrCorruptedFile = errors.New("veclite: corrupted file")
 // ErrInvalidVersion is returned when the file version is not supported.
 var ErrInvalidVersion = errors.New("veclite: unsupported file version")
 
+// ErrTransientReadOnly is returned when Save is called on a File opened in
+// lock-free transient read-only mode (UseTransientShared). Transient handles
+// must never write: they hold no exclusive lock, so a save would race with
+// concurrent writers and clobber their full-snapshot writes.
+var ErrTransientReadOnly = errors.New("veclite: save attempted in transient read-only mode")
+
 // LockMode controls the type of file lock acquired by LockWithConfig.
 type LockMode int
 
@@ -59,9 +65,10 @@ const (
 // from multiple processes; use LockWithConfig with LockShared for multi-reader
 // read-only access.
 type File struct {
-	path     string
-	lockFile *os.File // held open for the duration to maintain the flock
-	shared   bool     // true if the current lock is shared (read-only)
+	path      string
+	lockFile  *os.File // held open for the duration to maintain the flock
+	shared    bool     // true if the current lock is shared (read-only)
+	transient bool     // true → shared lock acquired only during Load, not held
 }
 
 // NewFile creates a new file storage for the given path.
@@ -204,6 +211,19 @@ func (f *File) LockShared() error {
 	cfg.Mode = LockShared
 	return f.LockWithConfig(cfg)
 }
+
+// UseTransientShared switches this File into lock-free read-only mode for
+// long-lived readers. Loads take no flock at all: a read-only process (e.g. an
+// MCP server) serves queries from its in-memory snapshot without ever blocking
+// a concurrent writer, and a writer holding the exclusive lock no longer blocks
+// read-only opens. Consistency is guaranteed by Save's atomic replace (.tmp →
+// rename): a reader's os.Open always resolves to a complete old or new file,
+// never a torn write. Call db.Reload() to pick up writes from another process.
+//
+// This is safe because Save is the only mutation and it is atomic; Save must
+// never be called in this mode (it returns ErrTransientReadOnly). The flag
+// must be set before the first Load.
+func (f *File) UseTransientShared() { f.transient = true }
 
 // LockWithConfig acquires an exclusive file lock with the given retry configuration.
 // On contention it checks whether the holding PID is still alive: if the PID is
@@ -360,6 +380,9 @@ func (f *File) Load() (*DatabaseSnapshot, error) {
 // Save writes the database to the file using atomic write pattern.
 // Writes to .tmp file, fsyncs, then renames old to .bak, then renames .tmp to final.
 func (f *File) Save(snapshot *DatabaseSnapshot) error {
+	if f.transient {
+		return &Error{Op: "save", Err: ErrTransientReadOnly}
+	}
 	// Ensure parent directory exists
 	dir := filepath.Dir(f.path)
 	if dir != "" && dir != "." {

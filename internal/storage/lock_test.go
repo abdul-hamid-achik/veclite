@@ -447,3 +447,97 @@ func TestSharedFlagResetOnUnlock(t *testing.T) {
 		t.Error("shared should be false after Unlock()")
 	}
 }
+
+// --- Transient (lock-free) read-only mode tests ---
+
+// TestTransientSharedLoadLeavesNoLockFile verifies that a transient read-only
+// File does not create or hold a .lock file around Load, so it cannot block a
+// concurrent writer.
+func TestTransientSharedLoadLeavesNoLockFile(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	// Persist a minimal snapshot via a normal (locked) writer first.
+	w := NewFile(dbPath)
+	if err := w.Lock(); err != nil {
+		t.Fatalf("Lock: %v", err)
+	}
+	if err := w.Save(NewDatabaseSnapshot()); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := w.Unlock(); err != nil {
+		t.Fatalf("Unlock: %v", err)
+	}
+
+	// Transient reader: Load must succeed and leave no lock file.
+	r := NewFile(dbPath)
+	r.UseTransientShared()
+	snap, err := r.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if snap == nil {
+		t.Fatal("Load returned nil snapshot for an existing file")
+	}
+	if _, err := os.Stat(dbPath + ".lock"); err == nil {
+		t.Fatal("transient Load should not create a lock file")
+	}
+	if r.lockFile != nil {
+		t.Fatal("transient File should not hold a lockFile after Load")
+	}
+	// Close is a no-op (nothing to release) and must not error.
+	if err := r.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+// TestTransientSharedSaveRejected verifies that Save is refused in transient
+// mode: a lock-free handle must never write (it holds no exclusive lock and
+// would race concurrent writers).
+func TestTransientSharedSaveRejected(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+	r := NewFile(dbPath)
+	r.UseTransientShared()
+	err := r.Save(NewDatabaseSnapshot())
+	if err == nil {
+		t.Fatal("Save should error in transient mode")
+	}
+	if !errors.Is(err, ErrTransientReadOnly) {
+		t.Fatalf("Save error should wrap ErrTransientReadOnly, got: %v", err)
+	}
+}
+
+// TestTransientReaderDoesNotBlockWriter is the storage-level regression test:
+// a transient reader holding its (non-existent) lock must not prevent a writer
+// from acquiring the exclusive lock.
+func TestTransientReaderDoesNotBlockWriter(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.db")
+
+	w := NewFile(dbPath)
+	if err := w.Lock(); err != nil {
+		t.Fatalf("Lock: %v", err)
+	}
+	if err := w.Save(NewDatabaseSnapshot()); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if err := w.Unlock(); err != nil {
+		t.Fatalf("Unlock: %v", err)
+	}
+
+	r := NewFile(dbPath)
+	r.UseTransientShared()
+	if _, err := r.Load(); err != nil {
+		t.Fatalf("transient Load: %v", err)
+	}
+	defer func() { _ = r.Close() }()
+
+	// Writer acquires LOCK_EX while the transient reader is "open" — must
+	// succeed immediately, with no contention.
+	w2 := NewFile(dbPath)
+	if err := w2.LockWithConfig(LockConfig{MaxRetries: 0}); err != nil {
+		t.Fatalf("Lock while transient reader open should succeed, got: %v", err)
+	}
+	_ = w2.Unlock()
+}

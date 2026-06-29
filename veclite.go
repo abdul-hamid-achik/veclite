@@ -26,7 +26,7 @@ import (
 )
 
 // Version is the library version.
-const Version = "0.20.0"
+const Version = "0.22.0"
 
 // DB represents a VecLite database.
 type DB struct {
@@ -77,9 +77,12 @@ func Open(path string, opts ...Option) (*DB, error) {
 			if !config.readOnly {
 				return nil, fmt.Errorf("veclite: %w", ErrSharedReadRequiresReadOnly)
 			}
-			if err := fs.LockShared(); err != nil {
-				return nil, err
-			}
+			// Lock-free read-only: take no persistent flock so long-lived
+			// readers (MCP servers, daemons' query clients) never block a
+			// writer, and a writer's exclusive lock never blocks read-only
+			// opens. Consistency rests on Save's atomic replace; callers
+			// Reload() to pick up external writes.
+			fs.UseTransientShared()
 		} else {
 			if err := fs.Lock(); err != nil {
 				return nil, err

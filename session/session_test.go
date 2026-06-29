@@ -31,7 +31,7 @@ func TestNewIsLazy(t *testing.T) {
 	_ = sess.Close()
 }
 
-func TestReadOnlyOpensWithSharedLock(t *testing.T) {
+func TestReadOnlyOpensLockFree(t *testing.T) {
 	sess, _ := newTestSession(t, 0)
 	defer func() { _ = sess.Close() }()
 
@@ -42,9 +42,10 @@ func TestReadOnlyOpensWithSharedLock(t *testing.T) {
 	if db == nil {
 		t.Fatal("db is nil")
 	}
-	// Lock file should exist.
-	if _, err := os.Stat(sess.cfg.Path + ".lock"); err != nil {
-		t.Fatalf("lock file should exist after ReadOnly: %v", err)
+	// Read-only opens are lock-free: no persistent .lock file is left on
+	// disk, so a long-lived reader never blocks a writer (and vice versa).
+	if _, err := os.Stat(sess.cfg.Path + ".lock"); err == nil {
+		t.Fatalf("read-only open should not leave a lock file on disk")
 	}
 }
 
@@ -189,6 +190,104 @@ func TestReadOnlyMultipleSessions(t *testing.T) {
 	}
 	if db3 == nil {
 		t.Fatal("db3 is nil")
+	}
+}
+
+// TestReadOnlyDoesNotBlockWriter is the regression test for the recurring
+// "database file is locked by PID ..." error: a long-lived read-only process
+// (e.g. an MCP server) must not hold a lock that prevents a concurrent writer
+// (e.g. `codemap index`) from opening the database. Read-only opens are
+// lock-free; only writers take the exclusive lock, and only against each other.
+func TestReadOnlyDoesNotBlockWriter(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.veclite")
+
+	// A long-lived reader, kept open for the whole test.
+	ro := New(Config{Path: dbPath, Dimensions: 4})
+	defer func() { _ = ro.Close() }()
+	if _, err := ro.ReadOnly(); err != nil {
+		t.Fatalf("ReadOnly: %v", err)
+	}
+
+	// A writer opening the same DB while the reader is still open must
+	// succeed — no lock error.
+	w := New(Config{Path: dbPath, Dimensions: 4})
+	defer func() { _ = w.Close() }()
+	rwDB, err := w.ReadWrite()
+	if err != nil {
+		t.Fatalf("ReadWrite while reader open should succeed, got: %v", err)
+	}
+	_ = rwDB.Close()
+}
+
+// TestReadOnlySeesConcurrentWriteAfterReload verifies that a lock-free
+// read-only handle picks up a writer's save after Reload, so lock-free reads
+// don't sacrifice freshness (callers Reload to refresh).
+func TestReadOnlySeesConcurrentWriteAfterReload(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "test.veclite")
+
+	// Writer creates and persists a collection with one record.
+	w := New(Config{Path: dbPath, Dimensions: 4})
+	rwDB, err := w.ReadWrite()
+	if err != nil {
+		t.Fatalf("ReadWrite: %v", err)
+	}
+	coll, err := rwDB.CreateCollection("test", veclite.WithDimension(4))
+	if err != nil {
+		t.Fatalf("CreateCollection: %v", err)
+	}
+	id, err := coll.Insert([]float32{1, 0, 0, 0}, map[string]any{"v": 1})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if err := rwDB.Close(); err != nil {
+		t.Fatalf("writer Close: %v", err)
+	}
+	_ = id
+
+	// Reader opens and sees the persisted record.
+	ro := New(Config{Path: dbPath, Dimensions: 4})
+	defer func() { _ = ro.Close() }()
+	roDB, err := ro.ReadOnly()
+	if err != nil {
+		t.Fatalf("ReadOnly: %v", err)
+	}
+	got, err := roDB.GetCollection("test")
+	if err != nil {
+		t.Fatalf("GetCollection: %v", err)
+	}
+	if got.Stats().Count != 1 {
+		t.Fatalf("after open: count=%d, want 1", got.Stats().Count)
+	}
+
+	// A second writer adds another record and saves.
+	w2 := New(Config{Path: dbPath, Dimensions: 4})
+	rwDB2, err := w2.ReadWrite()
+	if err != nil {
+		t.Fatalf("ReadWrite 2: %v", err)
+	}
+	coll2, _ := rwDB2.GetCollection("test")
+	if _, err := coll2.Insert([]float32{0, 1, 0, 0}, map[string]any{"v": 2}); err != nil {
+		t.Fatalf("Insert 2: %v", err)
+	}
+	if err := rwDB2.Close(); err != nil {
+		t.Fatalf("writer2 Close: %v", err)
+	}
+	_ = w2.Close()
+
+	// Reader still sees the old point-in-time snapshot (1 record)...
+	got2, _ := roDB.GetCollection("test")
+	if got2.Stats().Count != 1 {
+		t.Fatalf("before reload: count=%d, want 1 (point-in-time)", got2.Stats().Count)
+	}
+	// ...and picks up the new record after Reload.
+	if err := roDB.Reload(); err != nil {
+		t.Fatalf("Reload: %v", err)
+	}
+	got3, _ := roDB.GetCollection("test")
+	if got3.Stats().Count != 2 {
+		t.Fatalf("after reload: count=%d, want 2", got3.Stats().Count)
 	}
 }
 

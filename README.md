@@ -202,7 +202,7 @@ defer db.Close()
 |-----------|-------------|
 | `WithSyncOnWrite(bool)` | Sync to disk after each write. Slower but durable. |
 | `WithReadOnly(bool)` | Open in read-only mode. Write operations return errors. |
-| `WithSharedRead(bool)` | Use a shared (non-exclusive) file lock. Requires `WithReadOnly(true)`. Allows multiple read-only processes to open the same DB simultaneously while a writer holds an exclusive lock. Readers see a point-in-time snapshot; call `db.Reload()` to pick up concurrent writes. |
+| `WithSharedRead(bool)` | Open read-only **lock-free** (no flock). Requires `WithReadOnly(true)`. A long-lived reader never blocks a writer and is never blocked by one; readers see a point-in-time snapshot, so call `db.Reload()` to pick up concurrent writes. Consistency is guaranteed by the writer's atomic-replace save. |
 | `WithLogger(Logger)` | Set structured logger. Default is `NopLogger` (zero overhead). |
 
 ### Collections
@@ -2059,20 +2059,26 @@ VecLite is safe for concurrent access:
 
 ### Multi-Process Access
 
-By default, VecLite uses an **exclusive file lock** — only one process can open
-the database at a time. This prevents data corruption from concurrent writes
-(VecLite is an in-memory DB that persists by rewriting the entire snapshot file).
+By default, VecLite uses an **exclusive file lock** for writers — only one
+process at a time can open the database read-write. This prevents data
+corruption from concurrent writes (VecLite is an in-memory DB that persists by
+rewriting the entire snapshot file via an atomic replace).
 
 For **multi-process read access**, use `WithSharedRead(true)` together with
-`WithReadOnly(true)`:
+`WithReadOnly(true)`. Read-only opens are **lock-free**: they take no flock at
+all, so a long-lived reader (an MCP server, a daemon's query client, a CLI
+`search`) never blocks a writer, and a writer's exclusive lock never blocks a
+read-only open. Consistency is guaranteed by the writer's atomic-replace save
+(`.tmp` → rename): a reader's `os.Open` always resolves to a complete old or
+new snapshot, never a torn write.
 
 ```go
-// Writer process — exclusive lock
+// Writer process — exclusive lock (only one writer at a time)
 db, err := veclite.Open("data.veclite",
     veclite.WithSyncOnWrite(true),
 )
 
-// Reader process(es) — shared lock, no conflict with writer
+// Reader process(es) — lock-free, no conflict with the writer
 reader, err := veclite.Open("data.veclite",
     veclite.WithReadOnly(true),
     veclite.WithSharedRead(true),
@@ -2088,8 +2094,8 @@ if err := reader.Reload(); err != nil {
 ```
 
 Key points:
-- **Writer** holds an exclusive lock (`LOCK_EX`) — only one writer at a time
-- **Readers** with `WithSharedRead(true)` hold a shared lock (`LOCK_SH`) — multiple readers can coexist
+- **Writer** holds an exclusive lock (`LOCK_EX`) — only one writer at a time; a second writer gets `ErrFileLocked`
+- **Readers** with `WithSharedRead(true)` take **no lock** — they never block a writer and are never blocked by one
 - Readers see a **point-in-time snapshot** from when they opened; they do not auto-detect changes
 - Call `db.Reload()` to discard the in-memory state and re-load the latest snapshot from disk
 - `Reload()` rebuilds all collections, HNSW indexes, BM25 indexes, and knowledge graphs
