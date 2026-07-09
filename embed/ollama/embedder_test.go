@@ -62,6 +62,10 @@ func TestKnownDimensions(t *testing.T) {
 		{"nomic-embed-text", 768},
 		{"mxbai-embed-large", 1024},
 		{"all-minilm", 384},
+		// Registry-backed entries beyond the legacy map, incl. tag stripping.
+		{"bge-m3", 1024},
+		{"embeddinggemma", 768},
+		{"nomic-embed-text:latest", 768},
 	}
 
 	for _, tt := range tests {
@@ -72,6 +76,76 @@ func TestKnownDimensions(t *testing.T) {
 		if e.dimension != tt.expected {
 			t.Errorf("model %q: expected dimension %d, got %d", tt.model, tt.expected, e.dimension)
 		}
+	}
+}
+
+// TestUnknownModelDimensionZero verifies unknown models keep the
+// probe-on-first-call behavior (dimension starts at 0).
+func TestUnknownModelDimensionZero(t *testing.T) {
+	e, err := NewEmbedder(WithModel("totally-unknown-model"))
+	if err != nil {
+		t.Fatalf("NewEmbedder failed: %v", err)
+	}
+	if e.Dimension() != 0 {
+		t.Errorf("expected dimension 0 for unknown model, got %d", e.Dimension())
+	}
+}
+
+// TestProfile verifies the embedder's self-description.
+func TestProfile(t *testing.T) {
+	e, err := NewEmbedder(WithModel("nomic-embed-text"))
+	if err != nil {
+		t.Fatalf("NewEmbedder failed: %v", err)
+	}
+	p := e.Profile()
+	if p.Provider != "ollama" {
+		t.Errorf("expected provider 'ollama', got %q", p.Provider)
+	}
+	if p.Model != "nomic-embed-text" {
+		t.Errorf("expected model 'nomic-embed-text', got %q", p.Model)
+	}
+	if p.Dimension != 768 {
+		t.Errorf("expected dimension 768, got %d", p.Dimension)
+	}
+	if p.Distance != "cosine" {
+		t.Errorf("expected distance 'cosine', got %q", p.Distance)
+	}
+	if p.Normalize {
+		t.Error("expected Normalize=false: ollama vectors are returned unnormalized")
+	}
+}
+
+// TestProfileObservedDimension verifies Profile reflects the dimension
+// observed on the first embed for models not in the registry.
+func TestProfileObservedDimension(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		embedding := make([]float64, 512)
+		resp := embeddingResponse{Embedding: embedding}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	e, err := NewEmbedder(WithBaseURL(server.URL), WithModel("custom-unknown-model"))
+	if err != nil {
+		t.Fatalf("NewEmbedder failed: %v", err)
+	}
+	defer func() { _ = e.Close() }()
+
+	if p := e.Profile(); p.Dimension != 0 {
+		t.Errorf("expected dimension 0 before first embed, got %d", p.Dimension)
+	}
+
+	if _, err := e.Embed("hello"); err != nil {
+		t.Fatalf("Embed failed: %v", err)
+	}
+
+	p := e.Profile()
+	if p.Dimension != 512 {
+		t.Errorf("expected observed dimension 512, got %d", p.Dimension)
+	}
+	if p.Model != "custom-unknown-model" {
+		t.Errorf("expected model 'custom-unknown-model', got %q", p.Model)
 	}
 }
 

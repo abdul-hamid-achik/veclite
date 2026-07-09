@@ -145,6 +145,20 @@ func ReadLockPID(dbPath string) int {
 	return readLockPID(f)
 }
 
+// LockFileExists reports whether a lock file exists for the database at
+// dbPath (the lock file is dbPath + ".lock").
+func LockFileExists(dbPath string) bool {
+	_, err := os.Stat(dbPath + ".lock")
+	return err == nil
+}
+
+// RemoveLockFile removes the lock file for the database at dbPath (the lock
+// file is dbPath + ".lock"). It does not check whether the holding process
+// is alive — callers should consult ReadLockPID + IsProcessAlive first.
+func RemoveLockFile(dbPath string) error {
+	return os.Remove(dbPath + ".lock")
+}
+
 // readLockPID reads the PID from the first line of a lock file.
 // Returns 0 if the file cannot be read or the PID cannot be parsed.
 func readLockPID(f *os.File) int {

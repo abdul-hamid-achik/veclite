@@ -66,25 +66,68 @@ func TestReadOnlyIsCached(t *testing.T) {
 	}
 }
 
-func TestReadWriteIsNotCached(t *testing.T) {
+func TestReadWriteIsCachedUntilRelease(t *testing.T) {
 	sess, _ := newTestSession(t, 0)
 	defer func() { _ = sess.Close() }()
 
-	db, err := sess.ReadWrite()
+	db1, err := sess.ReadWrite()
 	if err != nil {
 		t.Fatalf("ReadWrite: %v", err)
 	}
-	// Caller must close the RW handle.
-	defer func() { _ = db.Close() }()
+	db2, err := sess.ReadWrite()
+	if err != nil {
+		t.Fatalf("ReadWrite 2: %v", err)
+	}
+	if db1 != db2 {
+		t.Fatal("ReadWrite should return the cached handle until ReleaseReadWrite")
+	}
+	// Release the exclusive lock; the session must drop its cache so the
+	// next ReadWrite opens a fresh handle instead of a closed one.
+	if err := sess.ReleaseReadWrite(); err != nil {
+		t.Fatalf("ReleaseReadWrite: %v", err)
+	}
+	db3, err := sess.ReadWrite()
+	if err != nil {
+		t.Fatalf("ReadWrite after release: %v", err)
+	}
+	if db3 == db1 {
+		t.Fatal("ReadWrite after ReleaseReadWrite should open a fresh handle")
+	}
+}
 
-	// After closing, the session should not have a cached RW handle.
-	// Since we closed it externally, s.rw is still set but the DB is closed.
-	// The session doesn't track external closes — that's by design (RW is
-	// returned for caller to manage). The next ReadWrite() returns the stale
-	// cached handle. This is acceptable because callers should call Close()
-	// on the session, not reuse it after closing the returned DB.
-	// In practice, each write tool call creates a fresh session or calls
-	// ReadWrite() once.
+func TestReleaseReadWriteAllowsExternalWriter(t *testing.T) {
+	sess, dbPath := newTestSession(t, 0)
+	defer func() { _ = sess.Close() }()
+
+	if _, err := sess.ReadWrite(); err != nil {
+		t.Fatalf("ReadWrite: %v", err)
+	}
+
+	// While the session holds the exclusive lock, an external writer must
+	// be refused.
+	if ext, err := veclite.Open(dbPath); err == nil {
+		_ = ext.Close()
+		t.Fatal("external writer should be blocked while session holds the exclusive lock")
+	}
+
+	if err := sess.ReleaseReadWrite(); err != nil {
+		t.Fatalf("ReleaseReadWrite: %v", err)
+	}
+
+	// After release, an external writer can acquire the exclusive lock.
+	ext, err := veclite.Open(dbPath)
+	if err != nil {
+		t.Fatalf("external writer after release: %v", err)
+	}
+	_ = ext.Close()
+}
+
+func TestReleaseReadWriteNoHandleIsNoop(t *testing.T) {
+	sess, _ := newTestSession(t, 0)
+	defer func() { _ = sess.Close() }()
+	if err := sess.ReleaseReadWrite(); err != nil {
+		t.Fatalf("ReleaseReadWrite with no handle: %v", err)
+	}
 }
 
 func TestReadWriteClosesReadOnlyFirst(t *testing.T) {

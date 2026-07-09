@@ -14,11 +14,16 @@ import (
 
 	"github.com/daulet/tokenizers"
 	ort "github.com/yalue/onnxruntime_go"
+
+	"github.com/abdul-hamid-achik/veclite/embed/common"
 )
 
 const (
 	// MiniLMDimension is the embedding dimension for all-MiniLM-L6-v2.
 	MiniLMDimension = 384
+
+	// MiniLMModel is the model name of the bundled sentence-transformers model.
+	MiniLMModel = "all-MiniLM-L6-v2"
 
 	// DefaultMaxLength is the maximum token sequence length.
 	DefaultMaxLength = 256
@@ -27,6 +32,15 @@ const (
 	miniLMModelURL     = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model.onnx"
 	miniLMTokenizerURL = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer.json"
 )
+
+// miniLMDimension resolves the MiniLM dimension through the shared registry
+// in embed/common, falling back to the hardcoded MiniLMDimension constant.
+func miniLMDimension() int {
+	if dim, ok := common.KnownModelDimensions(MiniLMModel); ok {
+		return dim
+	}
+	return MiniLMDimension
+}
 
 // Embedder implements veclite.Embedder using ONNX Runtime for local inference.
 type Embedder struct {
@@ -49,11 +63,11 @@ func SetLibraryPath(path string) {
 func init() {
 	// Try common library paths if not already set
 	paths := []string{
-		"/opt/homebrew/lib/libonnxruntime.dylib",           // macOS ARM (Homebrew)
-		"/usr/local/lib/libonnxruntime.dylib",              // macOS Intel (Homebrew)
-		"/usr/lib/libonnxruntime.so",                       // Linux system
-		"/usr/local/lib/libonnxruntime.so",                 // Linux local
-		os.Getenv("ONNXRUNTIME_LIB"),                       // User-specified
+		"/opt/homebrew/lib/libonnxruntime.dylib", // macOS ARM (Homebrew)
+		"/usr/local/lib/libonnxruntime.dylib",    // macOS Intel (Homebrew)
+		"/usr/lib/libonnxruntime.so",             // Linux system
+		"/usr/local/lib/libonnxruntime.so",       // Linux local
+		os.Getenv("ONNXRUNTIME_LIB"),             // User-specified
 	}
 
 	for _, p := range paths {
@@ -130,7 +144,7 @@ func NewMiniLM(modelDir string) (*Embedder, error) {
 	}
 
 	return NewEmbedder(modelPath, tokenizerPath,
-		WithDimension(MiniLMDimension),
+		WithDimension(miniLMDimension()),
 		WithMaxLength(DefaultMaxLength),
 	)
 }
@@ -281,6 +295,20 @@ func (e *Embedder) EmbedBatch(texts []string) ([][]float32, error) {
 // Dimension returns the output vector dimension.
 func (e *Embedder) Dimension() int {
 	return e.dim
+}
+
+// Profile describes this embedder: provider "onnx", the bundled
+// all-MiniLM-L6-v2 model, the configured dimension, cosine distance, and
+// Normalize=true — EmbedBatch L2-normalizes every embedding after mean
+// pooling (see l2Normalize).
+func (e *Embedder) Profile() common.ProfileData {
+	return common.ProfileData{
+		Provider:  "onnx",
+		Model:     MiniLMModel,
+		Dimension: e.dim,
+		Distance:  "cosine",
+		Normalize: true,
+	}
 }
 
 // Close releases ONNX Runtime resources.

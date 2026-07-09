@@ -3,25 +3,29 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/abdul-hamid-achik/veclite"
+	"github.com/abdul-hamid-achik/veclite/session"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // MCPServer handles MCP protocol using the official Go SDK.
+//
+// Database access goes through a lazy dual-handle session: reads use a
+// cached, lock-free read-only handle (an idle or orphaned MCP server never
+// blocks other processes), and writes acquire the exclusive flock only for
+// the duration of a single tool call, releasing it immediately after.
 type MCPServer struct {
-	db       *veclite.DB
+	sess     *session.Session
 	server   *mcp.Server
 	embedder veclite.Embedder
-	// graphStore caches created KnowledgeGraph instances by name
-	graphStore map[string]*veclite.KnowledgeGraph
-	// episodeStore caches EpisodeStore instances by collection name
-	episodeStore map[string]*veclite.EpisodeStore
 }
 
 func cmdMCP(args []string) error {
@@ -30,22 +34,83 @@ func cmdMCP(args []string) error {
 	}
 
 	dbPath := args[0]
-	db, err := veclite.Open(dbPath)
-	if err != nil {
-		return fmt.Errorf("opening database: %w", err)
+	// Bootstrap: if the database file doesn't exist yet, create it once with
+	// an exclusive open, then release so the session's lock-free reader works.
+	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+		db, err := veclite.Open(dbPath)
+		if err != nil {
+			return fmt.Errorf("creating database: %w", err)
+		}
+		if err := db.Close(); err != nil {
+			return fmt.Errorf("closing bootstrap database: %w", err)
+		}
 	}
-	defer func() { _ = db.Close() }()
 
-	srv := &MCPServer{
-		db:           db,
-		graphStore:   make(map[string]*veclite.KnowledgeGraph),
-		episodeStore: make(map[string]*veclite.EpisodeStore),
-	}
+	sess := session.New(session.Config{
+		Path:           dbPath,
+		ReloadInterval: 3 * time.Second,
+	})
+
+	srv := &MCPServer{sess: sess}
+	defer func() { _ = sess.Close() }()
 
 	// Try to load embedder if available
 	srv.initEmbedder()
 
 	return srv.run()
+}
+
+// reader returns the session's lock-free read-only handle, refreshed if the
+// reload interval has elapsed so reads observe recent external writes.
+func (s *MCPServer) reader() (*veclite.DB, error) {
+	db, err := s.sess.ReadOnly()
+	if err != nil {
+		return nil, err
+	}
+	if err := s.sess.ReloadIfStale(nil); err != nil {
+		fmt.Fprintf(os.Stderr, "veclite: reload failed: %v\n", err)
+	}
+	return db, nil
+}
+
+// acquireWriter opens the database with the exclusive write lock. Callers
+// MUST pair it with `defer s.releaseWriter()` so the lock is held only for
+// the duration of one tool call.
+func (s *MCPServer) acquireWriter() (*veclite.DB, error) {
+	return s.sess.ReadWrite()
+}
+
+// releaseWriter closes the write handle, flushing changes and releasing the
+// exclusive lock so other processes can access the database.
+func (s *MCPServer) releaseWriter() {
+	if err := s.sess.ReleaseReadWrite(); err != nil {
+		fmt.Fprintf(os.Stderr, "veclite: releasing write lock: %v\n", err)
+	}
+}
+
+// readerError renders a read-side open failure as a structured MCP error.
+func readerError(err error) (*mcp.CallToolResult, any, error) {
+	return structuredError("DB_UNAVAILABLE",
+		"Cannot open database for reading: "+err.Error(),
+		"Check that the database path exists and is readable")
+}
+
+// writerError renders a write-lock failure as a structured MCP error with
+// holder diagnostics when available.
+func writerError(err error) (*mcp.CallToolResult, any, error) {
+	var lockErr *session.LockError
+	if errors.As(err, &lockErr) {
+		msg := "Another process holds the write lock"
+		if lockErr.PID > 0 {
+			msg = fmt.Sprintf("Another process (PID %d, locked %s ago) holds the write lock",
+				lockErr.PID, lockErr.Age.Truncate(time.Second))
+		}
+		return structuredError("LOCK_HELD", msg,
+			"Retry shortly; if the holder is orphaned or stuck, run 'veclite unlock <db-path>'")
+	}
+	return structuredError("WRITE_FAILED",
+		"Cannot open database for writing: "+err.Error(),
+		"Check that the database path exists and is writable")
 }
 
 // initEmbedder tries to initialize an embedder from config or environment variables.
@@ -145,30 +210,16 @@ func (s *MCPServer) initEmbedder() {
 	s.embedder = embedder
 }
 
-// getOrCreateGraph returns or creates a knowledge graph by name.
-func (s *MCPServer) getOrCreateGraph(name string) (*veclite.KnowledgeGraph, error) {
-	if kg, ok := s.graphStore[name]; ok {
-		return kg, nil
-	}
-	kg, err := s.db.CreateKnowledgeGraph(name)
-	if err != nil {
-		return nil, err
-	}
-	s.graphStore[name] = kg
-	return kg, nil
+// getGraph returns or creates a knowledge graph by name on the given DB
+// handle. The DB caches graphs internally, so no local cache is needed.
+func (s *MCPServer) getGraph(db *veclite.DB, name string) (*veclite.KnowledgeGraph, error) {
+	return db.CreateKnowledgeGraph(name)
 }
 
-// getOrCreateEpisodeStore returns or creates an episode store for a collection.
-func (s *MCPServer) getOrCreateEpisodeStore(collectionName string) (*veclite.EpisodeStore, error) {
-	if es, ok := s.episodeStore[collectionName]; ok {
-		return es, nil
-	}
-	es, err := s.db.CreateEpisodeStore(collectionName)
-	if err != nil {
-		return nil, err
-	}
-	s.episodeStore[collectionName] = es
-	return es, nil
+// getEpisodeStore returns or creates an episode store for a collection on the
+// given DB handle. The DB caches stores internally, so no local cache is needed.
+func (s *MCPServer) getEpisodeStore(db *veclite.DB, collectionName string) (*veclite.EpisodeStore, error) {
+	return db.CreateEpisodeStore(collectionName)
 }
 
 func (s *MCPServer) run() error {
@@ -983,7 +1034,11 @@ func (s *MCPServer) registerTools() {
 // Tool implementations
 
 func (s *MCPServer) toolCollections() (*mcp.CallToolResult, any, error) {
-	names := s.db.Collections()
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	names := db.Collections()
 	type collInfo struct {
 		Name      string `json:"name"`
 		Count     int    `json:"count"`
@@ -994,7 +1049,7 @@ func (s *MCPServer) toolCollections() (*mcp.CallToolResult, any, error) {
 
 	result := make([]collInfo, 0, len(names))
 	for _, name := range names {
-		coll, err := s.db.GetCollection(name)
+		coll, err := db.GetCollection(name)
 		if err != nil {
 			continue
 		}
@@ -1011,11 +1066,19 @@ func (s *MCPServer) toolCollections() (*mcp.CallToolResult, any, error) {
 }
 
 func (s *MCPServer) toolStats() (*mcp.CallToolResult, any, error) {
-	return textResult(s.db.Stats())
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	return textResult(db.Stats())
 }
 
 func (s *MCPServer) toolCollectionSchema(input collectionSchemaInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(input.Collection)
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -1081,7 +1144,11 @@ func (s *MCPServer) toolCollectionSchema(input collectionSchemaInput) (*mcp.Call
 }
 
 func (s *MCPServer) toolSearch(input searchInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(input.Collection)
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -1095,14 +1162,19 @@ func (s *MCPServer) toolSearch(input searchInput) (*mcp.CallToolResult, any, err
 
 	results, err := coll.Search(queryVec, opts...)
 	if err != nil {
-		return errorResult("Search error: " + err.Error())
+		return structuredError("SEARCH_FAILED", "Search error: "+err.Error(),
+			"If this is a dimension mismatch, check veclite_collection_schema for the expected dimension")
 	}
 
-	return textResult(formatResults(results))
+	return textResult(searchEnvelope(coll, results, "vector"))
 }
 
 func (s *MCPServer) toolTextSearch(input textSearchInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(input.Collection)
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -1114,14 +1186,19 @@ func (s *MCPServer) toolTextSearch(input textSearchInput) (*mcp.CallToolResult, 
 
 	results, err := coll.TextSearch(input.Query, opts...)
 	if err != nil {
-		return errorResult("Text search error: " + err.Error())
+		return structuredError("SEARCH_FAILED", "Text search error: "+err.Error(),
+			"Try veclite_search (semantic) or veclite_hybrid_search instead")
 	}
 
-	return textResult(formatResults(results))
+	return textResult(searchEnvelope(coll, results, "text"))
 }
 
 func (s *MCPServer) toolHybridSearch(input hybridSearchInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(input.Collection)
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -1141,14 +1218,19 @@ func (s *MCPServer) toolHybridSearch(input hybridSearchInput) (*mcp.CallToolResu
 
 	results, err := coll.HybridSearch(queryVec, input.Text, opts...)
 	if err != nil {
-		return errorResult("Hybrid search error: " + err.Error())
+		return structuredError("SEARCH_FAILED", "Hybrid search error: "+err.Error(),
+			"If this is a dimension mismatch, check veclite_collection_schema for the expected dimension")
 	}
 
-	return textResult(formatResults(results))
+	return textResult(searchEnvelope(coll, results, "hybrid"))
 }
 
 func (s *MCPServer) toolFind(input findInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(input.Collection)
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -1184,12 +1266,16 @@ func (s *MCPServer) toolFind(input findInput) (*mcp.CallToolResult, any, error) 
 }
 
 func (s *MCPServer) toolInsert(input insertInput) (*mcp.CallToolResult, any, error) {
-	coll := s.db.Collection(input.Collection)
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	coll := db.Collection(input.Collection)
 
 	vec := float64ToFloat32(input.Vector)
 
 	var id uint64
-	var err error
 	if input.Content != "" {
 		id, err = coll.InsertDocument(vec, input.Content, input.Payload)
 	} else {
@@ -1199,7 +1285,7 @@ func (s *MCPServer) toolInsert(input insertInput) (*mcp.CallToolResult, any, err
 		return errorResult("Insert error: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{"id": id, "status": "inserted"})
 }
@@ -1209,6 +1295,11 @@ func (s *MCPServer) toolInsert(input insertInput) (*mcp.CallToolResult, any, err
 const memoriesCollection = "memories"
 
 func (s *MCPServer) toolMemoryRemember(input memoryRememberInput) (*mcp.CallToolResult, any, error) {
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
 	if input.Text == "" {
 		return errorResult("Text is required")
 	}
@@ -1226,7 +1317,7 @@ func (s *MCPServer) toolMemoryRemember(input memoryRememberInput) (*mcp.CallTool
 		return structuredError("NO_EMBEDDER", "Vector is required when embedder is not configured", "Provide a 'vector' field or configure an embedder")
 	}
 
-	coll := s.db.Collection(memoriesCollection)
+	coll := db.Collection(memoriesCollection)
 
 	// Build payload
 	payload := make(map[string]any)
@@ -1262,7 +1353,7 @@ func (s *MCPServer) toolMemoryRemember(input memoryRememberInput) (*mcp.CallTool
 		return errorResult("Failed to store memory: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{
 		"id":         id,
@@ -1273,6 +1364,10 @@ func (s *MCPServer) toolMemoryRemember(input memoryRememberInput) (*mcp.CallTool
 }
 
 func (s *MCPServer) toolMemoryRecall(input memoryRecallInput) (*mcp.CallToolResult, any, error) {
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
 	var queryVec []float32
 	if len(input.Query) > 0 {
 		queryVec = float64ToFloat32(input.Query)
@@ -1288,7 +1383,7 @@ func (s *MCPServer) toolMemoryRecall(input memoryRecallInput) (*mcp.CallToolResu
 		return errorResult("Either 'query' vector or 'text' is required")
 	}
 
-	coll, err := s.db.GetCollection(memoriesCollection)
+	coll, err := db.GetCollection(memoriesCollection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Memories collection not found", "Use memory_remember to create it first")
 	}
@@ -1370,7 +1465,12 @@ func (s *MCPServer) toolMemoryRecall(input memoryRecallInput) (*mcp.CallToolResu
 }
 
 func (s *MCPServer) toolMemoryForget(input memoryForgetInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(memoriesCollection)
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	coll, err := db.GetCollection(memoriesCollection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Memories collection not found", "Use memory_remember to create it first")
 	}
@@ -1408,7 +1508,7 @@ func (s *MCPServer) toolMemoryForget(input memoryForgetInput) (*mcp.CallToolResu
 	}
 
 	if deleted > 0 {
-		_ = s.db.Sync()
+		_ = db.Sync()
 	}
 
 	return textResult(map[string]any{
@@ -1453,7 +1553,12 @@ func (s *MCPServer) toolEmbed(input embedInput) (*mcp.CallToolResult, any, error
 // Graph tool implementations
 
 func (s *MCPServer) toolGraphAddEntity(input graphAddEntityInput) (*mcp.CallToolResult, any, error) {
-	kg, err := s.getOrCreateGraph(input.Graph)
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	kg, err := s.getGraph(db, input.Graph)
 	if err != nil {
 		return errorResult("Failed to create/get graph: " + err.Error())
 	}
@@ -1473,7 +1578,7 @@ func (s *MCPServer) toolGraphAddEntity(input graphAddEntityInput) (*mcp.CallTool
 		return errorResult("Failed to add entity: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{
 		"status":    "added",
@@ -1483,7 +1588,12 @@ func (s *MCPServer) toolGraphAddEntity(input graphAddEntityInput) (*mcp.CallTool
 }
 
 func (s *MCPServer) toolGraphAddRelationship(input graphAddRelationshipInput) (*mcp.CallToolResult, any, error) {
-	kg, err := s.getOrCreateGraph(input.Graph)
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	kg, err := s.getGraph(db, input.Graph)
 	if err != nil {
 		return errorResult("Failed to create/get graph: " + err.Error())
 	}
@@ -1502,7 +1612,7 @@ func (s *MCPServer) toolGraphAddRelationship(input graphAddRelationshipInput) (*
 		return errorResult("Failed to add relationship: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{
 		"status":          "added",
@@ -1512,8 +1622,12 @@ func (s *MCPServer) toolGraphAddRelationship(input graphAddRelationshipInput) (*
 }
 
 func (s *MCPServer) toolGraphGetRelationships(input graphGetRelationshipsInput) (*mcp.CallToolResult, any, error) {
-	kg, ok := s.graphStore[input.Graph]
-	if !ok {
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	kg, err := db.GetKnowledgeGraph(input.Graph)
+	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Graph '"+input.Graph+"' not found", "Use veclite_graph_create to create it first")
 	}
 
@@ -1546,8 +1660,12 @@ func (s *MCPServer) toolGraphGetRelationships(input graphGetRelationshipsInput) 
 }
 
 func (s *MCPServer) toolGraphTraverse(input graphTraverseInput) (*mcp.CallToolResult, any, error) {
-	kg, ok := s.graphStore[input.Graph]
-	if !ok {
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	kg, err := db.GetKnowledgeGraph(input.Graph)
+	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Graph '"+input.Graph+"' not found", "Use veclite_graph_create to create it first")
 	}
 
@@ -1596,8 +1714,12 @@ func (s *MCPServer) toolGraphTraverse(input graphTraverseInput) (*mcp.CallToolRe
 }
 
 func (s *MCPServer) toolGraphExpandedSearch(input graphExpandedSearchInput) (*mcp.CallToolResult, any, error) {
-	kg, ok := s.graphStore[input.Graph]
-	if !ok {
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	kg, err := db.GetKnowledgeGraph(input.Graph)
+	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Graph '"+input.Graph+"' not found", "Use veclite_graph_create to create it first")
 	}
 
@@ -1676,7 +1798,12 @@ func (s *MCPServer) toolGraphExpandedSearch(input graphExpandedSearchInput) (*mc
 // Conversation tool implementations
 
 func (s *MCPServer) toolConversationAddTurn(input conversationAddTurnInput) (*mcp.CallToolResult, any, error) {
-	coll := s.db.Collection(input.Collection)
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	coll := db.Collection(input.Collection)
 
 	var vec []float32
 	if len(input.Vector) > 0 {
@@ -1709,7 +1836,7 @@ func (s *MCPServer) toolConversationAddTurn(input conversationAddTurnInput) (*mc
 		return errorResult("Failed to add turn: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{
 		"status":     "added",
@@ -1719,7 +1846,11 @@ func (s *MCPServer) toolConversationAddTurn(input conversationAddTurnInput) (*mc
 }
 
 func (s *MCPServer) toolConversationGetSession(input conversationGetSessionInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(input.Collection)
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -1755,7 +1886,11 @@ func (s *MCPServer) toolConversationGetSession(input conversationGetSessionInput
 }
 
 func (s *MCPServer) toolConversationSearchSession(input conversationSearchSessionInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(input.Collection)
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -1792,7 +1927,11 @@ func (s *MCPServer) toolConversationSearchSession(input conversationSearchSessio
 }
 
 func (s *MCPServer) toolConversationListSessions(input conversationListSessionsInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(input.Collection)
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -1806,7 +1945,11 @@ func (s *MCPServer) toolConversationListSessions(input conversationListSessionsI
 }
 
 func (s *MCPServer) toolConversationGetThread(input conversationGetThreadInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(input.Collection)
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -1836,7 +1979,11 @@ func (s *MCPServer) toolConversationGetThread(input conversationGetThreadInput) 
 // Episode tool implementations
 
 func (s *MCPServer) toolEpisodeDetect(input episodeDetectInput) (*mcp.CallToolResult, any, error) {
-	es, err := s.getOrCreateEpisodeStore(input.Collection)
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	es, err := s.getEpisodeStore(db, input.Collection)
 	if err != nil {
 		return errorResult("Failed to create episode store: " + err.Error())
 	}
@@ -1878,7 +2025,12 @@ func (s *MCPServer) toolEpisodeDetect(input episodeDetectInput) (*mcp.CallToolRe
 }
 
 func (s *MCPServer) toolEpisodeCreate(input episodeCreateInput) (*mcp.CallToolResult, any, error) {
-	es, err := s.getOrCreateEpisodeStore(input.Collection)
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	es, err := s.getEpisodeStore(db, input.Collection)
 	if err != nil {
 		return errorResult("Failed to create episode store: " + err.Error())
 	}
@@ -1897,8 +2049,12 @@ func (s *MCPServer) toolEpisodeCreate(input episodeCreateInput) (*mcp.CallToolRe
 }
 
 func (s *MCPServer) toolEpisodeGet(input episodeGetInput) (*mcp.CallToolResult, any, error) {
-	es, ok := s.episodeStore[input.Collection]
-	if !ok {
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	es, err := db.GetEpisodeStore(input.Collection)
+	if err != nil {
 		return errorResult("No episodes detected for collection: " + input.Collection)
 	}
 
@@ -1932,8 +2088,12 @@ func (s *MCPServer) toolEpisodeGet(input episodeGetInput) (*mcp.CallToolResult, 
 }
 
 func (s *MCPServer) toolEpisodeList(input episodeListInput) (*mcp.CallToolResult, any, error) {
-	es, ok := s.episodeStore[input.Collection]
-	if !ok {
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	es, err := db.GetEpisodeStore(input.Collection)
+	if err != nil {
 		return textResult(map[string]any{
 			"episodes": []any{},
 			"count":    0,
@@ -1960,8 +2120,12 @@ func (s *MCPServer) toolEpisodeList(input episodeListInput) (*mcp.CallToolResult
 }
 
 func (s *MCPServer) toolEpisodeSearch(input episodeSearchInput) (*mcp.CallToolResult, any, error) {
-	es, ok := s.episodeStore[input.Collection]
-	if !ok {
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	es, err := db.GetEpisodeStore(input.Collection)
+	if err != nil {
 		return errorResult("No episodes detected for collection: " + input.Collection)
 	}
 
@@ -2006,8 +2170,12 @@ func (s *MCPServer) toolEpisodeSearch(input episodeSearchInput) (*mcp.CallToolRe
 }
 
 func (s *MCPServer) toolEpisodeSearchExpanded(input episodeSearchExpandedInput) (*mcp.CallToolResult, any, error) {
-	es, ok := s.episodeStore[input.Collection]
-	if !ok {
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	es, err := db.GetEpisodeStore(input.Collection)
+	if err != nil {
 		return errorResult("No episodes detected for collection: " + input.Collection)
 	}
 
@@ -2073,12 +2241,16 @@ func (s *MCPServer) toolEpisodeSearchExpanded(input episodeSearchExpandedInput) 
 // Consolidation tool implementations
 
 func (s *MCPServer) toolMemoryFindClusters(input memoryFindClustersInput) (*mcp.CallToolResult, any, error) {
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
 	collName := input.Collection
 	if collName == "" {
 		collName = memoriesCollection
 	}
 
-	coll, err := s.db.GetCollection(collName)
+	coll, err := db.GetCollection(collName)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+collName+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -2121,12 +2293,17 @@ func (s *MCPServer) toolMemoryFindClusters(input memoryFindClustersInput) (*mcp.
 }
 
 func (s *MCPServer) toolMemoryArchive(input memoryArchiveInput) (*mcp.CallToolResult, any, error) {
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
 	collName := input.Collection
 	if collName == "" {
 		collName = memoriesCollection
 	}
 
-	coll, err := s.db.GetCollection(collName)
+	coll, err := db.GetCollection(collName)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+collName+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -2135,7 +2312,7 @@ func (s *MCPServer) toolMemoryArchive(input memoryArchiveInput) (*mcp.CallToolRe
 		return errorResult("Archive failed: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{
 		"status":    "archived",
@@ -2144,12 +2321,17 @@ func (s *MCPServer) toolMemoryArchive(input memoryArchiveInput) (*mcp.CallToolRe
 }
 
 func (s *MCPServer) toolMemoryUnarchive(input memoryUnarchiveInput) (*mcp.CallToolResult, any, error) {
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
 	collName := input.Collection
 	if collName == "" {
 		collName = memoriesCollection
 	}
 
-	coll, err := s.db.GetCollection(collName)
+	coll, err := db.GetCollection(collName)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+collName+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -2158,7 +2340,7 @@ func (s *MCPServer) toolMemoryUnarchive(input memoryUnarchiveInput) (*mcp.CallTo
 		return errorResult("Unarchive failed: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{
 		"status":    "unarchived",
@@ -2167,12 +2349,16 @@ func (s *MCPServer) toolMemoryUnarchive(input memoryUnarchiveInput) (*mcp.CallTo
 }
 
 func (s *MCPServer) toolMemoryGetArchived(input memoryGetArchivedInput) (*mcp.CallToolResult, any, error) {
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
 	collName := input.Collection
 	if collName == "" {
 		collName = memoriesCollection
 	}
 
-	coll, err := s.db.GetCollection(collName)
+	coll, err := db.GetCollection(collName)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+collName+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -2202,7 +2388,11 @@ func (s *MCPServer) toolMemoryGetArchived(input memoryGetArchivedInput) (*mcp.Ca
 // Phase 1: Essential CRUD tool implementations
 
 func (s *MCPServer) toolGet(input getInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(input.Collection)
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -2223,7 +2413,12 @@ func (s *MCPServer) toolGet(input getInput) (*mcp.CallToolResult, any, error) {
 }
 
 func (s *MCPServer) toolDelete(input deleteInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(input.Collection)
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -2232,7 +2427,7 @@ func (s *MCPServer) toolDelete(input deleteInput) (*mcp.CallToolResult, any, err
 		return errorResult("Delete failed: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{
 		"status": "deleted",
@@ -2241,7 +2436,12 @@ func (s *MCPServer) toolDelete(input deleteInput) (*mcp.CallToolResult, any, err
 }
 
 func (s *MCPServer) toolUpdate(input updateInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(input.Collection)
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -2250,7 +2450,7 @@ func (s *MCPServer) toolUpdate(input updateInput) (*mcp.CallToolResult, any, err
 		return errorResult("Update failed: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{
 		"status": "updated",
@@ -2259,7 +2459,12 @@ func (s *MCPServer) toolUpdate(input updateInput) (*mcp.CallToolResult, any, err
 }
 
 func (s *MCPServer) toolUpsert(input upsertInput) (*mcp.CallToolResult, any, error) {
-	coll := s.db.Collection(input.Collection)
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	coll := db.Collection(input.Collection)
 
 	vec := float64ToFloat32(input.Vector)
 
@@ -2268,7 +2473,7 @@ func (s *MCPServer) toolUpsert(input upsertInput) (*mcp.CallToolResult, any, err
 		return errorResult("Upsert failed: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{
 		"status": "upserted",
@@ -2277,7 +2482,12 @@ func (s *MCPServer) toolUpsert(input upsertInput) (*mcp.CallToolResult, any, err
 }
 
 func (s *MCPServer) toolDeleteWhere(input deleteWhereInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(input.Collection)
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -2300,7 +2510,7 @@ func (s *MCPServer) toolDeleteWhere(input deleteWhereInput) (*mcp.CallToolResult
 	}
 
 	if deleted > 0 {
-		_ = s.db.Sync()
+		_ = db.Sync()
 	}
 
 	return textResult(map[string]any{
@@ -2310,11 +2520,16 @@ func (s *MCPServer) toolDeleteWhere(input deleteWhereInput) (*mcp.CallToolResult
 }
 
 func (s *MCPServer) toolClear(input clearInput) (*mcp.CallToolResult, any, error) {
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
 	if !input.Confirm {
 		return errorResult("This operation requires confirm: true")
 	}
 
-	coll, err := s.db.GetCollection(input.Collection)
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -2323,7 +2538,7 @@ func (s *MCPServer) toolClear(input clearInput) (*mcp.CallToolResult, any, error
 		return errorResult("Clear failed: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{
 		"status":     "cleared",
@@ -2334,7 +2549,12 @@ func (s *MCPServer) toolClear(input clearInput) (*mcp.CallToolResult, any, error
 // Phase 2: Batch + Collection Management tool implementations
 
 func (s *MCPServer) toolInsertBatch(input insertBatchInput) (*mcp.CallToolResult, any, error) {
-	coll := s.db.Collection(input.Collection)
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	coll := db.Collection(input.Collection)
 
 	// Convert vectors
 	vectors := make([][]float32, len(input.Vectors))
@@ -2359,7 +2579,7 @@ func (s *MCPServer) toolInsertBatch(input insertBatchInput) (*mcp.CallToolResult
 		return errorResult("InsertBatch failed: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{
 		"status":   "inserted",
@@ -2369,7 +2589,12 @@ func (s *MCPServer) toolInsertBatch(input insertBatchInput) (*mcp.CallToolResult
 }
 
 func (s *MCPServer) toolUpsertByKey(input upsertByKeyInput) (*mcp.CallToolResult, any, error) {
-	coll := s.db.Collection(input.Collection)
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	coll := db.Collection(input.Collection)
 
 	vec := float64ToFloat32(input.Vector)
 
@@ -2378,7 +2603,7 @@ func (s *MCPServer) toolUpsertByKey(input upsertByKeyInput) (*mcp.CallToolResult
 		return errorResult("UpsertByKey failed: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	action := "updated"
 	if inserted {
@@ -2393,6 +2618,11 @@ func (s *MCPServer) toolUpsertByKey(input upsertByKeyInput) (*mcp.CallToolResult
 }
 
 func (s *MCPServer) toolCreateCollection(input createCollectionInput) (*mcp.CallToolResult, any, error) {
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
 	var opts []veclite.CollectionOption
 
 	if input.Dimension > 0 {
@@ -2426,12 +2656,12 @@ func (s *MCPServer) toolCreateCollection(input createCollectionInput) (*mcp.Call
 		}
 	}
 
-	coll, err := s.db.CreateCollection(input.Name, opts...)
+	coll, err := db.CreateCollection(input.Name, opts...)
 	if err != nil {
 		return errorResult("CreateCollection failed: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{
 		"status":     "created",
@@ -2440,15 +2670,20 @@ func (s *MCPServer) toolCreateCollection(input createCollectionInput) (*mcp.Call
 }
 
 func (s *MCPServer) toolDropCollection(input dropCollectionInput) (*mcp.CallToolResult, any, error) {
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
 	if !input.Confirm {
 		return errorResult("This operation requires confirm: true")
 	}
 
-	if err := s.db.DropCollection(input.Name); err != nil {
+	if err := db.DropCollection(input.Name); err != nil {
 		return errorResult("DropCollection failed: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{
 		"status":     "dropped",
@@ -2457,7 +2692,12 @@ func (s *MCPServer) toolDropCollection(input dropCollectionInput) (*mcp.CallTool
 }
 
 func (s *MCPServer) toolSync() (*mcp.CallToolResult, any, error) {
-	if err := s.db.Sync(); err != nil {
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	if err := db.Sync(); err != nil {
 		return errorResult("Sync failed: " + err.Error())
 	}
 
@@ -2467,7 +2707,11 @@ func (s *MCPServer) toolSync() (*mcp.CallToolResult, any, error) {
 }
 
 func (s *MCPServer) toolMetrics() (*mcp.CallToolResult, any, error) {
-	metrics := s.db.Metrics()
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	metrics := db.Metrics()
 
 	return textResult(map[string]any{
 		"insert_count":    metrics.InsertCount,
@@ -2480,8 +2724,12 @@ func (s *MCPServer) toolMetrics() (*mcp.CallToolResult, any, error) {
 // Phase 3: Graph CRUD tool implementations
 
 func (s *MCPServer) toolGraphGetEntity(input graphGetEntityInput) (*mcp.CallToolResult, any, error) {
-	kg, ok := s.graphStore[input.Graph]
-	if !ok {
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	kg, err := db.GetKnowledgeGraph(input.Graph)
+	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Graph '"+input.Graph+"' not found", "Use veclite_graph_create to create it first")
 	}
 
@@ -2500,8 +2748,13 @@ func (s *MCPServer) toolGraphGetEntity(input graphGetEntityInput) (*mcp.CallTool
 }
 
 func (s *MCPServer) toolGraphUpdateEntity(input graphUpdateEntityInput) (*mcp.CallToolResult, any, error) {
-	kg, ok := s.graphStore[input.Graph]
-	if !ok {
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	kg, err := db.GetKnowledgeGraph(input.Graph)
+	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Graph '"+input.Graph+"' not found", "Use veclite_graph_create to create it first")
 	}
 
@@ -2520,7 +2773,7 @@ func (s *MCPServer) toolGraphUpdateEntity(input graphUpdateEntityInput) (*mcp.Ca
 		return errorResult("UpdateEntity failed: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{
 		"status":    "updated",
@@ -2530,8 +2783,13 @@ func (s *MCPServer) toolGraphUpdateEntity(input graphUpdateEntityInput) (*mcp.Ca
 }
 
 func (s *MCPServer) toolGraphDeleteEntity(input graphDeleteEntityInput) (*mcp.CallToolResult, any, error) {
-	kg, ok := s.graphStore[input.Graph]
-	if !ok {
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	kg, err := db.GetKnowledgeGraph(input.Graph)
+	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Graph '"+input.Graph+"' not found", "Use veclite_graph_create to create it first")
 	}
 
@@ -2539,7 +2797,7 @@ func (s *MCPServer) toolGraphDeleteEntity(input graphDeleteEntityInput) (*mcp.Ca
 		return errorResult("DeleteEntity failed: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{
 		"status":    "deleted",
@@ -2549,8 +2807,13 @@ func (s *MCPServer) toolGraphDeleteEntity(input graphDeleteEntityInput) (*mcp.Ca
 }
 
 func (s *MCPServer) toolGraphDeleteRelationship(input graphDeleteRelationshipInput) (*mcp.CallToolResult, any, error) {
-	kg, ok := s.graphStore[input.Graph]
-	if !ok {
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	kg, err := db.GetKnowledgeGraph(input.Graph)
+	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Graph '"+input.Graph+"' not found", "Use veclite_graph_create to create it first")
 	}
 
@@ -2558,7 +2821,7 @@ func (s *MCPServer) toolGraphDeleteRelationship(input graphDeleteRelationshipInp
 		return errorResult("DeleteRelationship failed: " + err.Error())
 	}
 
-	_ = s.db.Sync()
+	_ = db.Sync()
 
 	return textResult(map[string]any{
 		"status":          "deleted",
@@ -2568,8 +2831,12 @@ func (s *MCPServer) toolGraphDeleteRelationship(input graphDeleteRelationshipInp
 }
 
 func (s *MCPServer) toolGraphListEntities(input graphListEntitiesInput) (*mcp.CallToolResult, any, error) {
-	kg, ok := s.graphStore[input.Graph]
-	if !ok {
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	kg, err := db.GetKnowledgeGraph(input.Graph)
+	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Graph '"+input.Graph+"' not found", "Use veclite_graph_create to create it first")
 	}
 
@@ -2595,7 +2862,12 @@ func (s *MCPServer) toolGraphListEntities(input graphListEntitiesInput) (*mcp.Ca
 // Phase 4: Cleanup, Consolidation, and Conversation tool implementations
 
 func (s *MCPServer) toolCleanupExpired(input cleanupExpiredInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(input.Collection)
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -2606,7 +2878,7 @@ func (s *MCPServer) toolCleanupExpired(input cleanupExpiredInput) (*mcp.CallTool
 	}
 
 	if deleted > 0 {
-		_ = s.db.Sync()
+		_ = db.Sync()
 	}
 
 	return textResult(map[string]any{
@@ -2616,7 +2888,11 @@ func (s *MCPServer) toolCleanupExpired(input cleanupExpiredInput) (*mcp.CallTool
 }
 
 func (s *MCPServer) toolCountExpired(input countExpiredInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(input.Collection)
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -2629,12 +2905,17 @@ func (s *MCPServer) toolCountExpired(input countExpiredInput) (*mcp.CallToolResu
 }
 
 func (s *MCPServer) toolMemoryEnforceLimit(input memoryEnforceLimitInput) (*mcp.CallToolResult, any, error) {
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
 	collName := input.Collection
 	if collName == "" {
 		collName = memoriesCollection
 	}
 
-	coll, err := s.db.GetCollection(collName)
+	coll, err := db.GetCollection(collName)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+collName+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -2652,7 +2933,7 @@ func (s *MCPServer) toolMemoryEnforceLimit(input memoryEnforceLimitInput) (*mcp.
 	evicted := coll.EnforceMemoryLimit(config)
 
 	if evicted > 0 {
-		_ = s.db.Sync()
+		_ = db.Sync()
 	}
 
 	return textResult(map[string]any{
@@ -2662,12 +2943,17 @@ func (s *MCPServer) toolMemoryEnforceLimit(input memoryEnforceLimitInput) (*mcp.
 }
 
 func (s *MCPServer) toolMemoryConsolidate(input memoryConsolidateInput) (*mcp.CallToolResult, any, error) {
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
 	collName := input.Collection
 	if collName == "" {
 		collName = memoriesCollection
 	}
 
-	coll, err := s.db.GetCollection(collName)
+	coll, err := db.GetCollection(collName)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+collName+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -2708,12 +2994,17 @@ func (s *MCPServer) toolMemoryConsolidate(input memoryConsolidateInput) (*mcp.Ca
 }
 
 func (s *MCPServer) toolMemoryExpandConsolidation(input memoryExpandConsolidationInput) (*mcp.CallToolResult, any, error) {
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
 	collName := input.Collection
 	if collName == "" {
 		collName = memoriesCollection
 	}
 
-	coll, err := s.db.GetCollection(collName)
+	coll, err := db.GetCollection(collName)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+collName+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -2742,11 +3033,16 @@ func (s *MCPServer) toolMemoryExpandConsolidation(input memoryExpandConsolidatio
 }
 
 func (s *MCPServer) toolConversationDeleteSession(input conversationDeleteSessionInput) (*mcp.CallToolResult, any, error) {
+	db, err := s.acquireWriter()
+	if err != nil {
+		return writerError(err)
+	}
+	defer s.releaseWriter()
 	if !input.Confirm {
 		return errorResult("This operation requires confirm: true")
 	}
 
-	coll, err := s.db.GetCollection(input.Collection)
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -2766,7 +3062,7 @@ func (s *MCPServer) toolConversationDeleteSession(input conversationDeleteSessio
 	}
 
 	if deleted > 0 {
-		_ = s.db.Sync()
+		_ = db.Sync()
 	}
 
 	return textResult(map[string]any{
@@ -2777,7 +3073,11 @@ func (s *MCPServer) toolConversationDeleteSession(input conversationDeleteSessio
 }
 
 func (s *MCPServer) toolConversationGetStats(input conversationGetStatsInput) (*mcp.CallToolResult, any, error) {
-	coll, err := s.db.GetCollection(input.Collection)
+	db, err := s.reader()
+	if err != nil {
+		return readerError(err)
+	}
+	coll, err := db.GetCollection(input.Collection)
 	if err != nil {
 		return structuredError("COLLECTION_NOT_FOUND", "Collection '"+input.Collection+"' not found", "Use veclite_create_collection to create it first")
 	}
@@ -2813,13 +3113,35 @@ func textResult(data any) (*mcp.CallToolResult, any, error) {
 	}, nil, nil
 }
 
+// errorResult renders a runtime error as a structured error, classifying the
+// message heuristically so every legacy call site gains a machine-readable
+// code and a recovery suggestion without individual migration.
 func errorResult(msg string) (*mcp.CallToolResult, any, error) {
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{
-			&mcp.TextContent{Text: msg},
-		},
-		IsError: true,
-	}, nil, nil
+	code, suggestion := classifyError(msg)
+	return structuredError(code, msg, suggestion)
+}
+
+// classifyError maps a raw error message onto an {code, suggestion} pair for
+// agent consumption. Heuristic by design: precise call sites should call
+// structuredError directly with a hand-written suggestion.
+func classifyError(msg string) (code, suggestion string) {
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.Contains(lower, "dimension"):
+		return "DIMENSION_MISMATCH", "Check the collection's expected dimension via veclite_collection_schema and re-embed with a matching model"
+	case strings.Contains(lower, "embedd"):
+		return "EMBEDDER_UNAVAILABLE", "Check that the embedding provider is running (e.g. 'ollama serve') and configured via VECLITE_EMBEDDER or veclite.yaml, or pass a pre-computed 'query' vector"
+	case strings.Contains(lower, "vector is required") || strings.Contains(lower, "'query' vector or 'text'") || strings.Contains(lower, "is required"):
+		return "INVALID_INPUT", "Check the tool's input schema for the required fields"
+	case strings.Contains(lower, "not found"):
+		return "NOT_FOUND", "Use veclite_list_collections / veclite_collection_schema to discover what exists"
+	case strings.Contains(lower, "lock"):
+		return "LOCK_HELD", "Retry shortly; if the holder is orphaned, run 'veclite unlock <db-path>'"
+	case strings.Contains(lower, "confirm"):
+		return "CONFIRMATION_REQUIRED", "Re-invoke with confirm: true if you intend this destructive operation"
+	default:
+		return "OPERATION_FAILED", ""
+	}
 }
 
 type mcpError struct {
@@ -2862,11 +3184,53 @@ func formatResults(results []veclite.Result) []map[string]any {
 			"payload": r.Record.Payload,
 		}
 		if r.Record.Content != "" {
-			entry["content"] = r.Record.Content
+			entry["content"] = truncateContent(r.Record.Content, maxResultContentChars)
 		}
 		out[i] = entry
 	}
 	return out
+}
+
+// maxResultContentChars caps per-result content in MCP responses so one fat
+// record can't flood an agent's context window. The full content remains
+// retrievable by ID via veclite_get.
+const maxResultContentChars = 2000
+
+func truncateContent(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + fmt.Sprintf("… [truncated %d of %d chars — fetch full record by id via veclite_get]", len(s)-max, len(s))
+}
+
+// searchEnvelope wraps search results with counts and, when the result set is
+// empty or thin, a diagnostic hint so an agent knows WHY and what to try next
+// instead of guessing from a bare [].
+func searchEnvelope(coll *veclite.Collection, results []veclite.Result, mode string) map[string]any {
+	env := map[string]any{
+		"total":   len(results),
+		"results": formatResults(results),
+	}
+	if len(results) == 0 {
+		count := coll.Count()
+		if count == 0 {
+			env["hint"] = "0 results: the collection is empty — insert records first (veclite_insert)"
+		} else {
+			hint := fmt.Sprintf("0 results from %d records (mode=%s).", count, mode)
+			switch mode {
+			case "vector":
+				hint += " Check the query vector's dimension matches the collection (veclite_collection_schema), or try veclite_text_search / veclite_hybrid_search."
+			case "text":
+				hint += " BM25 needs exact-ish keyword overlap — try veclite_search (semantic) or veclite_hybrid_search, or broaden the query terms."
+			default:
+				hint += " Try adjusting the query, raising top_k, or checking the collection schema (veclite_collection_schema)."
+			}
+			env["hint"] = hint
+		}
+	} else if len(results) > 0 && results[0].Score < 0.3 && mode == "vector" {
+		env["hint"] = fmt.Sprintf("Top score is low (%.2f) — matches may be weak. Consider veclite_hybrid_search to blend keyword matching, or refine the query.", results[0].Score)
+	}
+	return env
 }
 
 func hasAnyTag(payload map[string]any, tags []string) bool {

@@ -102,9 +102,9 @@ var ErrFileLocked = veclite.ErrFileLocked
 type Session struct {
 	cfg Config
 
-	mu  sync.Mutex
-	ro  *veclite.DB // cached read-only handle (shared lock), nil when not open
-	rw  *veclite.DB // cached read-write handle (exclusive lock), nil when not open
+	mu sync.Mutex
+	ro *veclite.DB // cached read-only handle (shared lock), nil when not open
+	rw *veclite.DB // cached read-write handle (exclusive lock), nil when not open
 
 	lastReload time.Time
 }
@@ -148,13 +148,15 @@ func (s *Session) ReadOnly() (*veclite.DB, error) {
 
 // ReadWrite returns a *veclite.DB opened with an exclusive flock for writing.
 //
-// The handle is NOT cached — the caller must call db.Close() after use so the
-// exclusive lock is released, allowing other processes to access the database.
+// The handle IS cached in the session — call ReleaseReadWrite (or Close) after
+// the write completes so the exclusive lock is released and other processes
+// can access the database again. Do not call db.Close() directly on the
+// returned handle; use ReleaseReadWrite so the session's cache stays coherent.
 //
 // If a read-only handle is cached, it is closed first (releasing the shared
 // lock) so the exclusive lock can be acquired. If a read-write handle is
-// already cached (e.g. from a previous call that didn't close), it is returned
-// directly.
+// already cached (e.g. from a previous call that didn't release), it is
+// returned directly.
 //
 // On lock contention (another process holds the lock), returns *LockError
 // with PID and lock-age diagnostics parsed from the .lock file.
@@ -238,6 +240,25 @@ func (s *Session) ReleaseReadOnly() error {
 	if s.ro != nil {
 		err := s.ro.Close()
 		s.ro = nil
+		return err
+	}
+	return nil
+}
+
+// ReleaseReadWrite closes the cached read-write handle if one is open,
+// releasing the exclusive lock so other processes can open the database.
+// Call this as soon as a write operation completes — a long-lived process
+// (e.g. an MCP server) should hold the exclusive lock only for the duration
+// of a single write.
+//
+// The next ReadWrite() call will re-open the handle; the next ReadOnly() call
+// will open a fresh lock-free read handle.
+func (s *Session) ReleaseReadWrite() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.rw != nil {
+		err := s.rw.Close()
+		s.rw = nil
 		return err
 	}
 	return nil

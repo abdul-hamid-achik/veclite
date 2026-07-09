@@ -4,11 +4,16 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/abdul-hamid-achik/veclite"
+	"github.com/abdul-hamid-achik/veclite/internal/storage"
 )
 
 func cmdCompact(args []string) error {
@@ -348,4 +353,82 @@ func formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+func cmdUnlock(args []string) error {
+	fs := flag.NewFlagSet("unlock", flag.ExitOnError)
+	force := fs.Bool("force", false, "Remove the lock even if the holding process is alive")
+	fs.Usage = func() {
+		fmt.Println("Usage: veclite unlock [options] <file>")
+		fmt.Println("\nInspect and remove an orphaned database lock file.")
+		fmt.Println("Locks held by dead processes are removed automatically.")
+		fmt.Println("Locks held by live processes are reported but not removed")
+		fmt.Println("unless --force is given.")
+		fmt.Println("\nOptions:")
+		fs.PrintDefaults()
+	}
+	_ = fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fs.Usage()
+		return fmt.Errorf("missing required argument: file")
+	}
+	return unlockDB(fs.Arg(0), *force, os.Stdout)
+}
+
+// unlockDB inspects the lock file for dbPath and removes it when safe (or
+// when forced). Extracted from cmdUnlock so it can be unit-tested without
+// exec'ing the binary.
+func unlockDB(dbPath string, force bool, out io.Writer) error {
+	if !storage.LockFileExists(dbPath) {
+		fmt.Fprintf(out, "no lock file at %s.lock\n", dbPath)
+		return nil
+	}
+
+	pid := storage.ReadLockPID(dbPath)
+	info := storage.ReadLockInfo(dbPath)
+
+	if pid <= 0 {
+		// Unparseable lock file — treat as stale garbage.
+		if err := storage.RemoveLockFile(dbPath); err != nil {
+			return fmt.Errorf("removing unparseable lock file: %w", err)
+		}
+		fmt.Fprintf(out, "removed unparseable lock file at %s.lock\n", dbPath)
+		return nil
+	}
+
+	if !storage.IsProcessAlive(pid) {
+		if err := storage.RemoveLockFile(dbPath); err != nil {
+			return fmt.Errorf("removing stale lock: %w", err)
+		}
+		fmt.Fprintf(out, "removed stale lock (PID %d, dead)\n", pid)
+		return nil
+	}
+
+	// Holder is alive.
+	cmdline := processCommand(pid)
+	fmt.Fprintf(out, "lock held by live process: %s\n", info)
+	if cmdline != "" {
+		fmt.Fprintf(out, "  command: %s\n", cmdline)
+	}
+	if !force {
+		fmt.Fprintln(out, "refusing to remove a live process's lock.")
+		fmt.Fprintf(out, "kill the process first (kill %d), or re-run with --force if you are certain it is stuck.\n", pid)
+		return fmt.Errorf("lock held by live PID %d", pid)
+	}
+
+	if err := storage.RemoveLockFile(dbPath); err != nil {
+		return fmt.Errorf("force-removing lock: %w", err)
+	}
+	fmt.Fprintf(out, "WARNING: force-removed lock held by live PID %d — if that process writes again, the database may be corrupted\n", pid)
+	return nil
+}
+
+// processCommand returns the command line of a process, best-effort.
+func processCommand(pid int) string {
+	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }

@@ -25,12 +25,24 @@ const (
 	DefaultTimeout = 30 * time.Second
 )
 
-// Known model dimensions for common models.
+// knownDimensions holds legacy dimension entries kept as a fallback for the
+// shared registry in embed/common (which is consulted first and covers these
+// and more).
 var knownDimensions = map[string]int{
 	"nomic-embed-text":       768,
 	"mxbai-embed-large":      1024,
 	"all-minilm":             384,
 	"snowflake-arctic-embed": 1024,
+}
+
+// dimensionForModel returns the known dimension for a model, or 0 when the
+// model is not recognized (in which case the dimension is auto-detected on
+// the first Embed call, as before).
+func dimensionForModel(model string) int {
+	if dim, ok := common.KnownModelDimensions(model); ok {
+		return dim
+	}
+	return knownDimensions[model]
 }
 
 // config holds embedder configuration.
@@ -85,7 +97,7 @@ func NewEmbedder(opts ...Option) (*Embedder, error) {
 	}
 
 	// Use known dimension if available
-	dimension := knownDimensions[cfg.model]
+	dimension := dimensionForModel(cfg.model)
 
 	return &Embedder{
 		cfg:        cfg,
@@ -216,6 +228,20 @@ func (e *Embedder) Dimension() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.dimension
+}
+
+// Profile describes this embedder: provider "ollama", the configured model,
+// the known or observed dimension (0 until the first Embed call for unknown
+// models), cosine distance, and Normalize=false — this embedder returns the
+// raw vectors from the Ollama API without L2-normalizing them.
+func (e *Embedder) Profile() common.ProfileData {
+	return common.ProfileData{
+		Provider:  "ollama",
+		Model:     e.cfg.model,
+		Dimension: e.Dimension(),
+		Distance:  "cosine",
+		Normalize: false,
+	}
 }
 
 // Close releases resources. Safe to call multiple times.

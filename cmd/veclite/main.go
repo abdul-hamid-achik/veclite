@@ -91,6 +91,8 @@ func main() {
 		err = cmdValidate(args)
 	case "benchmark":
 		err = cmdBenchmark(args)
+	case "unlock":
+		err = cmdUnlock(args)
 	case "help", "-h", "--help":
 		printUsage()
 		return
@@ -149,6 +151,7 @@ Maintenance Commands:
   compact <file>           Compact database and reclaim space
   validate <file>          Validate database integrity
   benchmark <file>         Run search performance benchmark
+  unlock [--force] <file>  Inspect/remove an orphaned lock file
 
 Other:
   help                     Show this help message

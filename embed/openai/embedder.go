@@ -120,8 +120,14 @@ func NewEmbedder(opts ...Option) (*Embedder, error) {
 	}, nil
 }
 
-// dimensionForModel returns the default dimension for a given model.
+// dimensionForModel returns the default dimension for a given model. It
+// consults the shared registry in embed/common first, then falls back to the
+// original built-in defaults (unknown models default to DimensionSmall, as
+// before).
 func dimensionForModel(model string) int {
+	if dim, ok := common.KnownModelDimensions(model); ok {
+		return dim
+	}
 	switch model {
 	case "text-embedding-3-large":
 		return DimensionLarge
@@ -257,6 +263,20 @@ func (e *Embedder) EmbedBatch(texts []string) ([][]float32, error) {
 // Dimension returns the output vector dimension.
 func (e *Embedder) Dimension() int {
 	return e.cfg.dimension
+}
+
+// Profile describes this embedder: provider "openai", the configured model
+// and dimension, cosine distance, and Normalize=true — the OpenAI embeddings
+// API returns vectors that are already L2-normalized to unit length (this
+// package passes them through without further processing).
+func (e *Embedder) Profile() common.ProfileData {
+	return common.ProfileData{
+		Provider:  "openai",
+		Model:     e.cfg.model,
+		Dimension: e.cfg.dimension,
+		Distance:  "cosine",
+		Normalize: true,
+	}
 }
 
 // Close releases resources. Safe to call multiple times.

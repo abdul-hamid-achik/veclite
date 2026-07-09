@@ -38,8 +38,8 @@ type DistanceType string
 
 const (
 	DistanceCosine    DistanceType = "cosine"
-	DistanceDot        DistanceType = "dot"
-	DistanceEuclidean  DistanceType = "euclidean"
+	DistanceDot       DistanceType = "dot"
+	DistanceEuclidean DistanceType = "euclidean"
 )
 
 // Result is a search result returned by the client.
@@ -69,22 +69,22 @@ type CollectionStats struct {
 
 // DatabaseStats contains statistics about the database.
 type DatabaseStats struct {
-	Path         string            `json:"path"`
-	Collections  int               `json:"collections"`
-	TotalRecords int               `json:"total_records"`
-	Version      string            `json:"version"`
+	Path         string `json:"path"`
+	Collections  int    `json:"collections"`
+	TotalRecords int    `json:"total_records"`
+	Version      string `json:"version"`
 }
 
 // CollectionOption configures collection creation.
 type CollectionOption func(*collectionConfig)
 
 type collectionConfig struct {
-	dimension   int
-	distance    DistanceType
-	hnsw        bool
-	hnswM       int
-	hnswEfCon   int
-	textIndex   string
+	dimension int
+	distance  DistanceType
+	hnsw      bool
+	hnswM     int
+	hnswEfCon int
+	textIndex string
 }
 
 // WithDimension sets the vector dimension.
@@ -456,8 +456,8 @@ func (c *Collection) UpsertByKey(keyField string, keyValue any, vector []float32
 	req := map[string]any{
 		"key_field": keyField,
 		"key_value": keyValue,
-		"vector":     toFloat64(vector),
-		"payload":    payload,
+		"vector":    toFloat64(vector),
+		"payload":   payload,
 	}
 	var resp struct {
 		ID       uint64 `json:"id"`

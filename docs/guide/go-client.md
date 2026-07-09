@@ -13,6 +13,12 @@ library's API surface so that Go consumers can swap between embedding the librar
 | Multi-process read-only | `veclite.Open(path, WithReadOnly(true), WithSharedRead(true))` |
 | Multi-process with writes | `veclite serve` + `client.Open(url)` |
 
+Read-only opens (`WithSharedRead(true)`) are **lock-free** — they take no flock,
+so multiple reader processes never block each other or a writer, and a writer's
+exclusive lock never blocks a read-only open. Readers see a point-in-time
+snapshot and call `db.Reload()` to pick up concurrent writes. Use the client
+only when multiple processes need to **write**.
+
 The client is the recommended approach when multiple processes need to **write** to the
 same database. One process runs `veclite serve` (owns the exclusive file lock), and all
 other processes use the Go client to talk to it over HTTP.

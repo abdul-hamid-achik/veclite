@@ -129,6 +129,35 @@ func TestEmbedderDimension(t *testing.T) {
 	}
 }
 
+// TestProfile verifies the embedder's self-description.
+func TestProfile(t *testing.T) {
+	e := &Embedder{dim: MiniLMDimension}
+	p := e.Profile()
+	if p.Provider != "onnx" {
+		t.Errorf("expected provider 'onnx', got %q", p.Provider)
+	}
+	if p.Model != MiniLMModel {
+		t.Errorf("expected model %q, got %q", MiniLMModel, p.Model)
+	}
+	if p.Dimension != MiniLMDimension {
+		t.Errorf("expected dimension %d, got %d", MiniLMDimension, p.Dimension)
+	}
+	if p.Distance != "cosine" {
+		t.Errorf("expected distance 'cosine', got %q", p.Distance)
+	}
+	if !p.Normalize {
+		t.Error("expected Normalize=true: embeddings are L2-normalized after mean pooling")
+	}
+}
+
+// TestMiniLMDimensionRegistry verifies the registry resolves the bundled
+// model name (including the fallback constant agreement).
+func TestMiniLMDimensionRegistry(t *testing.T) {
+	if got := miniLMDimension(); got != MiniLMDimension {
+		t.Errorf("miniLMDimension() = %d, expected %d", got, MiniLMDimension)
+	}
+}
+
 // TestConstants verifies expected constant values.
 func TestConstants(t *testing.T) {
 	if MiniLMDimension != 384 {

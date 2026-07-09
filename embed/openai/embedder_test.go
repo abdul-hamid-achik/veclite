@@ -96,6 +96,8 @@ func TestDimensionForModel(t *testing.T) {
 		{"text-embedding-3-large", DimensionLarge},
 		{"text-embedding-ada-002", DimensionAda},
 		{"unknown-model", DimensionSmall}, // defaults to small
+		// Case-insensitive registry lookup keeps the same answers.
+		{"Text-Embedding-3-Large", DimensionLarge},
 	}
 
 	for _, tt := range tests {
@@ -103,6 +105,53 @@ func TestDimensionForModel(t *testing.T) {
 		if got != tt.expected {
 			t.Errorf("dimensionForModel(%q) = %d, expected %d", tt.model, got, tt.expected)
 		}
+	}
+}
+
+// TestProfile verifies the embedder's self-description.
+func TestProfile(t *testing.T) {
+	e, err := NewEmbedder(
+		WithAPIKey("test-key"),
+		WithModel("text-embedding-3-large"),
+	)
+	if err != nil {
+		t.Fatalf("NewEmbedder failed: %v", err)
+	}
+	defer func() { _ = e.Close() }()
+
+	p := e.Profile()
+	if p.Provider != "openai" {
+		t.Errorf("expected provider 'openai', got %q", p.Provider)
+	}
+	if p.Model != "text-embedding-3-large" {
+		t.Errorf("expected model 'text-embedding-3-large', got %q", p.Model)
+	}
+	if p.Dimension != DimensionLarge {
+		t.Errorf("expected dimension %d, got %d", DimensionLarge, p.Dimension)
+	}
+	if p.Distance != "cosine" {
+		t.Errorf("expected distance 'cosine', got %q", p.Distance)
+	}
+	if !p.Normalize {
+		t.Error("expected Normalize=true: OpenAI embeddings are unit-normalized")
+	}
+}
+
+// TestProfileCustomDimension verifies Profile reports an explicitly
+// configured dimension.
+func TestProfileCustomDimension(t *testing.T) {
+	e, err := NewEmbedder(
+		WithAPIKey("test-key"),
+		WithModel("text-embedding-3-small"),
+		WithDimension(512),
+	)
+	if err != nil {
+		t.Fatalf("NewEmbedder failed: %v", err)
+	}
+	defer func() { _ = e.Close() }()
+
+	if p := e.Profile(); p.Dimension != 512 {
+		t.Errorf("expected dimension 512, got %d", p.Dimension)
 	}
 }
 
