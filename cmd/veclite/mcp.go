@@ -255,280 +255,280 @@ func (s *MCPServer) run() error {
 type emptyInput struct{}
 
 type collectionSchemaInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+	Collection string `json:"collection" jsonschema:"Collection name"`
 }
 
 type searchInput struct {
-	Collection string    `json:"collection" jsonschema:"description=Collection name,required"`
-	Query      []float64 `json:"query" jsonschema:"description=Query vector,required"`
-	TopK       int       `json:"top_k,omitempty" jsonschema:"description=Number of results (default 10)"`
+	Collection string    `json:"collection" jsonschema:"Collection name"`
+	Query      []float64 `json:"query" jsonschema:"Query vector"`
+	TopK       int       `json:"top_k,omitempty" jsonschema:"Number of results (default 10)"`
 }
 
 type textSearchInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
-	Query      string `json:"query" jsonschema:"description=Text query,required"`
-	TopK       int    `json:"top_k,omitempty" jsonschema:"description=Number of results (default 10)"`
+	Collection string `json:"collection" jsonschema:"Collection name"`
+	Query      string `json:"query" jsonschema:"Text query"`
+	TopK       int    `json:"top_k,omitempty" jsonschema:"Number of results (default 10)"`
 }
 
 type hybridSearchInput struct {
-	Collection   string    `json:"collection" jsonschema:"description=Collection name,required"`
-	Vector       []float64 `json:"vector" jsonschema:"description=Query vector,required"`
-	Text         string    `json:"text" jsonschema:"description=Text query,required"`
-	TopK         int       `json:"top_k,omitempty" jsonschema:"description=Number of results (default 10)"`
-	VectorWeight float64   `json:"vector_weight,omitempty" jsonschema:"description=Weight for vector results (default 1.0)"`
-	TextWeight   float64   `json:"text_weight,omitempty" jsonschema:"description=Weight for text results (default 1.0)"`
+	Collection   string    `json:"collection" jsonschema:"Collection name"`
+	Vector       []float64 `json:"vector" jsonschema:"Query vector"`
+	Text         string    `json:"text" jsonschema:"Text query"`
+	TopK         int       `json:"top_k,omitempty" jsonschema:"Number of results (default 10)"`
+	VectorWeight float64   `json:"vector_weight,omitempty" jsonschema:"Weight for vector results (default 1.0)"`
+	TextWeight   float64   `json:"text_weight,omitempty" jsonschema:"Weight for text results (default 1.0)"`
 }
 
 type findInput struct {
-	Collection string          `json:"collection" jsonschema:"description=Collection name,required"`
-	Filters    []filterRequest `json:"filters,omitempty" jsonschema:"description=Filter conditions"`
-	Limit      int             `json:"limit,omitempty" jsonschema:"description=Maximum results"`
+	Collection string          `json:"collection" jsonschema:"Collection name"`
+	Filters    []filterRequest `json:"filters,omitempty" jsonschema:"Filter conditions"`
+	Limit      int             `json:"limit,omitempty" jsonschema:"Maximum results"`
 }
 
 type insertInput struct {
-	Collection string         `json:"collection" jsonschema:"description=Collection name,required"`
-	Vector     []float64      `json:"vector" jsonschema:"description=Vector to insert,required"`
-	Payload    map[string]any `json:"payload,omitempty" jsonschema:"description=Optional metadata"`
-	Content    string         `json:"content,omitempty" jsonschema:"description=Optional text content"`
+	Collection string         `json:"collection" jsonschema:"Collection name"`
+	Vector     []float64      `json:"vector" jsonschema:"Vector to insert"`
+	Payload    map[string]any `json:"payload,omitempty" jsonschema:"Optional metadata"`
+	Content    string         `json:"content,omitempty" jsonschema:"Optional text content"`
 }
 
 type memoryRememberInput struct {
-	Text       string         `json:"text" jsonschema:"description=The text content to remember,required"`
-	Vector     []float64      `json:"vector,omitempty" jsonschema:"description=Vector embedding of the text. Optional if embedder is configured."`
-	Importance float64        `json:"importance,omitempty" jsonschema:"description=Importance score from 0.0 to 1.0 (default 0.5)"`
-	Tags       []string       `json:"tags,omitempty" jsonschema:"description=Optional tags for categorization"`
-	TTLHours   float64        `json:"ttl_hours,omitempty" jsonschema:"description=Optional time-to-live in hours (0 = never expires)"`
-	Metadata   map[string]any `json:"metadata,omitempty" jsonschema:"description=Additional metadata to store"`
+	Text       string         `json:"text" jsonschema:"The text content to remember"`
+	Vector     []float64      `json:"vector,omitempty" jsonschema:"Vector embedding of the text. Optional if embedder is configured."`
+	Importance float64        `json:"importance,omitempty" jsonschema:"Importance score from 0.0 to 1.0 (default 0.5)"`
+	Tags       []string       `json:"tags,omitempty" jsonschema:"Optional tags for categorization"`
+	TTLHours   float64        `json:"ttl_hours,omitempty" jsonschema:"Optional time-to-live in hours (0 = never expires)"`
+	Metadata   map[string]any `json:"metadata,omitempty" jsonschema:"Additional metadata to store"`
 }
 
 type memoryRecallInput struct {
-	Query          []float64 `json:"query,omitempty" jsonschema:"description=Query vector for semantic search. Optional if text and embedder are configured."`
-	Text           string    `json:"text,omitempty" jsonschema:"description=Text to search for. Will be auto-embedded if embedder is configured."`
-	Limit          int       `json:"limit,omitempty" jsonschema:"description=Maximum number of memories to return (default 10)"`
-	MinImportance  float64   `json:"min_importance,omitempty" jsonschema:"description=Minimum importance score (0.0-1.0)"`
-	Tags           []string  `json:"tags,omitempty" jsonschema:"description=Filter by tags (any match)"`
-	SinceHours     float64   `json:"since_hours,omitempty" jsonschema:"description=Only memories created within this many hours"`
-	IncludeExpired bool      `json:"include_expired,omitempty" jsonschema:"description=Include expired memories (default false)"`
+	Query          []float64 `json:"query,omitempty" jsonschema:"Query vector for semantic search. Optional if text and embedder are configured."`
+	Text           string    `json:"text,omitempty" jsonschema:"Text to search for. Will be auto-embedded if embedder is configured."`
+	Limit          int       `json:"limit,omitempty" jsonschema:"Maximum number of memories to return (default 10)"`
+	MinImportance  float64   `json:"min_importance,omitempty" jsonschema:"Minimum importance score (0.0-1.0)"`
+	Tags           []string  `json:"tags,omitempty" jsonschema:"Filter by tags (any match)"`
+	SinceHours     float64   `json:"since_hours,omitempty" jsonschema:"Only memories created within this many hours"`
+	IncludeExpired bool      `json:"include_expired,omitempty" jsonschema:"Include expired memories (default false)"`
 }
 
 type memoryForgetInput struct {
-	OlderThanHours  float64  `json:"older_than_hours,omitempty" jsonschema:"description=Delete memories older than this many hours"`
-	Tags            []string `json:"tags,omitempty" jsonschema:"description=Delete memories with any of these tags"`
-	ExpiredOnly     bool     `json:"expired_only,omitempty" jsonschema:"description=Only delete expired memories"`
-	BelowImportance float64  `json:"below_importance,omitempty" jsonschema:"description=Delete memories with importance below this threshold"`
+	OlderThanHours  float64  `json:"older_than_hours,omitempty" jsonschema:"Delete memories older than this many hours"`
+	Tags            []string `json:"tags,omitempty" jsonschema:"Delete memories with any of these tags"`
+	ExpiredOnly     bool     `json:"expired_only,omitempty" jsonschema:"Only delete expired memories"`
+	BelowImportance float64  `json:"below_importance,omitempty" jsonschema:"Delete memories with importance below this threshold"`
 }
 
 type embedInput struct {
-	Text  string   `json:"text,omitempty" jsonschema:"description=Text to embed"`
-	Texts []string `json:"texts,omitempty" jsonschema:"description=Multiple texts to embed in batch"`
+	Text  string   `json:"text,omitempty" jsonschema:"Text to embed"`
+	Texts []string `json:"texts,omitempty" jsonschema:"Multiple texts to embed in batch"`
 }
 
 // Graph tool inputs
 
 type graphAddEntityInput struct {
-	Graph      string         `json:"graph" jsonschema:"description=Knowledge graph name,required"`
-	ID         string         `json:"id" jsonschema:"description=Unique entity ID,required"`
-	Type       string         `json:"type,omitempty" jsonschema:"description=Entity type (e.g. person/company/concept)"`
-	Name       string         `json:"name,omitempty" jsonschema:"description=Human-readable name"`
-	Vector     []float64      `json:"vector,omitempty" jsonschema:"description=Optional embedding vector"`
-	Properties map[string]any `json:"properties,omitempty" jsonschema:"description=Additional properties"`
+	Graph      string         `json:"graph" jsonschema:"Knowledge graph name"`
+	ID         string         `json:"id" jsonschema:"Unique entity ID"`
+	Type       string         `json:"type,omitempty" jsonschema:"Entity type (e.g. person/company/concept)"`
+	Name       string         `json:"name,omitempty" jsonschema:"Human-readable name"`
+	Vector     []float64      `json:"vector,omitempty" jsonschema:"Optional embedding vector"`
+	Properties map[string]any `json:"properties,omitempty" jsonschema:"Additional properties"`
 }
 
 type graphAddRelationshipInput struct {
-	Graph         string         `json:"graph" jsonschema:"description=Knowledge graph name,required"`
-	ID            string         `json:"id" jsonschema:"description=Unique relationship ID,required"`
-	SourceID      string         `json:"source_id" jsonschema:"description=Source entity ID,required"`
-	TargetID      string         `json:"target_id" jsonschema:"description=Target entity ID,required"`
-	Type          string         `json:"type,omitempty" jsonschema:"description=Relationship type (e.g. works_at/knows)"`
-	Weight        float64        `json:"weight,omitempty" jsonschema:"description=Relationship strength (0.0-1.0)"`
-	Bidirectional bool           `json:"bidirectional,omitempty" jsonschema:"description=Whether relationship goes both ways"`
-	Properties    map[string]any `json:"properties,omitempty" jsonschema:"description=Additional properties"`
+	Graph         string         `json:"graph" jsonschema:"Knowledge graph name"`
+	ID            string         `json:"id" jsonschema:"Unique relationship ID"`
+	SourceID      string         `json:"source_id" jsonschema:"Source entity ID"`
+	TargetID      string         `json:"target_id" jsonschema:"Target entity ID"`
+	Type          string         `json:"type,omitempty" jsonschema:"Relationship type (e.g. works_at/knows)"`
+	Weight        float64        `json:"weight,omitempty" jsonschema:"Relationship strength (0.0-1.0)"`
+	Bidirectional bool           `json:"bidirectional,omitempty" jsonschema:"Whether relationship goes both ways"`
+	Properties    map[string]any `json:"properties,omitempty" jsonschema:"Additional properties"`
 }
 
 type graphGetRelationshipsInput struct {
-	Graph     string `json:"graph" jsonschema:"description=Knowledge graph name,required"`
-	EntityID  string `json:"entity_id" jsonschema:"description=Entity ID to get relationships for,required"`
-	Direction string `json:"direction,omitempty" jsonschema:"description=Direction: outgoing/incoming/both (default both)"`
+	Graph     string `json:"graph" jsonschema:"Knowledge graph name"`
+	EntityID  string `json:"entity_id" jsonschema:"Entity ID to get relationships for"`
+	Direction string `json:"direction,omitempty" jsonschema:"Direction: outgoing/incoming/both (default both)"`
 }
 
 type graphTraverseInput struct {
-	Graph             string   `json:"graph" jsonschema:"description=Knowledge graph name,required"`
-	StartIDs          []string `json:"start_ids" jsonschema:"description=Starting entity IDs,required"`
-	MaxDepth          int      `json:"max_depth,omitempty" jsonschema:"description=Maximum traversal depth (default 3)"`
-	MaxNodes          int      `json:"max_nodes,omitempty" jsonschema:"description=Maximum nodes to visit (default 100)"`
-	MinWeight         float64  `json:"min_weight,omitempty" jsonschema:"description=Minimum relationship weight"`
-	RelationshipTypes []string `json:"relationship_types,omitempty" jsonschema:"description=Filter by relationship types"`
-	EntityTypes       []string `json:"entity_types,omitempty" jsonschema:"description=Filter by entity types"`
-	Direction         string   `json:"direction,omitempty" jsonschema:"description=Direction: outgoing/incoming/both (default both)"`
+	Graph             string   `json:"graph" jsonschema:"Knowledge graph name"`
+	StartIDs          []string `json:"start_ids" jsonschema:"Starting entity IDs"`
+	MaxDepth          int      `json:"max_depth,omitempty" jsonschema:"Maximum traversal depth (default 3)"`
+	MaxNodes          int      `json:"max_nodes,omitempty" jsonschema:"Maximum nodes to visit (default 100)"`
+	MinWeight         float64  `json:"min_weight,omitempty" jsonschema:"Minimum relationship weight"`
+	RelationshipTypes []string `json:"relationship_types,omitempty" jsonschema:"Filter by relationship types"`
+	EntityTypes       []string `json:"entity_types,omitempty" jsonschema:"Filter by entity types"`
+	Direction         string   `json:"direction,omitempty" jsonschema:"Direction: outgoing/incoming/both (default both)"`
 }
 
 type graphExpandedSearchInput struct {
-	Graph       string    `json:"graph" jsonschema:"description=Knowledge graph name,required"`
-	Query       []float64 `json:"query,omitempty" jsonschema:"description=Query vector"`
-	Text        string    `json:"text,omitempty" jsonschema:"description=Text to search (auto-embedded if embedder configured)"`
-	TopK        int       `json:"top_k,omitempty" jsonschema:"description=Number of results (default 10)"`
-	ExpandDepth int       `json:"expand_depth,omitempty" jsonschema:"description=Graph expansion depth (default 1)"`
+	Graph       string    `json:"graph" jsonschema:"Knowledge graph name"`
+	Query       []float64 `json:"query,omitempty" jsonschema:"Query vector"`
+	Text        string    `json:"text,omitempty" jsonschema:"Text to search (auto-embedded if embedder configured)"`
+	TopK        int       `json:"top_k,omitempty" jsonschema:"Number of results (default 10)"`
+	ExpandDepth int       `json:"expand_depth,omitempty" jsonschema:"Graph expansion depth (default 1)"`
 }
 
 // Conversation tool inputs
 
 type conversationAddTurnInput struct {
-	Collection    string         `json:"collection" jsonschema:"description=Collection name,required"`
-	SessionID     string         `json:"session_id" jsonschema:"description=Session/conversation ID,required"`
-	Role          string         `json:"role,omitempty" jsonschema:"description=Speaker role (user/assistant/system)"`
-	Content       string         `json:"content" jsonschema:"description=Turn content text,required"`
-	TurnNumber    int            `json:"turn_number,omitempty" jsonschema:"description=Sequential turn number (auto-increment if 0)"`
-	ParentChunkID uint64         `json:"parent_chunk_id,omitempty" jsonschema:"description=Parent chunk ID for threaded conversations"`
-	Vector        []float64      `json:"vector,omitempty" jsonschema:"description=Optional embedding vector (auto-embedded if not provided)"`
-	Importance    float64        `json:"importance,omitempty" jsonschema:"description=Importance score (0.0-1.0)"`
-	TTLHours      float64        `json:"ttl_hours,omitempty" jsonschema:"description=Time-to-live in hours"`
-	Metadata      map[string]any `json:"metadata,omitempty" jsonschema:"description=Additional metadata"`
+	Collection    string         `json:"collection" jsonschema:"Collection name"`
+	SessionID     string         `json:"session_id" jsonschema:"Session/conversation ID"`
+	Role          string         `json:"role,omitempty" jsonschema:"Speaker role (user/assistant/system)"`
+	Content       string         `json:"content" jsonschema:"Turn content text"`
+	TurnNumber    int            `json:"turn_number,omitempty" jsonschema:"Sequential turn number (auto-increment if 0)"`
+	ParentChunkID uint64         `json:"parent_chunk_id,omitempty" jsonschema:"Parent chunk ID for threaded conversations"`
+	Vector        []float64      `json:"vector,omitempty" jsonschema:"Optional embedding vector (auto-embedded if not provided)"`
+	Importance    float64        `json:"importance,omitempty" jsonschema:"Importance score (0.0-1.0)"`
+	TTLHours      float64        `json:"ttl_hours,omitempty" jsonschema:"Time-to-live in hours"`
+	Metadata      map[string]any `json:"metadata,omitempty" jsonschema:"Additional metadata"`
 }
 
 type conversationGetSessionInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
-	SessionID  string `json:"session_id" jsonschema:"description=Session ID to retrieve,required"`
+	Collection string `json:"collection" jsonschema:"Collection name"`
+	SessionID  string `json:"session_id" jsonschema:"Session ID to retrieve"`
 }
 
 type conversationSearchSessionInput struct {
-	Collection string    `json:"collection" jsonschema:"description=Collection name,required"`
-	SessionID  string    `json:"session_id" jsonschema:"description=Session ID to search within,required"`
-	Query      []float64 `json:"query,omitempty" jsonschema:"description=Query vector"`
-	Text       string    `json:"text,omitempty" jsonschema:"description=Text to search (auto-embedded if embedder configured)"`
-	Limit      int       `json:"limit,omitempty" jsonschema:"description=Maximum results (default 10)"`
+	Collection string    `json:"collection" jsonschema:"Collection name"`
+	SessionID  string    `json:"session_id" jsonschema:"Session ID to search within"`
+	Query      []float64 `json:"query,omitempty" jsonschema:"Query vector"`
+	Text       string    `json:"text,omitempty" jsonschema:"Text to search (auto-embedded if embedder configured)"`
+	Limit      int       `json:"limit,omitempty" jsonschema:"Maximum results (default 10)"`
 }
 
 type conversationListSessionsInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+	Collection string `json:"collection" jsonschema:"Collection name"`
 }
 
 type conversationGetThreadInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
-	ChunkID    uint64 `json:"chunk_id" jsonschema:"description=Chunk ID to get thread for,required"`
+	Collection string `json:"collection" jsonschema:"Collection name"`
+	ChunkID    uint64 `json:"chunk_id" jsonschema:"Chunk ID to get thread for"`
 }
 
 // Episode tool inputs
 
 type episodeDetectInput struct {
-	Collection          string  `json:"collection" jsonschema:"description=Collection name,required"`
-	TimeGapMinutes      float64 `json:"time_gap_minutes,omitempty" jsonschema:"description=Max time gap between records in same episode (default 30)"`
-	MinRecords          int     `json:"min_records,omitempty" jsonschema:"description=Minimum records to form episode (default 2)"`
-	SimilarityThreshold float64 `json:"similarity_threshold,omitempty" jsonschema:"description=Minimum similarity for grouping (0.0-1.0)"`
+	Collection          string  `json:"collection" jsonschema:"Collection name"`
+	TimeGapMinutes      float64 `json:"time_gap_minutes,omitempty" jsonschema:"Max time gap between records in same episode (default 30)"`
+	MinRecords          int     `json:"min_records,omitempty" jsonschema:"Minimum records to form episode (default 2)"`
+	SimilarityThreshold float64 `json:"similarity_threshold,omitempty" jsonschema:"Minimum similarity for grouping (0.0-1.0)"`
 }
 
 type episodeCreateInput struct {
-	Collection string   `json:"collection" jsonschema:"description=Collection name,required"`
-	RecordIDs  []uint64 `json:"record_ids" jsonschema:"description=Record IDs to include,required"`
-	Title      string   `json:"title,omitempty" jsonschema:"description=Episode title/summary"`
+	Collection string   `json:"collection" jsonschema:"Collection name"`
+	RecordIDs  []uint64 `json:"record_ids" jsonschema:"Record IDs to include"`
+	Title      string   `json:"title,omitempty" jsonschema:"Episode title/summary"`
 }
 
 type episodeGetInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
-	EpisodeID  string `json:"episode_id" jsonschema:"description=Episode ID to retrieve,required"`
+	Collection string `json:"collection" jsonschema:"Collection name"`
+	EpisodeID  string `json:"episode_id" jsonschema:"Episode ID to retrieve"`
 }
 
 type episodeListInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+	Collection string `json:"collection" jsonschema:"Collection name"`
 }
 
 type episodeSearchInput struct {
-	Collection string    `json:"collection" jsonschema:"description=Collection name,required"`
-	Query      []float64 `json:"query,omitempty" jsonschema:"description=Query vector"`
-	Text       string    `json:"text,omitempty" jsonschema:"description=Text to search (auto-embedded if embedder configured)"`
-	Limit      int       `json:"limit,omitempty" jsonschema:"description=Maximum results (default 10)"`
+	Collection string    `json:"collection" jsonschema:"Collection name"`
+	Query      []float64 `json:"query,omitempty" jsonschema:"Query vector"`
+	Text       string    `json:"text,omitempty" jsonschema:"Text to search (auto-embedded if embedder configured)"`
+	Limit      int       `json:"limit,omitempty" jsonschema:"Maximum results (default 10)"`
 }
 
 type episodeSearchExpandedInput struct {
-	Collection string    `json:"collection" jsonschema:"description=Collection name,required"`
-	Query      []float64 `json:"query,omitempty" jsonschema:"description=Query vector"`
-	Text       string    `json:"text,omitempty" jsonschema:"description=Text to search (auto-embedded if embedder configured)"`
-	TopK       int       `json:"top_k,omitempty" jsonschema:"description=Number of results (default 10)"`
+	Collection string    `json:"collection" jsonschema:"Collection name"`
+	Query      []float64 `json:"query,omitempty" jsonschema:"Query vector"`
+	Text       string    `json:"text,omitempty" jsonschema:"Text to search (auto-embedded if embedder configured)"`
+	TopK       int       `json:"top_k,omitempty" jsonschema:"Number of results (default 10)"`
 }
 
 // Consolidation tool inputs
 
 type memoryFindClustersInput struct {
-	Collection          string  `json:"collection" jsonschema:"description=Collection name (default: memories),required"`
-	SimilarityThreshold float64 `json:"similarity_threshold,omitempty" jsonschema:"description=Minimum similarity for grouping (default 0.85)"`
-	MinSize             int     `json:"min_size,omitempty" jsonschema:"description=Minimum cluster size (default 2)"`
-	MaxSize             int     `json:"max_size,omitempty" jsonschema:"description=Maximum cluster size (default 10)"`
+	Collection          string  `json:"collection,omitempty" jsonschema:"Collection name (default: memories)"`
+	SimilarityThreshold float64 `json:"similarity_threshold,omitempty" jsonschema:"Minimum similarity for grouping (default 0.85)"`
+	MinSize             int     `json:"min_size,omitempty" jsonschema:"Minimum cluster size (default 2)"`
+	MaxSize             int     `json:"max_size,omitempty" jsonschema:"Maximum cluster size (default 10)"`
 }
 
 type memoryArchiveInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name (default: memories)"`
-	RecordID   uint64 `json:"record_id" jsonschema:"description=Record ID to archive,required"`
+	Collection string `json:"collection,omitempty" jsonschema:"Collection name (default: memories)"`
+	RecordID   uint64 `json:"record_id" jsonschema:"Record ID to archive"`
 }
 
 type memoryUnarchiveInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name (default: memories)"`
-	RecordID   uint64 `json:"record_id" jsonschema:"description=Record ID to unarchive,required"`
+	Collection string `json:"collection,omitempty" jsonschema:"Collection name (default: memories)"`
+	RecordID   uint64 `json:"record_id" jsonschema:"Record ID to unarchive"`
 }
 
 type memoryGetArchivedInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name (default: memories)"`
+	Collection string `json:"collection,omitempty" jsonschema:"Collection name (default: memories)"`
 }
 
 // Phase 1: Essential CRUD input types
 
 type getInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
-	ID         uint64 `json:"id" jsonschema:"description=Record ID,required"`
+	Collection string `json:"collection" jsonschema:"Collection name"`
+	ID         uint64 `json:"id" jsonschema:"Record ID"`
 }
 
 type deleteInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
-	ID         uint64 `json:"id" jsonschema:"description=Record ID,required"`
+	Collection string `json:"collection" jsonschema:"Collection name"`
+	ID         uint64 `json:"id" jsonschema:"Record ID"`
 }
 
 type updateInput struct {
-	Collection string         `json:"collection" jsonschema:"description=Collection name,required"`
-	ID         uint64         `json:"id" jsonschema:"description=Record ID,required"`
-	Payload    map[string]any `json:"payload" jsonschema:"description=New payload to set,required"`
+	Collection string         `json:"collection" jsonschema:"Collection name"`
+	ID         uint64         `json:"id" jsonschema:"Record ID"`
+	Payload    map[string]any `json:"payload" jsonschema:"New payload to set"`
 }
 
 type upsertInput struct {
-	Collection string         `json:"collection" jsonschema:"description=Collection name,required"`
-	ID         uint64         `json:"id,omitempty" jsonschema:"description=Record ID (0 for auto-generated)"`
-	Vector     []float64      `json:"vector" jsonschema:"description=Vector to insert/update,required"`
-	Payload    map[string]any `json:"payload,omitempty" jsonschema:"description=Optional metadata"`
+	Collection string         `json:"collection" jsonschema:"Collection name"`
+	ID         uint64         `json:"id,omitempty" jsonschema:"Record ID (0 for auto-generated)"`
+	Vector     []float64      `json:"vector" jsonschema:"Vector to insert/update"`
+	Payload    map[string]any `json:"payload,omitempty" jsonschema:"Optional metadata"`
 }
 
 type deleteWhereInput struct {
-	Collection string          `json:"collection" jsonschema:"description=Collection name,required"`
-	Filters    []filterRequest `json:"filters" jsonschema:"description=Filter conditions,required"`
+	Collection string          `json:"collection" jsonschema:"Collection name"`
+	Filters    []filterRequest `json:"filters" jsonschema:"Filter conditions"`
 }
 
 type clearInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
-	Confirm    bool   `json:"confirm" jsonschema:"description=Must be true to confirm destructive operation,required"`
+	Collection string `json:"collection" jsonschema:"Collection name"`
+	Confirm    bool   `json:"confirm" jsonschema:"Must be true to confirm destructive operation"`
 }
 
 // Phase 2: Batch + Collection Management input types
 
 type insertBatchInput struct {
-	Collection string           `json:"collection" jsonschema:"description=Collection name,required"`
-	Vectors    [][]float64      `json:"vectors" jsonschema:"description=Vectors to insert,required"`
-	Payloads   []map[string]any `json:"payloads,omitempty" jsonschema:"description=Payloads for each vector (optional)"`
+	Collection string           `json:"collection" jsonschema:"Collection name"`
+	Vectors    [][]float64      `json:"vectors" jsonschema:"Vectors to insert"`
+	Payloads   []map[string]any `json:"payloads,omitempty" jsonschema:"Payloads for each vector (optional)"`
 }
 
 type upsertByKeyInput struct {
-	Collection string         `json:"collection" jsonschema:"description=Collection name,required"`
-	KeyField   string         `json:"key_field" jsonschema:"description=Payload field to match on,required"`
-	KeyValue   any            `json:"key_value" jsonschema:"description=Value to match,required"`
-	Vector     []float64      `json:"vector" jsonschema:"description=Vector to insert/update,required"`
-	Payload    map[string]any `json:"payload,omitempty" jsonschema:"description=Optional metadata"`
+	Collection string         `json:"collection" jsonschema:"Collection name"`
+	KeyField   string         `json:"key_field" jsonschema:"Payload field to match on"`
+	KeyValue   any            `json:"key_value" jsonschema:"Value to match"`
+	Vector     []float64      `json:"vector" jsonschema:"Vector to insert/update"`
+	Payload    map[string]any `json:"payload,omitempty" jsonschema:"Optional metadata"`
 }
 
 type createCollectionInput struct {
-	Name         string `json:"name" jsonschema:"description=Collection name,required"`
-	Dimension    int    `json:"dimension,omitempty" jsonschema:"description=Vector dimension (auto-detected if not set)"`
-	DistanceType string `json:"distance_type,omitempty" jsonschema:"description=Distance metric: cosine/euclidean/dot (default cosine)"`
-	IndexType    string `json:"index_type,omitempty" jsonschema:"description=Index type: hnsw/flat (default hnsw)"`
+	Name         string `json:"name" jsonschema:"Collection name"`
+	Dimension    int    `json:"dimension,omitempty" jsonschema:"Vector dimension (auto-detected if not set)"`
+	DistanceType string `json:"distance_type,omitempty" jsonschema:"Distance metric: cosine/euclidean/dot (default cosine)"`
+	IndexType    string `json:"index_type,omitempty" jsonschema:"Index type: hnsw/flat (default hnsw)"`
 }
 
 type dropCollectionInput struct {
-	Name    string `json:"name" jsonschema:"description=Collection name to drop,required"`
-	Confirm bool   `json:"confirm" jsonschema:"description=Must be true to confirm destructive operation,required"`
+	Name    string `json:"name" jsonschema:"Collection name to drop"`
+	Confirm bool   `json:"confirm" jsonschema:"Must be true to confirm destructive operation"`
 }
 
 type syncInput struct{}
@@ -538,73 +538,73 @@ type metricsInput struct{}
 // Phase 3: Graph CRUD input types
 
 type graphGetEntityInput struct {
-	Graph    string `json:"graph" jsonschema:"description=Knowledge graph name,required"`
-	EntityID string `json:"entity_id" jsonschema:"description=Entity ID to retrieve,required"`
+	Graph    string `json:"graph" jsonschema:"Knowledge graph name"`
+	EntityID string `json:"entity_id" jsonschema:"Entity ID to retrieve"`
 }
 
 type graphUpdateEntityInput struct {
-	Graph      string         `json:"graph" jsonschema:"description=Knowledge graph name,required"`
-	ID         string         `json:"id" jsonschema:"description=Entity ID,required"`
-	Type       string         `json:"type,omitempty" jsonschema:"description=Entity type"`
-	Name       string         `json:"name,omitempty" jsonschema:"description=Human-readable name"`
-	Vector     []float64      `json:"vector,omitempty" jsonschema:"description=Optional embedding vector"`
-	Properties map[string]any `json:"properties,omitempty" jsonschema:"description=Additional properties"`
+	Graph      string         `json:"graph" jsonschema:"Knowledge graph name"`
+	ID         string         `json:"id" jsonschema:"Entity ID"`
+	Type       string         `json:"type,omitempty" jsonschema:"Entity type"`
+	Name       string         `json:"name,omitempty" jsonschema:"Human-readable name"`
+	Vector     []float64      `json:"vector,omitempty" jsonschema:"Optional embedding vector"`
+	Properties map[string]any `json:"properties,omitempty" jsonschema:"Additional properties"`
 }
 
 type graphDeleteEntityInput struct {
-	Graph    string `json:"graph" jsonschema:"description=Knowledge graph name,required"`
-	EntityID string `json:"entity_id" jsonschema:"description=Entity ID to delete,required"`
+	Graph    string `json:"graph" jsonschema:"Knowledge graph name"`
+	EntityID string `json:"entity_id" jsonschema:"Entity ID to delete"`
 }
 
 type graphDeleteRelationshipInput struct {
-	Graph          string `json:"graph" jsonschema:"description=Knowledge graph name,required"`
-	RelationshipID string `json:"relationship_id" jsonschema:"description=Relationship ID to delete,required"`
+	Graph          string `json:"graph" jsonschema:"Knowledge graph name"`
+	RelationshipID string `json:"relationship_id" jsonschema:"Relationship ID to delete"`
 }
 
 type graphListEntitiesInput struct {
-	Graph      string `json:"graph" jsonschema:"description=Knowledge graph name,required"`
-	EntityType string `json:"entity_type,omitempty" jsonschema:"description=Filter by entity type (empty for all)"`
+	Graph      string `json:"graph" jsonschema:"Knowledge graph name"`
+	EntityType string `json:"entity_type,omitempty" jsonschema:"Filter by entity type (empty for all)"`
 }
 
 // Phase 4: Cleanup, Consolidation, and Conversation input types
 
 type cleanupExpiredInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+	Collection string `json:"collection" jsonschema:"Collection name"`
 }
 
 type countExpiredInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
+	Collection string `json:"collection" jsonschema:"Collection name"`
 }
 
 type memoryEnforceLimitInput struct {
-	Collection        string `json:"collection" jsonschema:"description=Collection name (default: memories)"`
-	MaxRecords        int    `json:"max_records" jsonschema:"description=Maximum number of records,required"`
-	EvictionPolicy    string `json:"eviction_policy,omitempty" jsonschema:"description=Eviction policy: fifo/lru/importance (default fifo)"`
-	EvictionBatchSize int    `json:"eviction_batch_size,omitempty" jsonschema:"description=Number of records to evict per batch"`
+	Collection        string `json:"collection,omitempty" jsonschema:"Collection name (default: memories)"`
+	MaxRecords        int    `json:"max_records" jsonschema:"Maximum number of records"`
+	EvictionPolicy    string `json:"eviction_policy,omitempty" jsonschema:"Eviction policy: fifo/lru/importance (default fifo)"`
+	EvictionBatchSize int    `json:"eviction_batch_size,omitempty" jsonschema:"Number of records to evict per batch"`
 }
 
 type memoryConsolidateInput struct {
-	Collection          string  `json:"collection" jsonschema:"description=Collection name (default: memories)"`
-	SimilarityThreshold float64 `json:"similarity_threshold,omitempty" jsonschema:"description=Minimum similarity for grouping (default 0.85)"`
-	MinSize             int     `json:"min_size,omitempty" jsonschema:"description=Minimum cluster size (default 2)"`
-	MaxSize             int     `json:"max_size,omitempty" jsonschema:"description=Maximum cluster size (default 10)"`
-	ArchiveOriginals    bool    `json:"archive_originals,omitempty" jsonschema:"description=Archive original records after consolidation"`
+	Collection          string  `json:"collection,omitempty" jsonschema:"Collection name (default: memories)"`
+	SimilarityThreshold float64 `json:"similarity_threshold,omitempty" jsonschema:"Minimum similarity for grouping (default 0.85)"`
+	MinSize             int     `json:"min_size,omitempty" jsonschema:"Minimum cluster size (default 2)"`
+	MaxSize             int     `json:"max_size,omitempty" jsonschema:"Maximum cluster size (default 10)"`
+	ArchiveOriginals    bool    `json:"archive_originals,omitempty" jsonschema:"Archive original records after consolidation"`
 }
 
 type memoryExpandConsolidationInput struct {
-	Collection      string `json:"collection" jsonschema:"description=Collection name (default: memories)"`
-	ConsolidationID uint64 `json:"consolidation_id" jsonschema:"description=ID of the consolidation record,required"`
+	Collection      string `json:"collection,omitempty" jsonschema:"Collection name (default: memories)"`
+	ConsolidationID uint64 `json:"consolidation_id" jsonschema:"ID of the consolidation record"`
 }
 
 type conversationDeleteSessionInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
-	SessionID  string `json:"session_id" jsonschema:"description=Session ID to delete,required"`
-	Confirm    bool   `json:"confirm" jsonschema:"description=Must be true to confirm destructive operation,required"`
+	Collection string `json:"collection" jsonschema:"Collection name"`
+	SessionID  string `json:"session_id" jsonschema:"Session ID to delete"`
+	Confirm    bool   `json:"confirm" jsonschema:"Must be true to confirm destructive operation"`
 }
 
 type conversationGetStatsInput struct {
-	Collection string `json:"collection" jsonschema:"description=Collection name,required"`
-	SessionID  string `json:"session_id" jsonschema:"description=Session ID to get stats for,required"`
+	Collection string `json:"collection" jsonschema:"Collection name"`
+	SessionID  string `json:"session_id" jsonschema:"Session ID to get stats for"`
 }
 
 func (s *MCPServer) registerTools() {

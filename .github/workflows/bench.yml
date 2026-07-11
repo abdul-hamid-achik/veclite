@@ -11,16 +11,20 @@ permissions:
   pull-requests: write
   issues: write
 
+concurrency:
+  group: benchmarks-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   benchmark:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: "1.26.5"
 
       - name: Run benchmarks
         run: go test -bench=. -benchmem -count=3 -run=^$ ./... | tee benchmark.txt
@@ -55,14 +59,14 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
-          go-version: "1.25"
+          go-version: "1.26.5"
 
       - name: Install benchstat
         run: go install golang.org/x/perf/cmd/benchstat@latest

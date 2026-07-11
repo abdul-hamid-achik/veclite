@@ -124,7 +124,7 @@ func main() {
 
 ## Installation
 
-Requires Go 1.23 or later. VecLite's core storage and search APIs are local-first; optional integrations such as MCP, YAML config, and ONNX embedding use external Go modules.
+Requires Go 1.25 or later. VecLite v0.23.1 raised the minimum from Go 1.23 because the official MCP Go SDK now requires Go 1.25. VecLite's core storage and search APIs are local-first; optional integrations such as MCP, YAML config, and ONNX embedding use external Go modules.
 
 ```bash
 # Library

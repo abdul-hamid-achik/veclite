@@ -24,7 +24,7 @@ builds:
 
 archives:
   - id: veclite
-    builds:
+    ids:
       - veclite
     name_template: >-
       {{ .ProjectName }}_
@@ -33,7 +33,7 @@ archives:
       {{- .Arch }}
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
 
 checksum:
   name_template: 'checksums.txt'
@@ -60,18 +60,28 @@ release:
   prerelease: auto
   name_template: "v{{.Version}}"
 
-brews:
+homebrew_casks:
   - name: veclite
+    ids:
+      - veclite
     repository:
       owner: abdul-hamid-achik
       name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Formula
+      token: '{{ index .Env "HOMEBREW_TAP_TOKEN" }}'
+    directory: Casks
     homepage: "https://github.com/abdul-hamid-achik/veclite"
     description: "SQLite for vectors. Embed anywhere, no servers, one file."
     license: "MIT"
-    install: |
-      bin.install "veclite"
-    test: |
-      system "#{bin}/veclite", "version"
-    skip_upload: "{{ if .Env.HOMEBREW_TAP_TOKEN }}false{{ else }}true{{ end }}"
+    binaries:
+      - veclite
+    caveats: "The veclite binary is not Apple-notarized; this cask clears its quarantine attribute during installation."
+    # Released binaries are unsigned (pure-Go, CGO_ENABLED=0, not notarized),
+    # so strip the Gatekeeper quarantine attribute on install — otherwise macOS
+    # refuses to run a cask-installed unsigned binary.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/veclite"]
+          end
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'

@@ -13,7 +13,7 @@ VecLite is an embeddable vector database for Go. It provides:
 - CLI tool and HTTP server for database operations
 
 **Repository:** `github.com/abdul-hamid-achik/veclite`
-**Go Version:** 1.23+
+**Go Version:** 1.25+
 **Dependency Discipline:** Prefer the standard library for core database behavior. Optional integrations may use focused external modules.
 
 ### Not a Go-only library
