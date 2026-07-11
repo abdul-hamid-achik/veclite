@@ -82,9 +82,9 @@ outcomes:
     verify:
       command:
         run: |
-          FIRST=$(./bin/veclite record-upsert-by-key .glyphrun/tmp/hs/items.veclite items --key-field=evidence_id --key-value=apple --vectors='{\"text\":[1,0]}' --content='apple crisp' --payload='{\"evidence_id\":\"apple\",\"label\":\"A\"}' --json | jq -r '.id')
-          SECOND=$(./bin/veclite record-upsert-by-key .glyphrun/tmp/hs/items.veclite items --key-field=evidence_id --key-value=apple --vectors='{\"text\":[1,0]}' --content='apple crisp' --payload='{\"evidence_id\":\"apple\",\"label\":\"A\"}' --json | jq -r '.id')
-          test "$FIRST" = "$SECOND" && ./bin/veclite record-upsert-by-key .glyphrun/tmp/hs/items.veclite items --key-field=evidence_id --key-value=apple --vectors='{\"text\":[1,0]}' --content='apple crisp' --payload='{\"evidence_id\":\"apple\",\"label\":\"A\"}' --json | jq -e '.status == \"replaced\"' >/dev/null
+          FIRST=$(./bin/veclite record-upsert-by-key .glyphrun/tmp/hs/items.veclite items --key-field=evidence_id --key-value=apple --vectors='{"text":[1,0]}' --content='apple crisp' --payload='{"evidence_id":"apple","label":"A"}' --json | jq -r '.id')
+          SECOND=$(./bin/veclite record-upsert-by-key .glyphrun/tmp/hs/items.veclite items --key-field=evidence_id --key-value=apple --vectors='{"text":[1,0]}' --content='apple crisp' --payload='{"evidence_id":"apple","label":"A"}' --json | jq -r '.id')
+          test "$FIRST" = "$SECOND" && ./bin/veclite record-upsert-by-key .glyphrun/tmp/hs/items.veclite items --key-field=evidence_id --key-value=apple --vectors='{"text":[1,0]}' --content='apple crisp' --payload='{"evidence_id":"apple","label":"A"}' --json | jq -e '.status == "replaced"' >/dev/null
   - id: hybrid_search_default_space_when_space_omitted
     description: calling hybrid-search-space without a space positional runs against the default space
     verify:

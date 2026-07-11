@@ -21,7 +21,61 @@ target:
   cmd:
     - "/bin/sh"
     - "-c"
-    - "./bin/veclite search .glyphrun/tmp/shared/items.veclite items --query='[1,0]' --top-k=1 --json"
+    - |
+      set -eu
+
+      DB=".glyphrun/tmp/shared/items.veclite"
+      STATE_DIR=".glyphrun/tmp/shared"
+      PORT=$((20000 + ($$ % 20000)))
+      ATTEMPT=0
+      while lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; do
+        PORT=$((PORT + 1))
+        ATTEMPT=$((ATTEMPT + 1))
+        if [ "$ATTEMPT" -ge 100 ]; then
+          echo "unable to allocate an isolated HTTP port" >&2
+          exit 1
+        fi
+      done
+
+      echo "$PORT" > "$STATE_DIR/server.port"
+      ./bin/veclite serve "$DB" --port="$PORT" > "$STATE_DIR/server.log" 2>&1 &
+      SERVER_PID=$!
+      echo "$SERVER_PID" > "$STATE_DIR/server.pid"
+
+      cleanup() {
+        if kill -0 "$SERVER_PID" 2>/dev/null; then
+          kill "$SERVER_PID" 2>/dev/null || true
+        fi
+        wait "$SERVER_PID" 2>/dev/null || true
+      }
+      trap cleanup EXIT
+      trap 'exit 0' HUP INT TERM
+
+      READY=0
+      ATTEMPT=0
+      while [ "$ATTEMPT" -lt 100 ]; do
+        if curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+          READY=1
+          break
+        fi
+        if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+          cat "$STATE_DIR/server.log" >&2
+          exit 1
+        fi
+        ATTEMPT=$((ATTEMPT + 1))
+        sleep 0.05
+      done
+      if [ "$READY" -ne 1 ]; then
+        echo "VecLite server did not become ready" >&2
+        cat "$STATE_DIR/server.log" >&2
+        exit 1
+      fi
+
+      ./bin/veclite search "$DB" items --query='[1,0]' --top-k=1 --json | jq -e '.[0].payload.label == "apple"' >/dev/null
+      echo 'READ_ONLY_SEARCH {"label": "apple"}'
+      echo "SERVER_READY"
+      wait "$SERVER_PID" || true
+      exit 0
   cwd: "."
   timeoutMs: 20000
 
@@ -41,27 +95,14 @@ preconditions:
       timeoutMs: 10000
     - run: "./bin/veclite insert .glyphrun/tmp/shared/items.veclite items --vector='[1,0]' --payload='{\"label\":\"apple\"}'"
       timeoutMs: 10000
-    # Start a writer process that holds the exclusive lock in the background.
-    # We use `veclite serve` as the lock holder because it opens RW and stays alive.
-    - run: "./bin/veclite serve .glyphrun/tmp/shared/items.veclite --port=18099 &"
-      timeoutMs: 5000
-    # Give the server a moment to acquire the lock.
-    - run: "sleep 1"
-      timeoutMs: 5000
-
 steps:
   - wait:
-      process:
-        exitCode: 0
+      screen:
+        contains: "SERVER_READY"
       timeoutMs: 20000
   - snapshot: result
 
 outcomes:
-  - id: clean_exit
-    description: the read-only CLI command succeeds despite another process holding the exclusive lock
-    verify:
-      process:
-        exitCode: 0
   - id: returns_apple
     description: the search returns the apple record
     verify:
@@ -71,29 +112,52 @@ outcomes:
     description: a second record can be inserted via the running server
     verify:
       command:
-        run: "curl -s -X POST http://localhost:18099/collections/items/vectors -H 'Content-Type: application/json' -d '{\"vector\":[0,1],\"payload\":{\"label\":\"car\"}}' | grep -q inserted"
+        run: |
+          PORT=$(cat .glyphrun/tmp/shared/server.port)
+          curl -fsS -X POST "http://127.0.0.1:$PORT/collections/items/vectors" -H 'Content-Type: application/json' -d '{"vector":[0,1],"payload":{"label":"car"}}' | grep -q inserted
   - id: sync_via_server
     description: the server can sync to disk
     verify:
       command:
-        run: "curl -s -X POST http://localhost:18099/sync | grep -q synced"
+        run: |
+          PORT=$(cat .glyphrun/tmp/shared/server.port)
+          curl -fsS -X POST "http://127.0.0.1:$PORT/sync" | grep -q synced
   - id: reload_via_server
     description: the /reload endpoint picks up external changes
     verify:
       command:
-        run: "curl -s -X POST http://localhost:18099/reload | grep -q reloaded"
+        run: |
+          PORT=$(cat .glyphrun/tmp/shared/server.port)
+          curl -fsS -X POST "http://127.0.0.1:$PORT/reload" | grep -q reloaded
   - id: server_search_finds_both
     description: the server sees both records after reload
     verify:
       command:
-        run: "curl -s -X POST http://localhost:18099/collections/items/search -H 'Content-Type: application/json' -d '{\"query\":[1,0],\"top_k\":10}' | jq -e '.count == 2' >/dev/null"
+        run: |
+          PORT=$(cat .glyphrun/tmp/shared/server.port)
+          curl -fsS -X POST "http://127.0.0.1:$PORT/collections/items/search" -H 'Content-Type: application/json' -d '{"query":[1,0],"top_k":10}' | jq -e '.count == 2' >/dev/null
   - id: cli_read_succeeds_while_server_holds_lock
     description: a read-only CLI search succeeds while the server holds the exclusive writer lock
     verify:
       command:
         run: "./bin/veclite search .glyphrun/tmp/shared/items.veclite items --query='[0,1]' --top-k=1 --json | jq -e '.[0].payload.label == \"car\"' >/dev/null"
   - id: cleanup_server
-    description: stop the background server to release the lock
+    description: stop and reap the exact server process owned by this scenario
     verify:
       command:
-        run: "kill $(lsof -ti:18099) 2>/dev/null || true"
+        run: |
+          PID=$(cat .glyphrun/tmp/shared/server.pid)
+          if kill -0 "$PID" 2>/dev/null; then
+            kill "$PID"
+          fi
+          ATTEMPT=0
+          while kill -0 "$PID" 2>/dev/null && [ "$ATTEMPT" -lt 100 ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            sleep 0.05
+          done
+          ! kill -0 "$PID" 2>/dev/null
+  - id: clean_exit
+    description: the lifecycle wrapper exits successfully after reaping its server
+    verify:
+      process:
+        exitCode: 0
