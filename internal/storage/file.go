@@ -249,7 +249,7 @@ func (f *File) LockWithConfig(cfg LockConfig) error {
 	// Ensure parent directory exists
 	dir := filepath.Dir(lockPath)
 	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return &Error{Op: "mkdir for lock", Err: err}
 		}
 	}
@@ -260,9 +260,13 @@ func (f *File) LockWithConfig(cfg LockConfig) error {
 	}
 
 	for attempt := 0; attempt <= cfg.MaxRetries; attempt++ {
-		lf, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+		lf, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
 		if err != nil {
 			return &Error{Op: "open lock file", Err: err}
+		}
+		if err := lf.Chmod(0o600); err != nil {
+			_ = lf.Close()
+			return &Error{Op: "secure lock file", Err: err}
 		}
 
 		var lockErr error
@@ -400,7 +404,7 @@ func (f *File) Save(snapshot *DatabaseSnapshot) error {
 	// Ensure parent directory exists
 	dir := filepath.Dir(f.path)
 	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return &Error{Op: "mkdir", Err: err}
 		}
 	}
@@ -426,13 +430,18 @@ func (f *File) Save(snapshot *DatabaseSnapshot) error {
 
 	// Write to temp file with fsync
 	tmpPath := f.path + ".tmp"
-	if err := f.writeFileSync(tmpPath, header, payloadBytes); err != nil {
+	mode := f.secureFileMode()
+	if err := f.writeFileSync(tmpPath, header, payloadBytes, mode); err != nil {
 		return err
 	}
 
 	// Check if original file exists
 	bakPath := f.path + ".bak"
 	if _, err := os.Stat(f.path); err == nil {
+		if err := os.Chmod(f.path, mode); err != nil {
+			_ = os.Remove(tmpPath)
+			return &Error{Op: "secure database", Err: err}
+		}
 		// Rename original to backup
 		if err := os.Rename(f.path, bakPath); err != nil {
 			// Clean up temp file
@@ -463,10 +472,15 @@ func (f *File) Save(snapshot *DatabaseSnapshot) error {
 }
 
 // writeFileSync writes data to a file and fsyncs before closing.
-func (f *File) writeFileSync(path string, header, payload []byte) error {
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+func (f *File) writeFileSync(path string, header, payload []byte, mode os.FileMode) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
 		return &Error{Op: "create temp", Err: err}
+	}
+	if err := file.Chmod(mode); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return &Error{Op: "secure temp", Err: err}
 	}
 
 	if _, err := file.Write(header); err != nil {
@@ -494,6 +508,20 @@ func (f *File) writeFileSync(path string, header, payload []byte) error {
 	}
 
 	return nil
+}
+
+// secureFileMode defaults snapshots to owner-only access and preserves an
+// existing mode only when it already grants no group/other permissions.
+func (f *File) secureFileMode() os.FileMode {
+	info, err := os.Stat(f.path)
+	if err != nil {
+		return 0o600
+	}
+	mode := info.Mode().Perm()
+	if mode != 0 && mode&0o077 == 0 {
+		return mode
+	}
+	return 0o600
 }
 
 // syncDir fsyncs a directory to ensure rename durability.

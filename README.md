@@ -62,6 +62,7 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
 
 - **Embeddable Go library** -- Core vector storage and search are small and local-first; optional integrations add provider-specific modules
 - **Single-file storage** -- Database persists to one `.veclite` file
+- **Private by default** -- New database, lock, and storage-directory artifacts are owner-only on POSIX systems
 - **HNSW indexing** -- Fast approximate nearest neighbor search
 - **BM25 text search** -- Full-text search over record content and payload fields
 - **Hybrid search** -- Combine vector and text search with Reciprocal Rank Fusion
@@ -2112,6 +2113,7 @@ Data is stored using Go's gob encoding in a single `.veclite` file:
 - HNSW indexes, BM25 inverted indexes, and record content are all persisted
 - File locking prevents concurrent writer access; `WithSharedRead(true)` enables multi-process read-only access
 - CRC32 checksums validate data integrity on load
+- New snapshots and lock files use owner-only permissions; a save also tightens legacy broad database modes while preserving an already stricter owner-only mode
 
 ## Contributing
 
