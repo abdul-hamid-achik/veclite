@@ -70,7 +70,7 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     directory: Casks
     homepage: "https://github.com/abdul-hamid-achik/veclite"
-    description: "SQLite for vectors. Embed anywhere, no servers, one file."
+    description: "SQLite for vectors. Embed anywhere, no servers, one file"
     license: "MIT"
     binaries:
       - veclite
@@ -81,7 +81,5 @@ homebrew_casks:
     hooks:
       post:
         install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/veclite"]
-          end
+          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/veclite"] if OS.mac?
     skip_upload: "{{ if .Env.HOMEBREW_TAP_TOKEN }}false{{ else }}true{{ end }}"
