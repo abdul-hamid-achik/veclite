@@ -380,9 +380,14 @@ func cmdUnlock(args []string) error {
 // when forced). Extracted from cmdUnlock so it can be unit-tested without
 // exec'ing the binary.
 func unlockDB(dbPath string, force bool, out io.Writer) error {
-	if !storage.LockFileExists(dbPath) {
-		fmt.Fprintf(out, "no lock file at %s.lock\n", dbPath)
+	writef := func(format string, args ...any) error {
+		if _, err := fmt.Fprintf(out, format, args...); err != nil {
+			return fmt.Errorf("writing unlock status: %w", err)
+		}
 		return nil
+	}
+	if !storage.LockFileExists(dbPath) {
+		return writef("no lock file at %s.lock\n", dbPath)
 	}
 
 	pid := storage.ReadLockPID(dbPath)
@@ -393,35 +398,40 @@ func unlockDB(dbPath string, force bool, out io.Writer) error {
 		if err := storage.RemoveLockFile(dbPath); err != nil {
 			return fmt.Errorf("removing unparseable lock file: %w", err)
 		}
-		fmt.Fprintf(out, "removed unparseable lock file at %s.lock\n", dbPath)
-		return nil
+		return writef("removed unparseable lock file at %s.lock\n", dbPath)
 	}
 
 	if !storage.IsProcessAlive(pid) {
 		if err := storage.RemoveLockFile(dbPath); err != nil {
 			return fmt.Errorf("removing stale lock: %w", err)
 		}
-		fmt.Fprintf(out, "removed stale lock (PID %d, dead)\n", pid)
-		return nil
+		return writef("removed stale lock (PID %d, dead)\n", pid)
 	}
 
 	// Holder is alive.
 	cmdline := processCommand(pid)
-	fmt.Fprintf(out, "lock held by live process: %s\n", info)
+	if err := writef("lock held by live process: %s\n", info); err != nil {
+		return err
+	}
 	if cmdline != "" {
-		fmt.Fprintf(out, "  command: %s\n", cmdline)
+		if err := writef("  command: %s\n", cmdline); err != nil {
+			return err
+		}
 	}
 	if !force {
-		fmt.Fprintln(out, "refusing to remove a live process's lock.")
-		fmt.Fprintf(out, "kill the process first (kill %d), or re-run with --force if you are certain it is stuck.\n", pid)
+		if err := writef("refusing to remove a live process's lock.\n"); err != nil {
+			return err
+		}
+		if err := writef("kill the process first (kill %d), or re-run with --force if you are certain it is stuck.\n", pid); err != nil {
+			return err
+		}
 		return fmt.Errorf("lock held by live PID %d", pid)
 	}
 
 	if err := storage.RemoveLockFile(dbPath); err != nil {
 		return fmt.Errorf("force-removing lock: %w", err)
 	}
-	fmt.Fprintf(out, "WARNING: force-removed lock held by live PID %d — if that process writes again, the database may be corrupted\n", pid)
-	return nil
+	return writef("WARNING: force-removed lock held by live PID %d — if that process writes again, the database may be corrupted\n", pid)
 }
 
 // processCommand returns the command line of a process, best-effort.
