@@ -161,6 +161,9 @@ func (db *DB) CreateKnowledgeGraph(name string) (*KnowledgeGraph, error) {
 	db.knowledgeGraphs[name] = kg
 	db.mu.Unlock()
 
+	// Log the (empty) graph so it survives a crash before its first mutation.
+	db.walAppendGraph(kg)
+
 	return kg, nil
 }
 
@@ -174,6 +177,22 @@ func (db *DB) GetKnowledgeGraph(name string) (*KnowledgeGraph, error) {
 	return kg, nil
 }
 
+// syncIfNeeded persists a completed graph mutation according to the DB's
+// durability mode (full save on syncOnWrite, WAL append when the log is
+// active). It must be called with no graph or collection lock held: the
+// syncOnWrite path re-acquires kg.mu through the DB snapshot.
+func (kg *KnowledgeGraph) syncIfNeeded() {
+	db := kg.db
+	if db == nil || db.config == nil {
+		return
+	}
+	if db.config.syncOnWrite {
+		_ = db.Sync()
+		return
+	}
+	db.walAppendGraph(kg)
+}
+
 // Name returns the name of the knowledge graph.
 func (kg *KnowledgeGraph) Name() string {
 	return kg.name
@@ -185,15 +204,16 @@ func (kg *KnowledgeGraph) AddEntity(entity Entity) error {
 		return fmt.Errorf("veclite: entity ID required")
 	}
 
+	// Register the entity first, then index the vector without holding kg.mu:
+	// collection writes can trigger a sync, and a sync snapshots the graph
+	// (kg.mu), so holding kg.mu across the insert would self-deadlock.
 	kg.mu.Lock()
-	defer kg.mu.Unlock()
-
 	if _, exists := kg.entities[entity.ID]; exists {
+		kg.mu.Unlock()
 		return fmt.Errorf("veclite: entity %q already exists", entity.ID)
 	}
-
-	// Store the entity
 	kg.entities[entity.ID] = entity.Clone()
+	kg.mu.Unlock()
 
 	// If entity has a vector, store it in the collection for search
 	if len(entity.Vector) > 0 {
@@ -209,11 +229,14 @@ func (kg *KnowledgeGraph) AddEntity(entity Entity) error {
 		}
 		_, err := kg.collection.Insert(entity.Vector, payload)
 		if err != nil {
+			kg.mu.Lock()
 			delete(kg.entities, entity.ID)
+			kg.mu.Unlock()
 			return fmt.Errorf("veclite: failed to index entity: %w", err)
 		}
 	}
 
+	kg.syncIfNeeded()
 	return nil
 }
 
@@ -224,18 +247,20 @@ func (kg *KnowledgeGraph) UpdateEntity(entity Entity) error {
 	}
 
 	kg.mu.Lock()
-	defer kg.mu.Unlock()
-
 	existing, exists := kg.entities[entity.ID]
 	if !exists {
+		kg.mu.Unlock()
 		return &NotFoundError{Type: "entity", ID: entity.ID}
 	}
+	existingVector := append([]float32(nil), existing.Vector...)
 
 	// Update the entity
 	kg.entities[entity.ID] = entity.Clone()
+	kg.mu.Unlock()
 
-	// Update vector in collection if changed
-	if len(entity.Vector) > 0 && !vectorsEqual(existing.Vector, entity.Vector) {
+	// Update vector in collection if changed (without kg.mu: collection
+	// writes can trigger a sync that snapshots the graph).
+	if len(entity.Vector) > 0 && !vectorsEqual(existingVector, entity.Vector) {
 		// Find and update the record in collection
 		records, _ := kg.collection.Find(Equal("_entity_id", entity.ID))
 		if len(records) > 0 {
@@ -258,6 +283,7 @@ func (kg *KnowledgeGraph) UpdateEntity(entity Entity) error {
 		}
 	}
 
+	kg.syncIfNeeded()
 	return nil
 }
 
@@ -277,9 +303,9 @@ func (kg *KnowledgeGraph) GetEntity(entityID string) (*Entity, error) {
 // DeleteEntity removes an entity and all its relationships.
 func (kg *KnowledgeGraph) DeleteEntity(entityID string) error {
 	kg.mu.Lock()
-	defer kg.mu.Unlock()
 
 	if _, exists := kg.entities[entityID]; !exists {
+		kg.mu.Unlock()
 		return &NotFoundError{Type: "entity", ID: entityID}
 	}
 
@@ -291,17 +317,20 @@ func (kg *KnowledgeGraph) DeleteEntity(entityID string) error {
 		_ = kg.deleteRelationshipInternal(relID)
 	}
 
-	// Remove from collection (ignore error during cleanup)
+	// Remove the entity
+	delete(kg.entities, entityID)
+	delete(kg.outgoing, entityID)
+	delete(kg.incoming, entityID)
+	kg.mu.Unlock()
+
+	// Remove from collection without holding kg.mu (collection writes can
+	// trigger a sync that snapshots the graph). Ignore errors during cleanup.
 	records, _ := kg.collection.Find(Equal("_entity_id", entityID))
 	if len(records) > 0 {
 		_ = kg.collection.Delete(records[0].ID)
 	}
 
-	// Remove the entity
-	delete(kg.entities, entityID)
-	delete(kg.outgoing, entityID)
-	delete(kg.incoming, entityID)
-
+	kg.syncIfNeeded()
 	return nil
 }
 
@@ -334,17 +363,19 @@ func (kg *KnowledgeGraph) AddRelationship(rel Relationship) error {
 	}
 
 	kg.mu.Lock()
-	defer kg.mu.Unlock()
 
 	// Verify entities exist
 	if _, exists := kg.entities[rel.SourceID]; !exists {
+		kg.mu.Unlock()
 		return &NotFoundError{Type: "entity", ID: rel.SourceID}
 	}
 	if _, exists := kg.entities[rel.TargetID]; !exists {
+		kg.mu.Unlock()
 		return &NotFoundError{Type: "entity", ID: rel.TargetID}
 	}
 
 	if _, exists := kg.relationships[rel.ID]; exists {
+		kg.mu.Unlock()
 		return fmt.Errorf("veclite: relationship %q already exists", rel.ID)
 	}
 
@@ -360,7 +391,9 @@ func (kg *KnowledgeGraph) AddRelationship(rel Relationship) error {
 		kg.outgoing[rel.TargetID] = append(kg.outgoing[rel.TargetID], rel.ID)
 		kg.incoming[rel.SourceID] = append(kg.incoming[rel.SourceID], rel.ID)
 	}
+	kg.mu.Unlock()
 
+	kg.syncIfNeeded()
 	return nil
 }
 
@@ -380,9 +413,14 @@ func (kg *KnowledgeGraph) GetRelationship(relID string) (*Relationship, error) {
 // DeleteRelationship removes a relationship.
 func (kg *KnowledgeGraph) DeleteRelationship(relID string) error {
 	kg.mu.Lock()
-	defer kg.mu.Unlock()
+	err := kg.deleteRelationshipInternal(relID)
+	kg.mu.Unlock()
 
-	return kg.deleteRelationshipInternal(relID)
+	if err != nil {
+		return err
+	}
+	kg.syncIfNeeded()
+	return nil
 }
 
 // deleteRelationshipInternal removes a relationship (must be called with lock held).

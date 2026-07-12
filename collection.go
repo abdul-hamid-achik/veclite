@@ -46,6 +46,12 @@ type Collection struct {
 	records map[uint64]*Record
 	nextID  uint64
 
+	// WAL dirty tracking (guarded by mu; see wal.go). Mutation paths mark the
+	// records they touch; syncIfNeeded drains the marks into the log.
+	walDirty       map[uint64]struct{}
+	walDeleted     map[uint64]struct{}
+	walConfigDirty bool
+
 	db *DB
 }
 
@@ -155,12 +161,20 @@ func (c *Collection) checkReadOnly() error {
 	return nil
 }
 
-// syncIfNeeded performs a sync if syncOnWrite is enabled.
+// syncIfNeeded persists a completed mutation according to the DB's
+// durability mode: a full snapshot save when syncOnWrite is enabled,
+// otherwise a WAL append when the write-ahead log is active (see wal.go).
+// With neither, changes persist on the next explicit Sync or Close.
 func (c *Collection) syncIfNeeded() {
-	if c.db != nil && c.db.config != nil && c.db.config.syncOnWrite {
+	if c.db == nil || c.db.config == nil {
+		return
+	}
+	if c.db.config.syncOnWrite {
 		// Sync requires the DB lock; we must not hold the collection lock.
 		_ = c.db.Sync()
+		return
 	}
+	c.flushWAL()
 }
 
 func (c *Collection) reindexRecordLocked(record *Record) {
@@ -199,6 +213,7 @@ func (c *Collection) SetMetadata(metadata map[string]any) error {
 	if c.metadata == nil {
 		c.metadata = make(map[string]any)
 	}
+	c.markWALConfigLocked()
 	c.mu.Unlock()
 
 	c.syncIfNeeded()
@@ -216,6 +231,7 @@ func (c *Collection) SetMetadataValue(key string, value any) error {
 		c.metadata = make(map[string]any)
 	}
 	c.metadata[key] = deepCopyValue(value)
+	c.markWALConfigLocked()
 	c.mu.Unlock()
 
 	c.syncIfNeeded()
@@ -230,6 +246,7 @@ func (c *Collection) DeleteMetadataValue(key string) error {
 
 	c.mu.Lock()
 	delete(c.metadata, key)
+	c.markWALConfigLocked()
 	c.mu.Unlock()
 
 	c.syncIfNeeded()
@@ -350,12 +367,14 @@ func (c *Collection) insertWithOptionsLocked(vector []float32, payload map[strin
 	copy(record.Vector, vector)
 
 	c.records[id] = record
+	c.markWALUpsertLocked(id)
 
 	// Insert into index if enabled
 	if c.index != nil {
 		if err := c.index.Insert(id, vector); err != nil {
 			// Rollback record insertion on index failure
 			delete(c.records, id)
+			c.markWALDeleteLocked(id)
 			c.nextID--
 			return 0, err
 		}
@@ -391,6 +410,7 @@ func (c *Collection) CleanupExpired() (int, error) {
 				c.textIndex.removeRecord(id)
 			}
 			delete(c.records, id)
+			c.markWALDeleteLocked(id)
 			deleted++
 		}
 	}
@@ -446,12 +466,14 @@ func (c *Collection) insertLocked(vector []float32, payload map[string]any) (uin
 	copy(record.Vector, vector)
 
 	c.records[id] = record
+	c.markWALUpsertLocked(id)
 
 	// Insert into index if enabled
 	if c.index != nil {
 		if err := c.index.Insert(id, vector); err != nil {
 			// Rollback record insertion on index failure
 			delete(c.records, id)
+			c.markWALDeleteLocked(id)
 			c.nextID--
 			return 0, err
 		}
@@ -532,6 +554,7 @@ func (c *Collection) insertBatchLocked(vectors [][]float32, payloads []map[strin
 		copy(record.Vector, vector)
 
 		c.records[id] = record
+		c.markWALUpsertLocked(id)
 		ids[i] = id
 
 		// Insert into index if enabled
@@ -540,6 +563,7 @@ func (c *Collection) insertBatchLocked(vectors [][]float32, payloads []map[strin
 				// On failure, rollback this and all previous insertions
 				for j := 0; j <= i; j++ {
 					delete(c.records, ids[j])
+					c.markWALDeleteLocked(ids[j])
 					if c.index != nil {
 						_ = c.index.Delete(ids[j])
 					}
@@ -613,6 +637,7 @@ func (c *Collection) Delete(id uint64) error {
 	}
 
 	delete(c.records, id)
+	c.markWALDeleteLocked(id)
 	c.mu.Unlock()
 
 	if c.db != nil && c.db.metrics != nil {
@@ -653,6 +678,7 @@ func (c *Collection) DeleteWhere(filters ...Filter) (int, error) {
 				c.textIndex.removeRecord(id)
 			}
 			delete(c.records, id)
+			c.markWALDeleteLocked(id)
 			deleted++
 		}
 	}
@@ -682,6 +708,7 @@ func (c *Collection) Update(id uint64, payload map[string]any) error {
 	record.Payload = payload
 	record.UpdatedAt = time.Now()
 	c.reindexRecordLocked(record)
+	c.markWALUpsertLocked(id)
 	c.mu.Unlock()
 
 	c.syncIfNeeded()
@@ -706,6 +733,7 @@ func (c *Collection) UpdateDocument(id uint64, content string, payload map[strin
 	record.Payload = payload
 	record.UpdatedAt = time.Now()
 	c.reindexRecordLocked(record)
+	c.markWALUpsertLocked(id)
 	c.mu.Unlock()
 
 	c.syncIfNeeded()
@@ -757,6 +785,7 @@ func (c *Collection) UpdateVector(id uint64, vector []float32) error {
 	record.Vector = make([]float32, len(vector))
 	copy(record.Vector, vector)
 	record.UpdatedAt = time.Now()
+	c.markWALUpsertLocked(id)
 	c.mu.Unlock()
 
 	c.syncIfNeeded()
@@ -840,6 +869,7 @@ func (c *Collection) upsertLocked(id uint64, vector []float32, payload map[strin
 		record.Payload = payload
 		record.UpdatedAt = time.Now()
 		c.reindexRecordLocked(record)
+		c.markWALUpsertLocked(id)
 		return id, nil
 	}
 
@@ -914,6 +944,7 @@ func (c *Collection) upsertByKeyLocked(keyField string, keyValue any, vector []f
 		existingRecord.Payload = payload
 		existingRecord.UpdatedAt = time.Now()
 		c.reindexRecordLocked(existingRecord)
+		c.markWALUpsertLocked(existingID)
 		return existingID, false, nil
 	}
 
@@ -947,10 +978,12 @@ func (c *Collection) insertUnlocked(vector []float32, payload map[string]any) (u
 	copy(record.Vector, vector)
 
 	c.records[id] = record
+	c.markWALUpsertLocked(id)
 
 	if c.index != nil {
 		if err := c.index.Insert(id, vector); err != nil {
 			delete(c.records, id)
+			c.markWALDeleteLocked(id)
 			c.nextID--
 			return 0, err
 		}
@@ -983,6 +1016,7 @@ func (c *Collection) insertWithIDUnlocked(id uint64, vector []float32, payload m
 	copy(record.Vector, vector)
 
 	c.records[id] = record
+	c.markWALUpsertLocked(id)
 
 	// Update nextID if necessary
 	if id >= c.nextID {
@@ -992,6 +1026,7 @@ func (c *Collection) insertWithIDUnlocked(id uint64, vector []float32, payload m
 	if c.index != nil {
 		if err := c.index.Insert(id, vector); err != nil {
 			delete(c.records, id)
+			c.markWALDeleteLocked(id)
 			return 0, err
 		}
 	}
@@ -1372,7 +1407,11 @@ func (c *Collection) HasIndex() bool {
 func (c *Collection) snapshot() *storage.CollectionSnapshot {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	return c.snapshotLocked()
+}
 
+// snapshotLocked builds the snapshot. The caller must hold c.mu.
+func (c *Collection) snapshotLocked() *storage.CollectionSnapshot {
 	snapshot := &storage.CollectionSnapshot{
 		Name:             c.name,
 		Metadata:         deepCopyMap(c.metadata),
@@ -1795,10 +1834,12 @@ func (c *Collection) InsertDocument(vector []float32, content string, payload ma
 	copy(record.Vector, vector)
 
 	c.records[id] = record
+	c.markWALUpsertLocked(id)
 
 	if c.index != nil {
 		if err := c.index.Insert(id, vector); err != nil {
 			delete(c.records, id)
+			c.markWALDeleteLocked(id)
 			c.nextID--
 			c.mu.Unlock()
 			return 0, err
@@ -1875,6 +1916,7 @@ func (c *Collection) UpsertTextDocument(id uint64, content string, payload map[s
 			record.Payload = payload
 			record.UpdatedAt = time.Now()
 			c.reindexRecordLocked(record)
+			c.markWALUpsertLocked(id)
 			c.mu.Unlock()
 			c.syncIfNeeded()
 			return id, nil
@@ -1913,6 +1955,7 @@ func (c *Collection) UpsertTextDocumentByKey(keyField string, keyValue any, cont
 			record.Payload = payload
 			record.UpdatedAt = time.Now()
 			c.reindexRecordLocked(record)
+			c.markWALUpsertLocked(id)
 			c.mu.Unlock()
 			c.syncIfNeeded()
 			return id, false, nil
@@ -1968,6 +2011,7 @@ func (c *Collection) insertTextDocumentUnlocked(id uint64, content string, paylo
 	}
 
 	c.records[id] = record
+	c.markWALUpsertLocked(id)
 	c.reindexRecordLocked(record)
 	return id
 }

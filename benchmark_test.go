@@ -455,3 +455,52 @@ func BenchmarkEpisodeDetection(b *testing.B) {
 		}
 	})
 }
+
+// BenchmarkInsertDurability compares the cost of one durable insert across
+// the three durability modes: none (memory until Sync), WAL append, and
+// full-snapshot save per write.
+func BenchmarkInsertDurability(b *testing.B) {
+	const dim = 128
+	const preload = 1000
+
+	modes := []struct {
+		name string
+		opts []Option
+	}{
+		{"none", nil},
+		{"wal", []Option{WithWAL(true)}},
+		{"syncOnWrite", []Option{WithSyncOnWrite(true)}},
+	}
+
+	for _, mode := range modes {
+		b.Run(mode.name, func(b *testing.B) {
+			path := b.TempDir() + "/bench.veclite"
+			db, err := Open(path, mode.opts...)
+			if err != nil {
+				b.Fatal(err)
+			}
+			defer func() { _ = db.Close() }()
+
+			coll, err := db.CreateCollection("bench", WithDimension(dim), WithHNSW(16, 200))
+			if err != nil {
+				b.Fatal(err)
+			}
+			// Preload so syncOnWrite pays a realistic snapshot cost.
+			for i := 0; i < preload; i++ {
+				if _, err := coll.Insert(generateRandomVector(dim), map[string]any{"i": i}); err != nil {
+					b.Fatal(err)
+				}
+			}
+			if err := db.Sync(); err != nil {
+				b.Fatal(err)
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, err := coll.Insert(generateRandomVector(dim), map[string]any{"i": i}); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}

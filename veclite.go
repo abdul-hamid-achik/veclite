@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/abdul-hamid-achik/veclite/internal/floats"
@@ -54,6 +55,13 @@ type DB struct {
 	// stopFuncs holds stop functions for background workers (TTLCleaner, MemoryLimiter).
 	stopFuncs []func()
 	stopMu    sync.Mutex
+
+	// Write-ahead log state (see wal.go). wal is set once during Open and never
+	// mutated afterwards; walOn gates the hot-path dirty marking; walMu
+	// serializes log appends against snapshot-save + log-truncate sequences.
+	wal   *storage.WAL
+	walOn atomic.Bool
+	walMu sync.Mutex
 }
 
 // Open opens or creates a VecLite database at the given path.
@@ -122,6 +130,16 @@ func Open(path string, opts ...Option) (*DB, error) {
 		db.loadFromSnapshot(snapshot)
 	}
 
+	// Replay and (for writers) attach the write-ahead log. This also folds a
+	// log left behind by a crashed WAL-enabled writer, whether or not this
+	// open requested the WAL itself.
+	if path != ":memory:" {
+		if err := db.initWAL(); err != nil {
+			_ = store.Close()
+			return nil, err
+		}
+	}
+
 	return db, nil
 }
 
@@ -160,7 +178,12 @@ func (db *DB) Close() error {
 	// Always release storage (and file lock), even if sync failed
 	closeErr := db.storage.Close()
 
-	return errors.Join(syncErr, closeErr)
+	var walErr error
+	if db.wal != nil {
+		walErr = db.wal.Close()
+	}
+
+	return errors.Join(syncErr, closeErr, walErr)
 }
 
 // registerStopFunc registers a function to be called when the database is closed.
@@ -202,6 +225,7 @@ func (db *DB) SetMetadata(metadata map[string]any) error {
 	if db.config.syncOnWrite {
 		return db.syncLocked()
 	}
+	db.walAppendDB(storage.WALEntry{Op: storage.WALOpDBMetadata, Metadata: deepCopyMap(db.metadata)})
 	return nil
 }
 
@@ -224,6 +248,7 @@ func (db *DB) SetMetadataValue(key string, value any) error {
 	if db.config.syncOnWrite {
 		return db.syncLocked()
 	}
+	db.walAppendDB(storage.WALEntry{Op: storage.WALOpDBMetadata, Metadata: deepCopyMap(db.metadata)})
 	return nil
 }
 
@@ -243,6 +268,7 @@ func (db *DB) DeleteMetadataValue(key string) error {
 	if db.config.syncOnWrite {
 		return db.syncLocked()
 	}
+	db.walAppendDB(storage.WALEntry{Op: storage.WALOpDBMetadata, Metadata: deepCopyMap(db.metadata)})
 	return nil
 }
 
@@ -269,6 +295,7 @@ func (db *DB) Collection(name string) *Collection {
 	// Create new collection with defaults
 	coll := newCollection(name, defaultCollectionConfig(), db)
 	db.collections[name] = coll
+	db.walLogNewCollection(coll)
 	return coll
 }
 
@@ -297,6 +324,7 @@ func (db *DB) CreateCollection(name string, opts ...CollectionOption) (*Collecti
 
 	coll := newCollection(name, config, db)
 	db.collections[name] = coll
+	db.walLogNewCollection(coll)
 	return coll, nil
 }
 
@@ -334,6 +362,7 @@ func (db *DB) DropCollection(name string) error {
 	}
 
 	delete(db.collections, name)
+	db.walAppendDB(storage.WALEntry{Op: storage.WALOpDropCollection, Collection: name})
 	return nil
 }
 
@@ -375,8 +404,56 @@ func (db *DB) Sync() error {
 
 // syncLocked performs sync while holding the lock.
 func (db *DB) syncLocked() error {
-	snapshot := db.snapshotLocked()
-	return db.storage.Save(snapshot)
+	if !db.walActive() {
+		return db.storage.Save(db.snapshotLocked())
+	}
+
+	// With a WAL, the save and the log truncation must be one atomic unit with
+	// respect to log appends: walMu blocks flushes so that a mutation racing
+	// this sync either lands in the snapshot (its marks are cleared with it)
+	// or appends to the log after the truncation.
+	db.walMu.Lock()
+	defer db.walMu.Unlock()
+
+	snapshot := &storage.DatabaseSnapshot{
+		Version:         storage.CurrentVersion,
+		Metadata:        deepCopyMap(db.metadata),
+		Collections:     make(map[string]*storage.CollectionSnapshot, len(db.collections)),
+		KnowledgeGraphs: make(map[string]*storage.GraphSnapshot, len(db.knowledgeGraphs)),
+		EpisodeStores:   make(map[string]*storage.EpisodeStoreSnapshot, len(db.episodeStores)),
+		CreatedAt:       db.createdAt,
+		UpdatedAt:       time.Now(),
+	}
+
+	drained := make([]walMarks, 0, len(db.collections))
+	for name, coll := range db.collections {
+		snap, marks := coll.snapshotClearingWAL()
+		snapshot.Collections[name] = snap
+		drained = append(drained, marks)
+	}
+	for name, kg := range db.knowledgeGraphs {
+		snapshot.KnowledgeGraphs[name] = kg.snapshot()
+	}
+	for name, es := range db.episodeStores {
+		snapshot.EpisodeStores[name] = es.snapshot()
+	}
+
+	if err := db.storage.Save(snapshot); err != nil {
+		// The snapshot never hit disk: restore the drained marks so the
+		// affected records are re-logged by the next flush. Already-appended
+		// entries are still in the log (no truncation happened).
+		for _, marks := range drained {
+			marks.coll.restoreWALMarks(marks)
+		}
+		return err
+	}
+
+	// A failed truncation is not fatal: the stale entries replay
+	// idempotently over the snapshot that now already contains them.
+	if err := db.wal.Reset(); err != nil {
+		db.logger.Error("veclite: WAL truncate after save failed", "error", err)
+	}
+	return nil
 }
 
 // snapshotLocked creates a snapshot while holding the lock.
@@ -580,6 +657,16 @@ func (db *DB) Reload() error {
 	db.subMu.Lock()
 	db.subscriptions = make(map[string]*subscriptionManager)
 	db.subMu.Unlock()
+
+	// Re-apply the write-ahead log on top of the reloaded snapshot: for a
+	// shared reader this picks up a writer's not-yet-snapshotted mutations
+	// (a torn in-flight append is skipped); for a WAL-enabled writer it
+	// restores its own since-last-save mutations that Load cannot see.
+	if entries, err := storage.ReadWALEntries(storage.WALPath(db.path)); err == nil {
+		db.applyWALEntries(entries)
+	} else {
+		db.logger.Error("veclite: reload skipped unreadable WAL", "error", err)
+	}
 
 	return nil
 }

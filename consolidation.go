@@ -362,6 +362,7 @@ func (c *Collection) ArchiveRecord(id uint64) error {
 	record.Payload[PayloadKeyArchived] = true
 	record.UpdatedAt = time.Now()
 	c.reindexRecordLocked(record)
+	c.markWALUpsertLocked(id)
 	c.mu.Unlock()
 
 	c.syncIfNeeded()
@@ -386,6 +387,7 @@ func (c *Collection) UnarchiveRecord(id uint64) error {
 		delete(record.Payload, PayloadKeyArchived)
 		record.UpdatedAt = time.Now()
 		c.reindexRecordLocked(record)
+		c.markWALUpsertLocked(id)
 	}
 	c.mu.Unlock()
 

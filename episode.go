@@ -96,7 +96,27 @@ func (db *DB) CreateEpisodeStore(memoriesCollectionName string) (*EpisodeStore, 
 	db.episodeStores[memoriesCollectionName] = es
 	db.mu.Unlock()
 
+	// Log the (empty) store so it survives a crash before its first episode.
+	db.walAppendEpisodeStore(memoriesCollectionName, es)
+
 	return es, nil
+}
+
+// syncIfNeeded persists a completed episode mutation according to the DB's
+// durability mode (full save on syncOnWrite, WAL append when the log is
+// active). It must be called with no episode-store lock held: the
+// syncOnWrite path re-acquires es.mu through the DB snapshot.
+func (es *EpisodeStore) syncIfNeeded() {
+	coll := es.collection
+	if coll == nil || coll.db == nil || coll.db.config == nil {
+		return
+	}
+	db := coll.db
+	if db.config.syncOnWrite {
+		_ = db.Sync()
+		return
+	}
+	db.walAppendEpisodeStore(coll.name, es)
 }
 
 func (db *DB) GetEpisodeStore(name string) (*EpisodeStore, error) {
@@ -145,6 +165,7 @@ func (es *EpisodeStore) CreateEpisode(recordIDs []uint64, title string) (*Episod
 	es.episodes[episodeID] = episode
 	es.mu.Unlock()
 
+	es.syncIfNeeded()
 	return episode, nil
 }
 
@@ -233,6 +254,9 @@ func (es *EpisodeStore) DetectEpisodes(config EpisodeConfig) ([]*Episode, error)
 	}
 	es.mu.Unlock()
 
+	if len(episodes) > 0 {
+		es.syncIfNeeded()
+	}
 	return episodes, nil
 }
 
@@ -323,13 +347,14 @@ func (es *EpisodeStore) ListEpisodes() []*Episode {
 // DeleteEpisode removes an episode (does not delete the underlying records).
 func (es *EpisodeStore) DeleteEpisode(episodeID string) error {
 	es.mu.Lock()
-	defer es.mu.Unlock()
-
 	if _, ok := es.episodes[episodeID]; !ok {
+		es.mu.Unlock()
 		return &NotFoundError{Type: "episode", ID: episodeID}
 	}
-
 	delete(es.episodes, episodeID)
+	es.mu.Unlock()
+
+	es.syncIfNeeded()
 	return nil
 }
 

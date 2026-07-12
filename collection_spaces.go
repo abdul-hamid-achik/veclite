@@ -32,6 +32,9 @@ func (c *Collection) AddVectorSpace(config VectorSpaceConfig) error {
 
 	c.mu.Lock()
 	err := c.addVectorSpaceLocked(config)
+	if err == nil {
+		c.markWALConfigLocked()
+	}
 	c.mu.Unlock()
 	if err != nil {
 		return err
@@ -266,6 +269,7 @@ func (c *Collection) SetEmbeddingProfile(profile EmbeddingProfile) error {
 	}
 	p := profile
 	c.profile = &p
+	c.markWALConfigLocked()
 	c.mu.Unlock()
 	c.syncIfNeeded()
 	return nil
@@ -419,12 +423,14 @@ func (c *Collection) insertRecordLocked(in RecordInput) (uint64, error) {
 	}
 
 	c.records[id] = rec
+	c.markWALUpsertLocked(id)
 
 	// 4. Insert into each index, rolling back on failure.
 	inserted := make([]*vectorSpace, 0, len(named))
 	if c.index != nil && len(rec.Vector) > 0 {
 		if err := c.index.Insert(id, rec.Vector); err != nil {
 			delete(c.records, id)
+			c.markWALDeleteLocked(id)
 			return 0, err
 		}
 	}
@@ -442,6 +448,7 @@ func (c *Collection) insertRecordLocked(in RecordInput) (uint64, error) {
 				c.hardDeleteFromSpaceIndex(done, id)
 			}
 			delete(c.records, id)
+			c.markWALDeleteLocked(id)
 			return 0, err
 		}
 		inserted = append(inserted, sp)
@@ -509,6 +516,7 @@ func (c *Collection) SetRecordVector(id uint64, space string, vector []float32) 
 	copy(cp, vector)
 	rec.Vectors[space] = cp
 	rec.UpdatedAt = time.Now()
+	c.markWALUpsertLocked(id)
 	c.mu.Unlock()
 
 	c.syncIfNeeded()

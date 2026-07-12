@@ -132,8 +132,14 @@ func (c *Collection) InsertTurn(turn ConversationTurn) (uint64, error) {
 				payload[PayloadKeyThreadRoot] = turn.ParentChunkID
 			}
 			c.records[id].Payload = payload
+
+			// Both records changed after the child's insert was logged: the
+			// parent gained a child link and the child gained its thread root.
+			c.markWALUpsertLocked(turn.ParentChunkID)
+			c.markWALUpsertLocked(id)
 		}
 		c.mu.Unlock()
+		c.syncIfNeeded()
 	}
 
 	return id, nil

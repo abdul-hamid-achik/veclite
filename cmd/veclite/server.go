@@ -50,6 +50,7 @@ func cmdServe(args []string) error {
 	port := fs.Int("port", 8080, "HTTP port to listen on")
 	host := fs.String("host", "127.0.0.1", "Host to bind to")
 	cors := fs.Bool("cors", false, "Enable CORS headers for cross-origin requests")
+	wal := fs.Bool("wal", false, "Enable the write-ahead log: writes survive a crash between syncs")
 	fs.Usage = func() {
 		fmt.Println("Usage: veclite serve [options] <file>")
 		fmt.Println("\nStart an HTTP server for multi-client access to the database.")
@@ -84,6 +85,7 @@ func cmdServe(args []string) error {
 		fmt.Println("\nExamples:")
 		fmt.Println("  veclite serve data.veclite --port=8080")
 		fmt.Println("  veclite serve data.veclite --host=0.0.0.0 --port=3000 --cors")
+		fmt.Println("  veclite serve data.veclite --wal")
 	}
 	_ = fs.Parse(args)
 
@@ -95,7 +97,11 @@ func cmdServe(args []string) error {
 	path := fs.Arg(0)
 
 	// Open database
-	db, err := veclite.Open(path)
+	var opts []veclite.Option
+	if *wal {
+		opts = append(opts, veclite.WithWAL(true))
+	}
+	db, err := veclite.Open(path, opts...)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}

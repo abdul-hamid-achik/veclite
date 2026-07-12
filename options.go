@@ -30,6 +30,7 @@ type dbConfig struct {
 	syncOnWrite bool
 	readOnly    bool
 	sharedRead  bool
+	wal         bool
 	logger      Logger
 }
 
@@ -57,6 +58,27 @@ func (f dbOptionFunc) apply(c *dbConfig) {
 func WithSyncOnWrite(enabled bool) Option {
 	return dbOptionFunc(func(c *dbConfig) {
 		c.syncOnWrite = enabled
+	})
+}
+
+// WithWAL enables the write-ahead log for a file-backed database. Every
+// completed write appends the affected records to a sidecar log
+// (path + ".wal") with a single fsync, so mutations survive a crash between
+// full-snapshot saves without WithSyncOnWrite's cost of rewriting the whole
+// database on every write. The log is replayed and folded into a fresh
+// snapshot on the next open, and truncated by every successful Sync or Close.
+//
+// The option is ignored for in-memory databases. Opens without WithWAL still
+// recover a log left behind by a crashed WAL-enabled writer.
+//
+// Durability caveat: a failed log append (disk full, I/O error) does not fail
+// the write — it is logged, the affected records are retried on the next
+// flush, and the data still persists on the next successful Sync or Close.
+// Between a failed append and that point, those writes would not survive a
+// crash.
+func WithWAL(enabled bool) Option {
+	return dbOptionFunc(func(c *dbConfig) {
+		c.wal = enabled
 	})
 }
 

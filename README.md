@@ -15,6 +15,7 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
 - [Project Status](#project-status)
 - [Library API](#library-api)
   - [Opening a Database](#opening-a-database)
+  - [Durability and the Write-Ahead Log](#durability-and-the-write-ahead-log)
   - [Collections](#collections)
   - [Database and Collection Metadata](#database-and-collection-metadata)
   - [Inserting Vectors](#inserting-vectors)
@@ -190,6 +191,7 @@ db, err := veclite.Open(":memory:")
 
 // With options
 db, err := veclite.Open("vectors.veclite",
+    veclite.WithWAL(true),          // Write-ahead log: crash-safe writes
     veclite.WithSyncOnWrite(true),  // Sync after each write
     veclite.WithReadOnly(true),     // Read-only mode
     veclite.WithSharedRead(true),   // Shared lock for multi-process reads
@@ -201,10 +203,47 @@ defer db.Close()
 
 | DB Option | Description |
 |-----------|-------------|
-| `WithSyncOnWrite(bool)` | Sync to disk after each write. Slower but durable. |
+| `WithWAL(bool)` | Write-ahead log. Each write appends the affected records to a `*.wal` sidecar with one fsync, so writes survive a crash between snapshot saves at a fraction of `WithSyncOnWrite`'s cost. See [Durability and the WAL](#durability-and-the-write-ahead-log). |
+| `WithSyncOnWrite(bool)` | Full snapshot save after each write. Slowest, maximally conservative durability. |
 | `WithReadOnly(bool)` | Open in read-only mode. Write operations return errors. |
 | `WithSharedRead(bool)` | Open read-only **lock-free** (no flock). Requires `WithReadOnly(true)`. A long-lived reader never blocks a writer and is never blocked by one; readers see a point-in-time snapshot, so call `db.Reload()` to pick up concurrent writes. Consistency is guaranteed by the writer's atomic-replace save. |
 | `WithLogger(Logger)` | Set structured logger. Default is `NopLogger` (zero overhead). |
+
+### Durability and the Write-Ahead Log
+
+VecLite persists the whole database as a single snapshot file on `Sync()` and
+`Close()`. By default, writes made between those points live only in memory.
+Three durability modes cover the spectrum:
+
+| Mode | Cost per write | Crash loses |
+|------|----------------|-------------|
+| Default | none | everything since the last `Sync`/`Close` |
+| `WithWAL(true)` | one small append + fsync | nothing (completed writes are replayed) |
+| `WithSyncOnWrite(true)` | full snapshot rewrite + fsync | nothing |
+
+```go
+db, err := veclite.Open("vectors.veclite", veclite.WithWAL(true))
+```
+
+With the WAL enabled, every completed mutation (inserts, updates, deletes,
+multi-space records, text documents, metadata, collection lifecycle,
+knowledge-graph and episode-store changes) is
+appended to `vectors.veclite.wal` before the call returns. On the next open —
+after a crash or `kill -9` — the log is replayed on top of the last snapshot,
+indexes (HNSW and BM25) are restored to match, and the recovered state is
+folded into a fresh snapshot. A clean `Sync()` or `Close()` truncates the log,
+so it stays small.
+
+Notes:
+
+- Opening a database **without** `WithWAL` still recovers and folds a log left
+  behind by a crashed WAL-enabled writer; nothing is lost by mixing modes.
+- Read-only opens (including `WithSharedRead`) replay the log in memory without
+  touching it, and `Reload()` re-applies it — so shared readers can observe a
+  live writer's not-yet-snapshotted writes.
+- Entries are CRC-checked; a torn append from a crash mid-write is discarded.
+- Read-path bookkeeping (access counts) is not logged; it persists on the
+  next full save.
 
 ### Collections
 
@@ -1700,6 +1739,10 @@ veclite mcp data.veclite
 
 ```bash
 veclite serve data.veclite --port=8080 --host=127.0.0.1 --cors
+
+# Long-running servers should enable the write-ahead log so accepted writes
+# survive a crash between syncs (see "Durability and the Write-Ahead Log").
+veclite serve data.veclite --wal
 ```
 
 ### Endpoints

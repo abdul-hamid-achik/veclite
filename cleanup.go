@@ -230,7 +230,11 @@ func (ml *MemoryLimiter) enforceLimit() int {
 		toEvict = ml.config.EvictionBatchSize
 	}
 
-	return ml.evict(toEvict)
+	evicted := ml.evict(toEvict)
+	if evicted > 0 {
+		ml.collection.syncIfNeeded()
+	}
+	return evicted
 }
 
 // evict removes n records according to the eviction policy.
@@ -298,6 +302,7 @@ func (ml *MemoryLimiter) evict(n int) int {
 		}
 
 		delete(ml.collection.records, r.ID)
+		ml.collection.markWALDeleteLocked(r.ID)
 		evicted++
 	}
 

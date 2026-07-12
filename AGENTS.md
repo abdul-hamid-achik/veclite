@@ -99,6 +99,26 @@ The `higherBetter` flag controls sort order and comparison logic throughout the 
 - Optional HNSW index (defaults to brute-force if not specified)
 - Metadata filtering on search
 
+### Durability and the Write-Ahead Log (WAL)
+- Persistence is snapshot-based: `Sync()`/`Close()` write the whole database atomically.
+- `WithWAL(true)` (file-backed writers only) appends each completed mutation's final record
+  state to `<db>.wal` — framed, CRC-checked, fsynced per batch. `veclite serve --wal` on the CLI.
+- Open replays a leftover log over the last snapshot (rebuilding HNSW/BM25 entries via the
+  normal mutation machinery), folds it into a fresh snapshot, and truncates. Opens **without**
+  the option still recover and remove a crashed WAL-writer's log; read-only opens replay in
+  memory without touching the file, and `Reload()` re-applies it.
+- Implementation: `internal/storage/wal.go` (format) + `wal.go` (dirty tracking, flush, replay).
+  Mutation paths mark touched IDs under `c.mu` (`markWALUpsertLocked`/`markWALDeleteLocked`);
+  `syncIfNeeded` drains marks into the log. **When adding a mutation path, add the mark** next
+  to the `c.records` map change (and `markWALConfigLocked` for config changes) — see the
+  existing call sites. `db.walMu` serializes appends against snapshot-save + truncate
+  (`syncLocked`); ordering is db.mu → walMu → c.mu.
+- Knowledge graphs and episode stores log their **full state** per mutation
+  (`walAppendGraph`/`walAppendEpisodeStore`, called from `kg.syncIfNeeded`/`es.syncIfNeeded`
+  with no graph/store lock held — the syncOnWrite path re-acquires those locks via the DB
+  snapshot, which is also why graph entity methods must not hold `kg.mu` across collection
+  writes). Not logged (persist on full save only): access-count bookkeeping.
+
 ### Named Vector Spaces
 - A collection has one implicit **`default`** space (backed by `Record.Vector` and the
   collection's primary dimension/distance/index) plus zero or more **named** spaces declared

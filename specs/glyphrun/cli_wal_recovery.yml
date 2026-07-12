@@ -1,0 +1,236 @@
+version: 1
+name: cli_wal_recovery
+
+metadata:
+  feature: wal-recovery
+  owner: core
+  priority: high
+  tags:
+    - wal
+    - crash-recovery
+    - http-server
+    - cli
+    - agent
+
+intent: |
+  Verify that `veclite serve <file> --wal` survives a hard crash: writes made
+  between snapshots are durable in the sidecar .wal file, and reopening with
+  --wal replays and folds the log into a fresh snapshot before serving reads
+  again. Also verify the WAL sidecar is truncated to its 16-byte header once
+  recovery folds it, so the log does not grow without bound across restarts.
+
+target:
+  cmd:
+    - "/bin/sh"
+    - "-c"
+    - |
+      set -eu
+
+      STATE_DIR=".glyphrun/tmp/wal"
+      DB="$STATE_DIR/db.veclite"
+      WAL="$DB.wal"
+      PORT=$((20000 + ($$ % 20000)))
+      ATTEMPT=0
+      while lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; do
+        PORT=$((PORT + 1))
+        ATTEMPT=$((ATTEMPT + 1))
+        if [ "$ATTEMPT" -ge 100 ]; then
+          echo "unable to allocate an isolated HTTP port" >&2
+          exit 1
+        fi
+      done
+      echo "$PORT" > "$STATE_DIR/server.port"
+
+      start_server() {
+        ./bin/veclite serve "$DB" --wal --port="$PORT" > "$STATE_DIR/server.log" 2>&1 &
+        SERVER_PID=$!
+        echo "$SERVER_PID" > "$STATE_DIR/server.pid"
+      }
+
+      wait_ready() {
+        READY=0
+        ATTEMPT=0
+        while [ "$ATTEMPT" -lt 200 ]; do
+          if curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+            READY=1
+            break
+          fi
+          if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+            cat "$STATE_DIR/server.log" >&2
+            exit 1
+          fi
+          ATTEMPT=$((ATTEMPT + 1))
+          sleep 0.05
+        done
+        if [ "$READY" -ne 1 ]; then
+          echo "VecLite server did not become ready" >&2
+          cat "$STATE_DIR/server.log" >&2
+          exit 1
+        fi
+      }
+
+      cleanup() {
+        if [ -f "$STATE_DIR/server.pid" ]; then
+          PID=$(cat "$STATE_DIR/server.pid")
+          if kill -0 "$PID" 2>/dev/null; then
+            kill "$PID" 2>/dev/null || true
+          fi
+          wait "$PID" 2>/dev/null || true
+        fi
+      }
+      trap cleanup EXIT
+      trap 'exit 0' HUP INT TERM
+
+      # --- first life: create data under --wal, then crash before any snapshot sync ---
+      start_server
+      wait_ready
+
+      curl -fsS -X POST "http://127.0.0.1:$PORT/collections" \
+        -H 'Content-Type: application/json' \
+        -d '{"name":"items","dimension":2}' | jq -e '.status == "created"' >/dev/null
+      echo "COLLECTION_CREATED"
+
+      curl -fsS -X POST "http://127.0.0.1:$PORT/collections/items/vectors" \
+        -H 'Content-Type: application/json' \
+        -d '{"vector":[1,0],"payload":{"label":"apple"}}' | jq -e '.status == "inserted"' >/dev/null
+      curl -fsS -X POST "http://127.0.0.1:$PORT/collections/items/vectors" \
+        -H 'Content-Type: application/json' \
+        -d '{"vector":[0,1],"payload":{"label":"banana"}}' | jq -e '.status == "inserted"' >/dev/null
+      echo "RECORDS_INSERTED"
+
+      # No /sync and no clean shutdown has happened yet, so no snapshot file
+      # should exist on disk: only the WAL sidecar carries the two inserts.
+      if [ -f "$DB" ]; then
+        echo "UNEXPECTED_SNAPSHOT_BEFORE_CRASH" >&2
+        exit 1
+      fi
+      WAL_BEFORE=$(wc -c < "$WAL" | tr -d ' ')
+      echo "$WAL_BEFORE" > "$STATE_DIR/wal_size_before"
+      if [ "$WAL_BEFORE" -le 16 ]; then
+        echo "WAL_DID_NOT_GROW $WAL_BEFORE" >&2
+        exit 1
+      fi
+      echo "WAL_HAS_ENTRIES $WAL_BEFORE"
+
+      # Simulate a hard crash: SIGKILL, no /sync, no graceful shutdown.
+      kill -9 "$SERVER_PID"
+      wait "$SERVER_PID" 2>/dev/null || true
+      rm -f "$STATE_DIR/server.pid"
+      echo "CRASH_SIMULATED"
+
+      # --- second life: reopening with --wal must fold the log and recover ---
+      start_server
+      wait_ready
+      echo "SERVER_RESTARTED"
+
+      WAL_AFTER=$(wc -c < "$WAL" | tr -d ' ')
+      echo "$WAL_AFTER" > "$STATE_DIR/wal_size_after"
+      echo "WAL_AFTER_RECOVERY $WAL_AFTER"
+
+      echo "SERVER_READY"
+      wait "$SERVER_PID" || true
+      exit 0
+  cwd: "."
+  timeoutMs: 30000
+
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: forbid
+
+preconditions:
+  commands:
+    - run: "go build -o ./bin/veclite ./cmd/veclite"
+      timeoutMs: 120000
+    - run: "rm -rf .glyphrun/tmp/wal && mkdir -p .glyphrun/tmp/wal"
+      timeoutMs: 5000
+
+steps:
+  - wait:
+      screen:
+        contains: "SERVER_READY"
+      timeoutMs: 30000
+  - snapshot: result
+
+outcomes:
+  - id: collection_created
+    description: the collection is created via the running --wal server
+    verify:
+      screen:
+        contains: "COLLECTION_CREATED"
+  - id: records_inserted
+    description: both records are inserted before the simulated crash
+    verify:
+      screen:
+        contains: "RECORDS_INSERTED"
+  - id: wal_grew_past_header_before_crash
+    description: the WAL sidecar holds logged entries (more than its 16-byte header) before the crash
+    verify:
+      command:
+        run: |
+          SIZE=$(cat .glyphrun/tmp/wal/wal_size_before)
+          [ "$SIZE" -gt 16 ]
+  - id: crash_simulated
+    description: the server is killed with SIGKILL, simulating a crash between syncs
+    verify:
+      screen:
+        contains: "CRASH_SIMULATED"
+  - id: server_restarted
+    description: reopening the same file with --wal succeeds and becomes ready again
+    verify:
+      screen:
+        contains: "SERVER_RESTARTED"
+  - id: recovery_folds_snapshot_to_disk
+    description: recovery on open folds the replayed WAL into a fresh on-disk snapshot
+    verify:
+      command:
+        run: "test -f .glyphrun/tmp/wal/db.veclite"
+  - id: wal_truncated_to_header_after_recovery
+    description: after a successful recovery fold, the WAL is reset to just its 16-byte header
+    verify:
+      command:
+        run: |
+          SIZE=$(wc -c < .glyphrun/tmp/wal/db.veclite.wal | tr -d ' ')
+          [ "$SIZE" -eq 16 ]
+  - id: collection_survived_recovery
+    description: the collection and its record count survive the crash and recovery
+    verify:
+      command:
+        run: |
+          PORT=$(cat .glyphrun/tmp/wal/server.port)
+          curl -fsS "http://127.0.0.1:$PORT/collections/items" | jq -e '.count == 2' >/dev/null
+  - id: both_records_survived
+    description: both inserted payloads are present after recovery, not just the record count
+    verify:
+      command:
+        run: |
+          PORT=$(cat .glyphrun/tmp/wal/server.port)
+          curl -fsS "http://127.0.0.1:$PORT/collections/items/vectors" | jq -e '(.records | map(.payload.label) | sort) == ["apple","banana"]' >/dev/null
+  - id: search_after_recovery_ranks_apple
+    description: the recovered index (not just raw records) answers a nearest-neighbor query correctly
+    verify:
+      command:
+        run: |
+          PORT=$(cat .glyphrun/tmp/wal/server.port)
+          curl -fsS -X POST "http://127.0.0.1:$PORT/collections/items/search" -H 'Content-Type: application/json' -d '{"query":[1,0],"top_k":1}' | jq -e '.results[0].payload.label == "apple"' >/dev/null
+  - id: cleanup_server
+    description: stop and reap the exact server process owned by this scenario
+    verify:
+      command:
+        run: |
+          PID=$(cat .glyphrun/tmp/wal/server.pid)
+          if kill -0 "$PID" 2>/dev/null; then
+            kill "$PID"
+          fi
+          ATTEMPT=0
+          while kill -0 "$PID" 2>/dev/null && [ "$ATTEMPT" -lt 100 ]; do
+            ATTEMPT=$((ATTEMPT + 1))
+            sleep 0.05
+          done
+          ! kill -0 "$PID" 2>/dev/null
+  - id: clean_exit
+    description: the lifecycle wrapper exits successfully after reaping its server, confirming the crash-then-restart script never hit its set -eu guards
+    verify:
+      process:
+        exitCode: 0

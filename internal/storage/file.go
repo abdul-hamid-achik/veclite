@@ -570,6 +570,9 @@ func (f *File) Delete() error {
 	if err := os.Remove(f.path + ".lock"); err != nil && !os.IsNotExist(err) {
 		errs = append(errs, err)
 	}
+	if err := os.Remove(WALPath(f.path)); err != nil && !os.IsNotExist(err) {
+		errs = append(errs, err)
+	}
 
 	if len(errs) > 0 {
 		return &Error{Op: "delete", Err: errors.Join(errs...)}
