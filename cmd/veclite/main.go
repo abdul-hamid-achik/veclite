@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/abdul-hamid-achik/veclite"
+	"github.com/abdul-hamid-achik/veclite/internal/storage"
 )
 
 var (
@@ -205,12 +206,18 @@ func cmdInfo(args []string) error {
 	defer func() { _ = db.Close() }()
 
 	stats := db.Stats()
+	walPresent, walSize, walPending := readWALStatus(path)
 
 	if *jsonOutput {
 		info := map[string]any{
 			"path":          path,
 			"collections":   stats.Collections,
 			"total_records": stats.TotalRecords,
+			"wal": map[string]any{
+				"present":         walPresent,
+				"size_bytes":      walSize,
+				"pending_entries": walPending,
+			},
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -221,7 +228,30 @@ func cmdInfo(args []string) error {
 	fmt.Printf("Database: %s\n", path)
 	fmt.Printf("Collections: %d\n", stats.Collections)
 	fmt.Printf("Total Records: %d\n", stats.TotalRecords)
+	if walPresent {
+		fmt.Printf("WAL: %d bytes, %d pending entries\n", walSize, walPending)
+	} else {
+		fmt.Println("WAL: none")
+	}
 	return nil
+}
+
+// readWALStatus reports the WAL sidecar's on-disk presence, size, and pending
+// entry count for dbPath without acquiring any lock or modifying the file:
+// os.Stat and storage.ReadWALEntries both open the .wal file read-only and
+// leave it untouched (a torn tail is tolerated, not truncated). A stat error
+// reports "no WAL"; a file that exists but cannot be scanned (e.g. foreign or
+// corrupt contents) still reports present with its size and zero pending
+// entries, so info never fails just because a diagnostic couldn't fully read
+// a concurrently-written log.
+func readWALStatus(dbPath string) (present bool, sizeBytes int64, pendingEntries int) {
+	walPath := storage.WALPath(dbPath)
+	fi, err := os.Stat(walPath)
+	if err != nil {
+		return false, 0, 0
+	}
+	entries, _ := storage.ReadWALEntries(walPath)
+	return true, fi.Size(), len(entries)
 }
 
 func cmdCollections(args []string) error {

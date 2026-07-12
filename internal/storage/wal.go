@@ -9,6 +9,7 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
+	"sync/atomic"
 )
 
 // The write-ahead log (WAL) is an append-only sidecar file (dbpath + ".wal")
@@ -85,6 +86,10 @@ func WALPath(dbPath string) string {
 type WAL struct {
 	path string
 	f    *os.File
+	// size tracks the current file size. Writes happen under the owner's
+	// append/reset serialization; reads may come from any goroutine (e.g.
+	// checkpoint threshold checks), hence atomic.
+	size atomic.Int64
 }
 
 // OpenWAL opens (creating if needed) the WAL at path, scans it, and returns
@@ -114,7 +119,9 @@ func OpenWAL(path string) (*WAL, []WALEntry, error) {
 			_ = f.Close()
 			return nil, nil, err
 		}
-		return &WAL{path: path, f: f}, nil, nil
+		w := &WAL{path: path, f: f}
+		w.size.Store(walHeaderSize)
+		return w, nil, nil
 	}
 
 	if err := validateWALHeader(f); err != nil {
@@ -140,7 +147,9 @@ func OpenWAL(path string) (*WAL, []WALEntry, error) {
 		return nil, nil, &Error{Op: "seek wal", Err: err}
 	}
 
-	return &WAL{path: path, f: f}, entries, nil
+	w := &WAL{path: path, f: f}
+	w.size.Store(validEnd)
+	return w, entries, nil
 }
 
 // ReadWALEntries scans the WAL at path without modifying it and returns the
@@ -268,7 +277,12 @@ func (w *WAL) Append(entries []WALEntry) error {
 		batch.Write(payload.Bytes())
 	}
 
-	if _, err := w.f.Write(batch.Bytes()); err != nil {
+	n, err := w.f.Write(batch.Bytes())
+	// Count bytes that reached the file even on a short write, so the size
+	// used for checkpoint decisions tracks the real file. A torn tail from a
+	// failed append is discarded (and the counter recomputed) at next open.
+	w.size.Add(int64(n))
+	if err != nil {
 		return &Error{Op: "append wal", Err: err}
 	}
 	if err := w.f.Sync(); err != nil {
@@ -283,6 +297,10 @@ func (w *WAL) Reset() error {
 	if err := w.f.Truncate(walHeaderSize); err != nil {
 		return &Error{Op: "reset wal", Err: err}
 	}
+	// The file is logically header-sized from here on; update the counter
+	// before the fallible seek/sync steps so a later error can't leave a
+	// stale-high size driving spurious checkpoints.
+	w.size.Store(walHeaderSize)
 	if _, err := w.f.Seek(walHeaderSize, io.SeekStart); err != nil {
 		return &Error{Op: "seek wal", Err: err}
 	}
@@ -290,6 +308,12 @@ func (w *WAL) Reset() error {
 		return &Error{Op: "fsync wal", Err: err}
 	}
 	return nil
+}
+
+// Size returns the current log file size in bytes (header included).
+// Safe to call from any goroutine.
+func (w *WAL) Size() int64 {
+	return w.size.Load()
 }
 
 // Path returns the WAL file path.

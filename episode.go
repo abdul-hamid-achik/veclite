@@ -117,6 +117,7 @@ func (es *EpisodeStore) syncIfNeeded() {
 		return
 	}
 	db.walAppendEpisodeStore(coll.name, es)
+	db.maybeCheckpointWAL()
 }
 
 func (db *DB) GetEpisodeStore(name string) (*EpisodeStore, error) {

@@ -987,3 +987,128 @@ func TestWALReplayDimensionMismatchKeepsOldRecord(t *testing.T) {
 		t.Fatalf("record corrupted by bad replay entry: %+v", rec.Payload)
 	}
 }
+
+func TestWALAutoCheckpoint(t *testing.T) {
+	path := walTestPath(t)
+
+	// Tiny threshold so a handful of inserts crosses it.
+	db, err := Open(path, WithWAL(true), WithWALCheckpoint(4096))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	coll := db.Collection("c")
+
+	big := make([]float32, 256) // ~1KB of vector per record
+	for i := range big {
+		big[i] = float32(i)
+	}
+	const n = 20
+	for i := 0; i < n; i++ {
+		if _, err := coll.Insert(big, map[string]any{"i": i}); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	// The threshold was crossed several times over; the log must have been
+	// folded into a snapshot without any explicit Sync.
+	walInfo, err := os.Stat(storage.WALPath(path))
+	if err != nil {
+		t.Fatalf("stat wal: %v", err)
+	}
+	if walInfo.Size() >= 4096+2048 {
+		t.Fatalf("wal size = %d, checkpoint never triggered", walInfo.Size())
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("checkpoint did not write a snapshot: %v", err)
+	}
+
+	// Crash: everything must come back from snapshot + residual log.
+	crashDB(t, db)
+	db2, err := Open(path, WithWAL(true))
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer func() { _ = db2.Close() }()
+	coll2, err := db2.GetCollection("c")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if coll2.Count() != n {
+		t.Fatalf("count after crash = %d, want %d", coll2.Count(), n)
+	}
+}
+
+func TestWALCheckpointDisabled(t *testing.T) {
+	path := walTestPath(t)
+
+	db, err := Open(path, WithWAL(true), WithWALCheckpoint(0))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	coll := db.Collection("c")
+
+	big := make([]float32, 256)
+	for i := 0; i < 20; i++ {
+		if _, err := coll.Insert(big, map[string]any{"i": i}); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	// No automatic fold: the log holds everything, no snapshot exists yet.
+	walInfo, err := os.Stat(storage.WALPath(path))
+	if err != nil {
+		t.Fatalf("stat wal: %v", err)
+	}
+	if walInfo.Size() < 4096 {
+		t.Fatalf("wal unexpectedly small (%d bytes) — was it checkpointed?", walInfo.Size())
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("snapshot written despite disabled checkpoint (err=%v)", err)
+	}
+}
+
+func TestWALAutoCheckpointConcurrent(t *testing.T) {
+	path := walTestPath(t)
+
+	db, err := Open(path, WithWAL(true), WithWALCheckpoint(2048))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	coll, err := db.CreateCollection("c", WithDimension(64))
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	vec := make([]float32, 64)
+	const goroutines = 6
+	const perGoroutine = 30
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < perGoroutine; i++ {
+				if _, err := coll.Insert(vec, map[string]any{"g": g, "i": i}); err != nil {
+					t.Errorf("insert: %v", err)
+					return
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+	crashDB(t, db)
+
+	db2, err := Open(path, WithWAL(true))
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer func() { _ = db2.Close() }()
+	coll2, err := db2.GetCollection("c")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got := coll2.Count(); got != goroutines*perGoroutine {
+		t.Fatalf("count = %d, want %d", got, goroutines*perGoroutine)
+	}
+}

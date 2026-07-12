@@ -175,6 +175,7 @@ func (c *Collection) syncIfNeeded() {
 		return
 	}
 	c.flushWAL()
+	c.db.maybeCheckpointWAL()
 }
 
 func (c *Collection) reindexRecordLocked(record *Record) {

@@ -191,6 +191,7 @@ func (kg *KnowledgeGraph) syncIfNeeded() {
 		return
 	}
 	db.walAppendGraph(kg)
+	db.maybeCheckpointWAL()
 }
 
 // Name returns the name of the knowledge graph.

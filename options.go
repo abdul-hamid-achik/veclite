@@ -25,13 +25,18 @@ type Option interface {
 	apply(*dbConfig)
 }
 
+// DefaultWALCheckpointBytes is the WAL size at which a WAL-enabled database
+// automatically folds the log into a fresh snapshot (see WithWALCheckpoint).
+const DefaultWALCheckpointBytes int64 = 64 << 20 // 64 MiB
+
 // dbConfig holds database configuration.
 type dbConfig struct {
-	syncOnWrite bool
-	readOnly    bool
-	sharedRead  bool
-	wal         bool
-	logger      Logger
+	syncOnWrite   bool
+	readOnly      bool
+	sharedRead    bool
+	wal           bool
+	walCheckpoint int64
+	logger        Logger
 }
 
 // HNSWConfig holds HNSW index configuration.
@@ -40,9 +45,10 @@ type HNSWConfig = storage.HNSWConfig
 // defaultDBConfig returns the default database configuration.
 func defaultDBConfig() *dbConfig {
 	return &dbConfig{
-		syncOnWrite: false,
-		readOnly:    false,
-		sharedRead:  false,
+		syncOnWrite:   false,
+		readOnly:      false,
+		sharedRead:    false,
+		walCheckpoint: DefaultWALCheckpointBytes,
 	}
 }
 
@@ -79,6 +85,21 @@ func WithSyncOnWrite(enabled bool) Option {
 func WithWAL(enabled bool) Option {
 	return dbOptionFunc(func(c *dbConfig) {
 		c.wal = enabled
+	})
+}
+
+// WithWALCheckpoint sets the log size (in bytes) at which a WAL-enabled
+// database automatically folds the log into a fresh snapshot and truncates
+// it, bounding log growth for long-running writers that rarely call Sync.
+// The default is DefaultWALCheckpointBytes (64 MiB). Pass 0 to disable
+// automatic checkpointing (the log then grows until an explicit Sync or
+// Close). Has no effect without WithWAL.
+func WithWALCheckpoint(bytes int64) Option {
+	return dbOptionFunc(func(c *dbConfig) {
+		if bytes < 0 {
+			bytes = 0
+		}
+		c.walCheckpoint = bytes
 	})
 }
 

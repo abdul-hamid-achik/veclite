@@ -204,6 +204,7 @@ defer db.Close()
 | DB Option | Description |
 |-----------|-------------|
 | `WithWAL(bool)` | Write-ahead log. Each write appends the affected records to a `*.wal` sidecar with one fsync, so writes survive a crash between snapshot saves at a fraction of `WithSyncOnWrite`'s cost. See [Durability and the WAL](#durability-and-the-write-ahead-log). |
+| `WithWALCheckpoint(bytes)` | Log size at which the WAL is automatically folded into a snapshot and truncated (default 64 MiB). 0 disables auto-checkpointing. |
 | `WithSyncOnWrite(bool)` | Full snapshot save after each write. Slowest, maximally conservative durability. |
 | `WithReadOnly(bool)` | Open in read-only mode. Write operations return errors. |
 | `WithSharedRead(bool)` | Open read-only **lock-free** (no flock). Requires `WithReadOnly(true)`. A long-lived reader never blocks a writer and is never blocked by one; readers see a point-in-time snapshot, so call `db.Reload()` to pick up concurrent writes. Consistency is guaranteed by the writer's atomic-replace save. |
@@ -232,7 +233,9 @@ appended to `vectors.veclite.wal` before the call returns. On the next open —
 after a crash or `kill -9` — the log is replayed on top of the last snapshot,
 indexes (HNSW and BM25) are restored to match, and the recovered state is
 folded into a fresh snapshot. A clean `Sync()` or `Close()` truncates the log,
-so it stays small.
+and long-running writers that never call `Sync` are covered by automatic
+checkpointing: once the log exceeds `WithWALCheckpoint` bytes (default
+64 MiB), it is folded into a snapshot and truncated on the spot.
 
 Notes:
 
@@ -1618,7 +1621,7 @@ veclite <command> [arguments]
 | Command | Description |
 |---------|-------------|
 | `version` | Show version information |
-| `info <file>` | Show database summary |
+| `info <file>` | Show database summary, including WAL sidecar status |
 | `collections <file>` | List all collections |
 | `stats <file>` | Show detailed statistics |
 | `dump <file>` | Export database as JSON |

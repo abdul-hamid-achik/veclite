@@ -118,6 +118,10 @@ The `higherBetter` flag controls sort order and comparison logic throughout the 
   with no graph/store lock held — the syncOnWrite path re-acquires those locks via the DB
   snapshot, which is also why graph entity methods must not hold `kg.mu` across collection
   writes). Not logged (persist on full save only): access-count bookkeeping.
+- Auto-checkpoint: `db.maybeCheckpointWAL` (called from the three syncIfNeeded helpers, always
+  lock-free contexts) folds the log into a snapshot past `WithWALCheckpoint` bytes (default
+  64 MiB, 0 disables); a CAS gate prevents concurrent stampedes. Never call it while holding
+  any lock — it runs a full `db.Sync()`.
 
 ### Named Vector Spaces
 - A collection has one implicit **`default`** space (backed by `Record.Vector` and the

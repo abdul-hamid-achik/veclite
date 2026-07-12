@@ -1,6 +1,7 @@
 package veclite
 
 import (
+	"errors"
 	"os"
 
 	"github.com/abdul-hamid-achik/veclite/internal/floats"
@@ -601,6 +602,31 @@ func (db *DB) walAppendEpisodeStore(name string, es *EpisodeStore) {
 	entry := storage.WALEntry{Op: storage.WALOpEpisodeStore, Collection: name, Episodes: es.snapshot()}
 	if err := db.wal.Append([]storage.WALEntry{entry}); err != nil {
 		db.logger.Error("veclite: WAL append failed; changes reach disk on next Sync/Close", "error", err)
+	}
+}
+
+// maybeCheckpointWAL folds the log into a fresh snapshot when it has grown
+// past the configured threshold, bounding log size for long-running writers
+// that never call Sync explicitly. It must be called with NO locks held
+// (Sync acquires db.mu → walMu → c.mu/kg.mu/es.mu); the syncIfNeeded
+// helpers call it after their flush, all from lock-free contexts. A CAS
+// gate keeps concurrent writers from stampeding into redundant full saves.
+func (db *DB) maybeCheckpointWAL() {
+	limit := db.config.walCheckpoint
+	if limit <= 0 || !db.walActive() || db.wal.Size() < limit {
+		return
+	}
+	if !db.walCheckpointing.CompareAndSwap(false, true) {
+		return
+	}
+	defer db.walCheckpointing.Store(false)
+
+	// Re-check under the gate: a Sync that just completed may have truncated.
+	if db.wal.Size() < limit {
+		return
+	}
+	if err := db.Sync(); err != nil && !errors.Is(err, ErrDatabaseClosed) {
+		db.logger.Error("veclite: WAL checkpoint failed; log keeps growing until next successful Sync/Close", "error", err)
 	}
 }
 

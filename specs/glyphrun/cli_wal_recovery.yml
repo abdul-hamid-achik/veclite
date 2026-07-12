@@ -193,6 +193,12 @@ outcomes:
         run: |
           SIZE=$(wc -c < .glyphrun/tmp/wal/db.veclite.wal | tr -d ' ')
           [ "$SIZE" -eq 16 ]
+  - id: info_reports_folded_wal
+    description: "`veclite info` on the recovered database reports the folded WAL sidecar: present, 16-byte header only, zero pending entries"
+    verify:
+      command:
+        run: |
+          ./bin/veclite info .glyphrun/tmp/wal/db.veclite --json | jq -e '.wal.present == true and .wal.size_bytes == 16 and .wal.pending_entries == 0' >/dev/null
   - id: collection_survived_recovery
     description: the collection and its record count survive the crash and recovery
     verify:

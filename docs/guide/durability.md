@@ -49,6 +49,25 @@ On the next `Open` after a crash:
 A clean `Sync()` or `Close()` also truncates the log, so it only ever holds
 the writes made since the last snapshot.
 
+## Automatic checkpointing
+
+A long-running writer (like `veclite serve --wal`) might never call `Sync()`
+explicitly. To keep the log from growing without bound, the database
+automatically folds it into a fresh snapshot once it exceeds a size
+threshold — `WithWALCheckpoint(bytes)`, default 64 MiB:
+
+```go
+db, err := veclite.Open("vectors.veclite",
+    veclite.WithWAL(true),
+    veclite.WithWALCheckpoint(16<<20), // checkpoint at 16 MiB
+)
+```
+
+Pass `0` to disable automatic checkpointing; the log then grows until an
+explicit `Sync()` or `Close()`. The checkpoint runs synchronously on the
+write that crosses the threshold (that one write pays a full-snapshot save,
+like a single `Sync()`).
+
 The log is a *redo log of final record states*: replaying an entry that is
 already reflected in the snapshot is a no-op, so recovery is idempotent even
 if a previous recovery was interrupted.

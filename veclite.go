@@ -62,6 +62,9 @@ type DB struct {
 	wal   *storage.WAL
 	walOn atomic.Bool
 	walMu sync.Mutex
+	// walCheckpointing gates automatic WAL checkpoints so concurrent writers
+	// don't stampede into redundant full-snapshot saves.
+	walCheckpointing atomic.Bool
 }
 
 // Open opens or creates a VecLite database at the given path.
