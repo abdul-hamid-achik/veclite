@@ -27,7 +27,7 @@ import (
 )
 
 // Version is the library version.
-const Version = "0.23.1"
+const Version = "0.24.0"
 
 // DB represents a VecLite database.
 type DB struct {
