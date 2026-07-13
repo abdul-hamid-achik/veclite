@@ -1,3 +1,7 @@
+---
+description: "The VecLite Go client package connects to a running veclite serve HTTP server, mirroring the embedded library API for single-process and multi-process access."
+---
+
 # Go Client
 
 The `client` package provides a thin Go client for a running `veclite serve` HTTP server.

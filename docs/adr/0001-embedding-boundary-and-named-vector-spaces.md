@@ -1,3 +1,7 @@
+---
+description: "ADR-0001: VecLite's embedding boundary and named vector spaces design decision — what VecLite owns vs what applications own, and the additive multimodal API."
+---
+
 # ADR-0001: Embedding Boundary and Named Vector Spaces
 
 ## Status

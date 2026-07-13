@@ -1,3 +1,7 @@
+---
+description: "VecLite durability: single-file snapshots, write-ahead log (WAL) with per-batch fsync, crash recovery, auto-checkpointing, and multi-process shared reads."
+---
+
 # Durability and the Write-Ahead Log
 
 VecLite persists the whole database as a single snapshot file, written

@@ -1,3 +1,7 @@
+---
+description: "Learn how to use VecLite collections — records, vectors, text content, metadata, HNSW indexes, distance metrics, and BM25 text indexing."
+---
+
 # Using VecLite
 
 VecLite stores records in collections. Each record can hold a vector, text content, and payload metadata. Collections define the vector dimension, distance metric, optional HNSW index, optional embedder, and optional BM25 text index fields.

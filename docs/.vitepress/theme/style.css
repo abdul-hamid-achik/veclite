@@ -1,0 +1,434 @@
+/* VecLite custom theme — deep violet, derived from the logo gradient */
+
+:root {
+  --vl-bg: #0b0817;
+  --vl-surface: #16122a;
+  --vl-surface-2: #1e1838;
+  --vl-border: #2d2654;
+  --vl-primary: #7c3aed;
+  --vl-primary-light: #a855f7;
+  --vl-indigo: #6366f1;
+  --vl-text: #f5f3ff;
+  --vl-text-2: #c4b5fd;
+  --vl-text-muted: #8b85a8;
+  --vl-radius: 16px;
+  --vl-radius-sm: 10px;
+  --vl-max-w: 1120px;
+}
+
+/* ---------- Landing page wrapper ---------- */
+.vl-page {
+  background: var(--vl-bg);
+  color: var(--vl-text);
+  overflow-x: hidden;
+  position: relative;
+}
+
+.vl-page * {
+  box-sizing: border-box;
+}
+
+/* Grid pattern overlay on the entire page */
+.vl-page::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(124, 58, 237, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124, 58, 237, 0.03) 1px, transparent 1px);
+  background-size: 48px 48px;
+  pointer-events: none;
+  z-index: 0;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 30%, black 30%, transparent 80%);
+}
+
+.vl-section {
+  padding: 96px 24px;
+  position: relative;
+  z-index: 1;
+}
+
+.vl-section--tight {
+  padding: 56px 24px;
+}
+
+.vl-inner {
+  max-width: var(--vl-max-w);
+  margin: 0 auto;
+}
+
+/* ---------- Eyebrow label ---------- */
+.vl-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--vl-primary-light);
+  margin-bottom: 16px;
+}
+
+.vl-eyebrow::before {
+  content: "";
+  width: 24px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--vl-primary));
+}
+
+/* ---------- Section headings ---------- */
+.vl-h2 {
+  font-size: clamp(28px, 4vw, 42px);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--vl-text);
+  margin: 0 0 16px;
+}
+
+.vl-sub {
+  font-size: 18px;
+  line-height: 1.6;
+  color: var(--vl-text-2);
+  max-width: 640px;
+  margin: 0 0 48px;
+}
+
+.vl-center {
+  text-align: center;
+}
+
+.vl-center .vl-sub {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ---------- Animated gradient text ---------- */
+.vl-gradient-text {
+  background: linear-gradient(135deg, #818cf8, #a855f7 50%, #c084fc);
+  background-size: 200% 200%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: gradientShift 6s ease-in-out infinite;
+}
+
+@keyframes gradientShift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+/* ---------- Buttons ---------- */
+.vl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 24px;
+  border-radius: var(--vl-radius-sm);
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: none !important;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.vl-btn:hover {
+  transform: translateY(-2px);
+}
+
+.vl-btn--primary {
+  background: linear-gradient(135deg, var(--vl-indigo), var(--vl-primary));
+  color: #fff;
+  box-shadow: 0 4px 24px -4px rgba(124, 58, 237, 0.5);
+}
+
+.vl-btn--primary::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  transition: left 0.6s ease;
+}
+
+.vl-btn--primary:hover {
+  box-shadow: 0 8px 32px -4px rgba(124, 58, 237, 0.7);
+}
+
+.vl-btn--primary:hover::after {
+  left: 100%;
+}
+
+.vl-btn--ghost {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--vl-text);
+  border: 1px solid var(--vl-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.vl-btn--ghost:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--vl-primary);
+  box-shadow: 0 0 24px -8px rgba(124, 58, 237, 0.4);
+}
+
+/* ---------- Ambient glow ---------- */
+.vl-glow {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.2;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.vl-glow--violet { background: var(--vl-primary); }
+.vl-glow--indigo { background: var(--vl-indigo); }
+
+/* ---------- Glass card ---------- */
+.vl-card {
+  background: rgba(22, 18, 42, 0.6);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--vl-border);
+  border-radius: var(--vl-radius);
+  padding: 28px;
+  transition: border-color 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Gradient border glow on hover */
+.vl-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--vl-radius);
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.4), rgba(168, 85, 247, 0.4), transparent);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+}
+
+.vl-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 12px 40px -8px rgba(124, 58, 237, 0.25);
+}
+
+.vl-card:hover::before {
+  opacity: 1;
+}
+
+.vl-card__icon {
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(168, 85, 247, 0.15));
+  border: 1px solid rgba(168, 85, 247, 0.2);
+  margin-bottom: 18px;
+  font-size: 24px;
+  transition: transform 0.3s ease;
+}
+
+.vl-card:hover .vl-card__icon {
+  transform: scale(1.1) rotate(-5deg);
+}
+
+.vl-card__title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--vl-text);
+  margin: 0 0 8px;
+}
+
+.vl-card__body {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--vl-text-2);
+  margin: 0;
+}
+
+/* ---------- Code block ---------- */
+.vl-code {
+  background: #0d0a1e;
+  border: 1px solid var(--vl-border);
+  border-radius: var(--vl-radius);
+  overflow: hidden;
+  position: relative;
+}
+
+.vl-code::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(168, 85, 247, 0.4), transparent);
+}
+
+.vl-code__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--vl-border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.vl-code__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.vl-code__dot--red { background: #ff5f57; }
+.vl-code__dot--yellow { background: #febc2e; }
+.vl-code__dot--green { background: #28c840; }
+
+.vl-code__filename {
+  font-size: 13px;
+  color: var(--vl-text-muted);
+  margin-left: 8px;
+  font-family: var(--vt-font-family-mono);
+}
+
+.vl-code pre {
+  margin: 0;
+  padding: 20px 24px;
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-x: auto;
+}
+
+.vl-code code {
+  font-family: var(--vt-font-family-mono);
+}
+
+/* ---------- Tag pill ---------- */
+.vl-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 14px;
+  border-radius: 100px;
+  font-size: 13px;
+  font-weight: 600;
+  background: rgba(168, 85, 247, 0.1);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  color: var(--vl-primary-light);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* ---------- Scroll reveal ---------- */
+.vl-reveal {
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+
+.vl-reveal--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ---------- Marquee ---------- */
+.vl-marquee {
+  overflow: hidden;
+  position: relative;
+  -webkit-mask-image: linear-gradient(90deg, transparent, black 10%, black 90%, transparent);
+  mask-image: linear-gradient(90deg, transparent, black 10%, black 90%, transparent);
+}
+
+.vl-marquee__track {
+  display: flex;
+  gap: 16px;
+  animation: marquee 30s linear infinite;
+  width: max-content;
+}
+
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+.vl-marquee__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px;
+  border-radius: 100px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--vl-text-2);
+  background: rgba(22, 18, 42, 0.6);
+  border: 1px solid var(--vl-border);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ---------- Glass panel ---------- */
+.vl-glass {
+  background: rgba(22, 18, 42, 0.5);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--vl-border);
+  border-radius: var(--vl-radius);
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 768px) {
+  .vl-section {
+    padding: 64px 20px;
+  }
+  .vl-h2 {
+    font-size: 26px;
+  }
+  .vl-sub {
+    font-size: 16px;
+  }
+}
+
+/* ---------- Reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .vl-gradient-text {
+    animation: none;
+  }
+  .vl-btn,
+  .vl-card,
+  .vl-card__icon {
+    transition: none;
+  }
+  .vl-btn:hover {
+    transform: none;
+  }
+  .vl-card:hover {
+    transform: none;
+  }
+  .vl-marquee__track {
+    animation: none;
+  }
+  .vl-reveal {
+    opacity: 1;
+    transform: none;
+  }
+  .vl-btn--primary::after {
+    display: none;
+  }
+}

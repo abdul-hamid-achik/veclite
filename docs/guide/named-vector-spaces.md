@@ -1,3 +1,7 @@
+---
+description: "Named vector spaces in VecLite let one record carry multiple embeddings — text, image, audio — each with its own dimension, distance metric, and HNSW index."
+---
+
 # Named Vector Spaces
 
 Named vector spaces let a single logical record carry **several embeddings at once** — for

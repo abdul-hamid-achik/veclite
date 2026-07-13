@@ -1,3 +1,7 @@
+---
+description: "VecLite project status: current release, implementation boundary, related projects (vecgrep, vidtrace), and remaining work on language drivers."
+---
+
 # Project Status
 
 This page records the current implementation state and the next work that matters for VecLite as a shared Go library.

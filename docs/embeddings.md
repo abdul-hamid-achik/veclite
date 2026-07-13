@@ -1,3 +1,7 @@
+---
+description: "VecLite embedding strategy: the app/library boundary, embedding profiles, named vector spaces for multimodal records, BM25 text search, and hybrid ranking."
+---
+
 # Embeddings and Vector Spaces
 
 VecLite stores vectors, text content, and metadata. It does not need to own the full embedding pipeline for every application.
