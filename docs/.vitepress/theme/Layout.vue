@@ -70,6 +70,16 @@ body.vl-home .VPCarbonAds {
 }
 
 /* ---- 3. Kill has-sidebar / has-aside effects ---- */
+/* The logo .title is position:absolute when has-sidebar, which makes it float
+   over the search bar. Make it static so it participates in the flex layout
+   and naturally pushes the search + menu to the right. */
+body.vl-home .VPNavBar.has-sidebar .title {
+  position: static !important;
+  width: auto !important;
+  flex-shrink: 0;
+  padding-right: 16px;
+}
+
 body.vl-home .VPNavBar.has-sidebar .content {
   padding-left: 0 !important;
 }
