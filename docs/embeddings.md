@@ -6,7 +6,10 @@ description: "VecLite embedding strategy: the app/library boundary, embedding pr
 
 VecLite stores vectors, text content, and metadata. It does not need to own the full embedding pipeline for every application.
 
-Use VecLite from Go when you want a local vector database with single-file persistence, HNSW search, BM25 text search, metadata filters, and hybrid ranking. Let your application decide how to split content, which embedding provider to call, and when an index should be rebuilt.
+Use VecLite from Go when you want a local vector database with a portable snapshot, HNSW search,
+BM25 text search, metadata filters, and hybrid ranking. Writers may also create lock and WAL
+sidecars. Let your application decide how to split content, which embedding provider to call, and
+when an index should be rebuilt.
 
 ## Install
 

@@ -1,80 +1,130 @@
 <script setup lang="ts">
-const stats = [
-  { value: "6×", label: "Faster search with HNSW" },
-  { value: ">95%", label: "Recall vs brute force" },
-  { value: "1 file", label: "Single-file persistence" },
-  { value: "0", label: "External deps for core" },
+import ProductIcon from "./ProductIcon.vue";
+
+const proof = [
+  {
+    icon: "database",
+    value: "Portable snapshot",
+    label: "One database file to move, inspect, and back up",
+  },
+  {
+    icon: "search",
+    value: "HNSW + BM25",
+    label: "Semantic and exact retrieval in one collection",
+  },
+  {
+    icon: "layers",
+    value: "Four access paths",
+    label: "Embedded Go, CLI, HTTP, and MCP",
+  },
+  {
+    icon: "shield",
+    value: "WAL recovery",
+    label: "Optional crash-safe writes with automatic replay",
+  },
 ];
 </script>
 
 <template>
-  <section class="stats vl-section--tight">
-    <div class="vl-inner">
-      <div class="stats__grid">
-        <div v-for="(s, i) in stats" :key="s.label" class="stats__item" :style="{ transitionDelay: `${i * 80}ms` }">
-          <span class="stats__value vl-gradient-text">{{ s.value }}</span>
-          <span class="stats__label">{{ s.label }}</span>
-        </div>
+  <section class="proof vl-section--tight" aria-label="Core product characteristics">
+    <div class="vl-inner proof__grid">
+      <div v-for="item in proof" :key="item.value" class="proof__item">
+        <ProductIcon :name="item.icon" :size="18" />
+        <span>
+          <strong>{{ item.value }}</strong>
+          <small>{{ item.label }}</small>
+        </span>
       </div>
     </div>
   </section>
 </template>
 
 <style scoped>
-.stats {
+.proof {
+  background: var(--vl-bg-raised);
   border-top: 1px solid var(--vl-border);
   border-bottom: 1px solid var(--vl-border);
-  background: rgba(22, 18, 42, 0.3);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 
-.stats__grid {
+.proof__grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 24px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.stats__item {
-  text-align: center;
-  padding: 16px 0;
-  position: relative;
+.proof__item {
+  min-width: 0;
+  padding: 4px 24px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 13px;
+  border-right: 1px solid var(--vl-border);
 }
 
-/* divider between items */
-.stats__item:not(:last-child)::after {
-  content: "";
-  position: absolute;
-  right: 0;
-  top: 25%;
-  height: 50%;
-  width: 1px;
-  background: var(--vl-border);
+.proof__item:first-child {
+  padding-left: 0;
 }
 
-.stats__value {
-  display: block;
-  font-size: clamp(28px, 4vw, 42px);
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
+.proof__item:last-child {
+  padding-right: 0;
+  border-right: 0;
 }
 
-.stats__label {
-  display: block;
-  margin-top: 8px;
-  font-size: 14px;
+.proof__item svg {
+  color: var(--vl-accent-soft);
+}
+
+.proof__item span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.proof__item strong {
+  color: var(--vl-text);
+  font-size: 13px;
+  font-weight: 680;
+}
+
+.proof__item small {
   color: var(--vl-text-muted);
-  line-height: 1.4;
+  font-size: 10px;
+  line-height: 1.45;
 }
 
-@media (max-width: 768px) {
-  .stats__grid {
-    grid-template-columns: repeat(2, 1fr);
-    gap: 32px 16px;
+@media (max-width: 900px) {
+  .proof__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 22px 0;
   }
-  .stats__item:nth-child(2)::after {
-    display: none;
+
+  .proof__item:nth-child(2) {
+    padding-right: 0;
+    border-right: 0;
+  }
+
+  .proof__item:nth-child(3) {
+    padding-left: 0;
+  }
+}
+
+@media (max-width: 540px) {
+  .proof__grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .proof__item,
+  .proof__item:first-child,
+  .proof__item:nth-child(3),
+  .proof__item:last-child {
+    padding: 15px 0;
+    border-right: 0;
+    border-bottom: 1px solid var(--vl-border);
+  }
+
+  .proof__item:last-child {
+    border-bottom: 0;
   }
 }
 </style>

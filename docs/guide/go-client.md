@@ -1,142 +1,145 @@
 ---
-description: "The VecLite Go client package connects to a running veclite serve HTTP server, mirroring the embedded library API for single-process and multi-process access."
+title: Go HTTP Client
+description: "Use VecLite's Go HTTP client for basic vector operations when one veclite serve process owns the database file."
 ---
 
-# Go Client
+# Go HTTP Client
 
-The `client` package provides a thin Go client for a running `veclite serve` HTTP server.
-It mirrors the embedded [veclite](https://pkg.go.dev/github.com/abdul-hamid-achik/veclite)
-library's API surface so that Go consumers can swap between embedding the library directly
-(single-process) and talking to a remote server (multi-process) with minimal code change.
+The `client` package is a thin Go client for a running `veclite serve` process. Use it when several processes need to write to one database and you want the server to be the single file owner.
 
-## When to use the client
+The client covers the basic collection, vector, payload, filter, and maintenance surface. It is not a drop-in replacement for every embedded-library feature.
 
-| Scenario | Use |
-|----------|-----|
-| Single process, file-based | `veclite.Open(path)` (embedded library) |
-| Multi-process read-only | `veclite.Open(path, WithReadOnly(true), WithSharedRead(true))` |
-| Multi-process with writes | `veclite serve` + `client.Open(url)` |
+::: warning Current scope
+The client does not currently expose document insertion, BM25 or hybrid search, named vector spaces, embedding profiles, or agent-memory APIs. `client.WithTextIndex` exists but is not transmitted by `CreateCollection`; do not rely on it. Use the embedded library, CLI, or raw HTTP endpoints for capabilities outside the subset below.
+:::
 
-Read-only opens (`WithSharedRead(true)`) are **lock-free** — they take no flock,
-so multiple reader processes never block each other or a writer, and a writer's
-exclusive lock never blocks a read-only open. Readers see a point-in-time
-snapshot and call `db.Reload()` to pick up concurrent writes. Use the client
-only when multiple processes need to **write**.
+## Choose the Client or Embedded Library
 
-The client is the recommended approach when multiple processes need to **write** to the
-same database. One process runs `veclite serve` (owns the exclusive file lock), and all
-other processes use the Go client to talk to it over HTTP.
+| Scenario | Recommended access |
+|---|---|
+| One process reads and writes | `veclite.Open(path)` |
+| Several processes only read | `veclite.Open(path, WithReadOnly(true), WithSharedRead(true))` |
+| Several processes write | `veclite serve` plus `client.Open(url)` |
 
-## Installation
+Shared read-only opens do not take a file lock. They see a point-in-time snapshot and call `db.Reload()` to observe later writes. The HTTP client instead observes the state owned by the server process.
+
+## Start the Server
+
+Install the CLI and start a writer on the loopback interface:
+
+```bash
+go install github.com/abdul-hamid-achik/veclite/cmd/veclite@latest
+veclite serve data.veclite --host=127.0.0.1 --port=8080 --wal
+```
+
+`--wal` makes completed mutations crash-safe. The server has no built-in authentication or TLS; keep it on a trusted local/private network or put an authenticated TLS proxy in front of it.
+
+## Install the Client
 
 ```bash
 go get github.com/abdul-hamid-achik/veclite/client
 ```
 
-## Quick start
+## Connect and Search
+
+This example uses four-dimensional vectors throughout:
 
 ```go
-import "github.com/abdul-hamid-achik/veclite/client"
+package main
 
-db, err := client.Open("http://localhost:8080")
-if err != nil {
-    log.Fatal(err)
-}
-defer db.Close()
+import (
+    "fmt"
+    "log"
 
-coll, err := db.CreateCollection("docs",
-    client.WithDimension(384),
-    client.WithHNSW(16, 200),
+    "github.com/abdul-hamid-achik/veclite/client"
 )
 
-id, err := coll.Insert([]float32{0.1, 0.2, 0.3}, map[string]any{"source": "wiki"})
+func main() {
+    db, err := client.Open("http://127.0.0.1:8080")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer db.Close()
 
-results, err := coll.Search([]float32{0.1, 0.2, 0.3}, client.TopK(10))
+    docs, err := db.CreateCollection("docs",
+        client.WithDimension(4),
+        client.WithDistanceType(client.DistanceCosine),
+        client.WithHNSW(16, 200),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    _, err = docs.Insert(
+        []float32{0.1, 0.2, 0.3, 0.4},
+        map[string]any{"source": "README.md", "kind": "docs"},
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    results, err := docs.Search(
+        []float32{0.15, 0.25, 0.35, 0.45},
+        client.TopK(5),
+        client.WithFilter(client.Equal("kind", "docs")),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    for _, result := range results {
+        fmt.Println(result.Record.ID, result.Score, result.Record.Payload)
+    }
+}
 ```
 
-## DB operations
+If `docs` already exists, use `db.GetCollection("docs")` rather than creating it again.
+
+## Supported Database Operations
 
 | Method | Description |
-|--------|-------------|
-| `Open(baseURL)` | Connect to a server |
-| `Close()` | Release client resources (no server-side session) |
-| `CreateCollection(name, opts...)` | Create a collection |
-| `Collection(name)` | Get a handle (no existence check) |
-| `GetCollection(name)` | Get a handle (error if not found) |
-| `DropCollection(name)` | Delete a collection |
+|---|---|
+| `Open(baseURL)` | Connect to a running server |
+| `CreateCollection(name, opts...)` | Create a basic vector collection |
+| `Collection(name)` | Return a collection handle without checking existence |
+| `GetCollection(name)` | Return a handle after checking existence |
+| `DropCollection(name)` | Delete a collection and its records |
 | `Collections()` | List collection names |
-| `Stats()` | Database-level statistics |
-| `Sync()` | Force sync to disk on the server |
-| `Reload()` | Reload database from disk (pick up external writes) |
+| `Stats()` | Read database statistics |
+| `Sync()` | Ask the server to persist a snapshot |
+| `Reload()` | Ask the server to reload from disk |
 
-## Collection operations
+## Supported Collection Operations
 
 | Method | Description |
-|--------|-------------|
-| `Insert(vector, payload)` | Insert a single vector |
-| `InsertBatch(vectors, payloads)` | Insert multiple vectors |
-| `Get(id)` | Get a record by ID |
-| `Delete(id)` | Delete a record by ID |
-| `UpdateVector(id, vector)` | Replace the vector |
-| `Update(id, payload)` | Replace the payload |
-| `Upsert(id, vector, payload)` | Insert or update by ID |
-| `UpsertByKey(keyField, keyValue, vector, payload)` | Insert or update by payload key |
-| `Search(query, opts...)` | Vector similarity search |
-| `Find(filters...)` | Find records by metadata filter |
-| `DeleteWhere(filters...)` | Delete records by filter |
+|---|---|
+| `Insert` / `InsertBatch` | Insert vectors and payloads |
+| `Get` / `Delete` | Read or delete a record by ID |
+| `UpdateVector` / `Update` | Replace a vector or payload |
+| `Upsert` / `UpsertByKey` | Insert or replace a vector record |
+| `Search` | Run default-space vector search |
+| `Find` / `DeleteWhere` | Match payload filters without a query vector |
+| `Stats` | Read collection statistics |
 
-## Collection options
-
-| Option | Description |
-|--------|-------------|
-| `WithDimension(d)` | Set vector dimension |
-| `WithDistanceType(d)` | Set distance metric (`DistanceCosine`, `DistanceDot`, `DistanceEuclidean`) |
-| `WithHNSW(m, ef)` | Enable HNSW index with M and efConstruction |
-| `WithTextIndex(field)` | Enable BM25 text indexing on a payload field |
-
-## Search options
-
-| Option | Description |
-|--------|-------------|
-| `TopK(k)` | Maximum number of results (default 10) |
-| `Threshold(t)` | Minimum similarity score |
-| `WithFilter(f)` | Add a metadata filter |
-| `WithFilters(filters...)` | Add multiple filters |
+Collection creation supports `WithDimension`, `WithDistanceType`, and `WithHNSW`. Search supports `TopK`, `Threshold`, `WithFilter`, and `WithFilters`.
 
 ## Filters
 
-| Filter | Description |
-|--------|-------------|
-| `Equal(key, value)` | Equality match |
-| `NotEqual(key, value)` | Not-equal match |
-| `GT(key, value)` | Greater than (numeric) |
-| `GTE(key, value)` | Greater than or equal |
-| `LT(key, value)` | Less than |
-| `LTE(key, value)` | Less than or equal |
-| `Glob(key, pattern)` | Glob pattern match |
-| `Prefix(key, value)` | String prefix |
-| `Suffix(key, value)` | String suffix |
-| `Contains(key, value)` | String contains |
-| `Exists(key)` | Key exists |
-
-## Swapping from embedded to client
-
-The API is designed for a minimal diff:
+The client exposes equality, inequality, numeric comparison, glob, prefix, suffix, substring, and existence filters:
 
 ```go
-// Before (embedded, single-process):
-db, _ := veclite.Open("data.veclite")
-coll, _ := db.CreateCollection("docs", veclite.WithDimension(384))
-coll.Insert(vec, payload)
-results, _ := coll.Search(query, veclite.TopK(10))
-
-// After (client, multi-process):
-db, _ := client.Open("http://localhost:8080")
-coll, _ := db.CreateCollection("docs", client.WithDimension(384))
-coll.Insert(vec, payload)
-results, _ := coll.Search(query, client.TopK(10))
+records, err := docs.Find(
+    client.Equal("kind", "docs"),
+    client.Suffix("source", ".md"),
+)
 ```
 
-The main difference is that `float32` vectors are passed directly (the client converts
-to `float64` for JSON transport internally), and `Reload()` is available to pick up
-writes from other processes.
+## Error Handling
+
+Non-2xx HTTP responses become descriptive Go errors that include the server's machine-readable code and message when available. The client does not currently expose a typed API-error value, so do not branch on concrete error types or parse the text as a stable contract. Treat connection failures separately from application errors such as a missing collection or dimension mismatch.
+
+## Next Steps
+
+- Read [Choose an Interface](./interfaces) to compare this client with shared reads and raw HTTP.
+- Use the [HTTP API reference](/reference/http-api) for operations the client does not wrap.
+- Add [WAL durability](./durability) to the server before handling important writes.

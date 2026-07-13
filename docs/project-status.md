@@ -1,98 +1,73 @@
 ---
-description: "VecLite project status: current release, implementation boundary, related projects (vecgrep, vidtrace), and remaining work on language drivers."
+title: Compatibility and Support
+description: "VecLite v0.24.0 compatibility: Go requirements, storage migrations, supported access surfaces, optional integrations, and current limitations."
 ---
 
-# Project Status
+# Compatibility and Support
 
-This page records the current implementation state and the next work that matters for VecLite as a shared Go library.
+VecLite `v0.24.0` is the current release. It requires Go 1.25 or later and is distributed under the MIT license.
 
-## Current Release
+- [Release notes](https://github.com/abdul-hamid-achik/veclite/releases/tag/v0.24.0)
+- [All releases](https://github.com/abdul-hamid-achik/veclite/releases)
+- [Go package reference](https://pkg.go.dev/github.com/abdul-hamid-achik/veclite)
 
-`v0.17.0` is the current release:
+## Supported Access Surfaces
 
-https://github.com/abdul-hamid-achik/veclite/releases/tag/v0.17.0
+| Surface | Status | Best fit |
+|---|---|---|
+| Embedded Go library | Supported | A Go process that owns local reads and writes |
+| Go HTTP client | Supported subset | Basic vector operations through `veclite serve` |
+| CLI | Supported | Shell automation and JSON-based language bridges |
+| HTTP server | Supported | Trusted multi-client access with one writer process |
+| MCP server | Supported | MCP-compatible agents and coding tools over stdio |
+| Python or TypeScript SDK | Not available | Use the CLI or HTTP JSON contract today |
 
-It closes the named-vector-space API with `UpsertRecordByKey` (the named-space
-analog of `UpsertTextDocumentByKey`) and `HybridSearchSpace` (vector + BM25
-fusion over a named space, the analog of `HybridSearch`), plus matching CLI and
-HTTP endpoints. It builds on `v0.16.0`, which introduced named vector spaces
-(multiple independent embeddings per record), a first-class `EmbeddingProfile`
-API, multi-space result fusion (`MultiSpaceSearch` / public `FuseRRF`), the v4
-storage format with additive v1–v3 migration, and the matching CLI and HTTP
-named-space surface.
+The CLI and HTTP JSON shapes are treated as a public cross-language contract and covered by behavior specs under `specs/glyphrun/`. Additive fields may appear over time; clients should ignore fields they do not recognize.
 
-## Current Design Boundary
+The Go HTTP client intentionally covers a smaller surface than the embedded library. It currently wraps basic collection, vector, payload, filter, and maintenance operations—not document/BM25, hybrid, named-space, or agent-memory APIs. See [Go HTTP Client](./guide/go-client).
 
-VecLite should own durable local search primitives:
+## Storage Compatibility
 
-- record, vector, content, payload, and metadata persistence
-- dimension and distance compatibility checks
-- HNSW indexes and brute-force fallback
-- BM25 text indexes
-- metadata filters, pagination, iteration, and hybrid result fusion
-- storage-versioned migrations
+The current on-disk storage format is version 4. VecLite migrates version 1–3 snapshots automatically when opening them:
 
-Applications should own domain-specific extraction and embedding pipelines:
+- historical single vectors become the implicit `default` vector space
+- named-space and embedding-profile fields are added without rewriting record content
+- no separate migration command is required
 
-- file walking and source-code chunking
-- OCR, transcript parsing, frame extraction, and media preprocessing
-- embedding provider credentials, batching, retries, and model rollout
-- deciding which fields become content, payload, and vectors
-- deciding when provider or preprocessing changes require a rebuild
+Back up the snapshot before opening an important database with a new release. If WAL is enabled, make sure the writer is stopped cleanly or preserve both the snapshot and `.wal` sidecar so recovery can replay completed mutations.
 
-## What Works Now
+## Build Profiles
 
-**Named vector spaces** let one logical record carry several embeddings (e.g. `text` + `image`),
-each with its own dimension, distance metric, and HNSW index. Declare them with `AddVectorSpace` /
-`WithVectorSpace`, insert with `InsertRecord`, search one space with `SearchSpace`, and fuse
-across spaces with `MultiSpaceSearch` (or the public `FuseRRF`). The default space stays fully
-backward compatible. See the [Named Vector Spaces](/guide/named-vector-spaces) guide.
+The default build includes the core database, CLI, HTTP server, MCP server, YAML configuration, and HTTP-based embedding providers.
 
-**Embedding profiles** are a first-class type (`EmbeddingProfile`) attachable to a collection or a
-space; they validate inserts and expose `Compatible` for detecting index-invalidating changes.
+Local ONNX inference is isolated behind the `onnx` build tag:
 
-Use one collection with the default space when records share one embedding profile. Use **named
-spaces** when records are the same logical items with multiple embeddings, and separate collections
-only when records are genuinely unrelated.
+```bash
+go build -tags onnx ./cmd/veclite
+```
 
-Text-only records are supported through `InsertTextDocument` and `InsertTextDocumentWithOptions`.
-They are indexed by BM25, returned by filters and iteration, and skipped by vector search until an
-application adds vectors.
+Core storage, vector indexing, BM25, filters, and fusion are implemented with the Go standard library. Focused external modules support optional integrations such as MCP, YAML configuration, and ONNX inference.
 
-The CLI (`space-add`, `spaces`, `record-insert`, `search-space`, `fuse-search`) and HTTP server
-expose the same operations as JSON — the cross-language contract that future language drivers will
-build on.
+## Operational Boundaries
 
-## Related Projects
+VecLite is a local, embeddable database rather than a distributed database cluster.
 
-`vecgrep` should use VecLite for durable code chunk storage, vector search, text search, filters, and hybrid ranking. It should keep file discovery, chunking, provider setup, and index rebuild policy in `vecgrep`.
+- One process should own file-backed writes.
+- Multiple read-only processes can use lock-free shared reads and call `Reload()` for a newer snapshot.
+- Multiple writing clients should connect to one `veclite serve` process.
+- The HTTP server has no built-in authentication or TLS. Keep it on loopback or a trusted private network, or place an authenticated TLS proxy in front of it.
+- Snapshot persistence occurs on `Sync()` or `Close()`. Enable the WAL when completed writes must survive a crash between snapshots.
 
-`vidtrace` should start with text-only evidence records for timeline, OCR, and transcript entries.
-It can add semantic text embeddings in the default space and frame/image embeddings in a named
-`frame` space on the **same** records, then fuse them with `MultiSpaceSearch`.
+Read [Choose an Interface](./guide/interfaces) for topology guidance and [Durability and the WAL](./guide/durability) for the write guarantees of each mode.
 
-## Recently Shipped
+## Reporting a Problem
 
-- **Named vector spaces** — multiple independent embeddings per record (additive, backward compatible).
-- **Storage migration to format v4** — pre-v4 databases open as a default-space-only collection with no rewrite.
-- **First-class embedding profiles** — `EmbeddingProfile` with dimension validation and `Compatible` checks.
-- **Multi-space result fusion** — `MultiSpaceSearch` and the public `FuseRRF` API.
-- **CLI + HTTP named-space surface** — `space-add`, `spaces`, `record-insert`, `search-space`, `fuse-search`, mirrored over HTTP.
-- **Glyphrun behavior specs** under `specs/glyphrun/` pin the CLI contract.
-- **CI hygiene** — upstream actions bumped off the deprecated Node runtime; GoReleaser pinned to `~> v2`.
+Open a [GitHub issue](https://github.com/abdul-hamid-achik/veclite/issues) with:
 
-## Docs Deployment
+- VecLite version and Go version
+- operating system and architecture
+- the smallest reproducing program or CLI command
+- database options, collection dimension, distance metric, and index configuration
+- the complete error and relevant logs, with credentials and private data removed
 
-The documentation site is built with VitePress (`task site`) and **deployed to Vercel** via
-`vercel.json` (the linked `.vercel` project auto-deploys on push to `main`). This is the single
-hosting path; the site is served at the domain root. Do not add a second deploy target.
-
-## Remaining Work
-
-- Language drivers (Python, TypeScript, …) over the CLI/HTTP contract — planned, not started.
-- Cross-space fusion ergonomics (weighted multi-space + BM25 in one call) if app usage warrants it.
-
-## Next Steps
-
-1. Adopt named vector spaces from `vidtrace` for multimodal evidence (text default space + `frame` space).
-2. Start the first language driver against the CLI/HTTP JSON contract once the surface settles.
+For search-quality reports, include dataset size, vector dimension, `M`, `efConstruction`, `efSearch`, query count, and the brute-force result used for comparison.

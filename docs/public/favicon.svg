@@ -1,13 +1,6 @@
 <svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="VecLite">
   <title>VecLite</title>
-  <defs>
-    <linearGradient id="vl-bg" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#6366F1"/>
-      <stop offset="0.55" stop-color="#7C3AED"/>
-      <stop offset="1" stop-color="#A855F7"/>
-    </linearGradient>
-  </defs>
-  <rect x="0" y="0" width="256" height="256" rx="52" fill="url(#vl-bg)"/>
+  <rect x="0" y="0" width="256" height="256" rx="52" fill="#D97757"/>
   <g stroke="#FFFFFF" stroke-width="15" stroke-linecap="round">
     <line x1="116" y1="150" x2="66" y2="70"/>
     <line x1="116" y1="150" x2="196" y2="84"/>
@@ -17,5 +10,5 @@
   <circle cx="196" cy="84" r="16" fill="#FFFFFF"/>
   <circle cx="188" cy="198" r="16" fill="#FFFFFF"/>
   <circle cx="116" cy="150" r="22" fill="#FFFFFF"/>
-  <circle cx="116" cy="150" r="10" fill="#7C3AED"/>
+  <circle cx="116" cy="150" r="10" fill="#7A3522"/>
 </svg>

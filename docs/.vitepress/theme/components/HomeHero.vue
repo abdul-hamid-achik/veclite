@@ -1,144 +1,203 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
+import { computed, ref } from "vue";
+import ProductIcon from "./ProductIcon.vue";
 
-const copied = ref(false);
+type SearchMode = "hybrid" | "vector" | "text";
+
 const installCmd = "go get github.com/abdul-hamid-achik/veclite";
+const copied = ref(false);
+const paused = ref(false);
+const activeMode = ref<SearchMode>("hybrid");
+
+const modes: Array<{
+  id: SearchMode;
+  label: string;
+  query: string;
+  resultLabel: string;
+  results: Array<{ path: string; detail: string; score: string; strength: string }>;
+}> = [
+  {
+    id: "hybrid",
+    label: "Hybrid",
+    query: "crash-safe writes after a restart",
+    resultLabel: "HNSW + BM25 fused with RRF",
+    results: [
+      { path: "guide/durability.md", detail: "vector + exact terms", score: "0.0328", strength: "96%" },
+      { path: "wal.go", detail: "semantic match", score: "0.0317", strength: "82%" },
+      { path: "guide/go-client.md", detail: "keyword match", score: "0.0161", strength: "55%" },
+    ],
+  },
+  {
+    id: "vector",
+    label: "Vector",
+    query: "recover completed mutations",
+    resultLabel: "cosine similarity via HNSW",
+    results: [
+      { path: "wal.go", detail: "semantic match", score: "0.9421", strength: "94%" },
+      { path: "guide/durability.md", detail: "semantic match", score: "0.9174", strength: "78%" },
+      { path: "storage.go", detail: "semantic match", score: "0.8812", strength: "62%" },
+    ],
+  },
+  {
+    id: "text",
+    label: "BM25",
+    query: "WAL replay CRC",
+    resultLabel: "exact text ranked with BM25",
+    results: [
+      { path: "wal.go", detail: "3 exact terms", score: "7.184", strength: "91%" },
+      { path: "guide/durability.md", detail: "2 exact terms", score: "5.022", strength: "70%" },
+      { path: "internal/storage/wal.go", detail: "2 exact terms", score: "4.631", strength: "58%" },
+    ],
+  },
+];
+
+const currentMode = computed(() => modes.find((mode) => mode.id === activeMode.value) ?? modes[0]);
 
 async function copyInstall() {
   try {
     await navigator.clipboard.writeText(installCmd);
     copied.value = true;
-    setTimeout(() => (copied.value = false), 2000);
+    window.setTimeout(() => (copied.value = false), 1800);
   } catch {
-    /* clipboard unavailable */
+    copied.value = false;
   }
 }
-
-const techBadges = [
-  "HNSW", "BM25", "Hybrid Search", "Named Vector Spaces", "RRF Fusion",
-  "WAL Durability", "Embedding Profiles", "Agent Memory", "MCP Server",
-  "Single-File", "CLI", "HTTP API", "Knowledge Graph", "Episodic Memory",
-  "TTL", "Importance Decay", "Subscriptions", "Consolidation",
-];
-
-// duplicate for seamless marquee loop
-const marqueeBadges = [...techBadges, ...techBadges];
 </script>
 
 <template>
   <section class="hero">
-    <!-- gradient mesh background -->
-    <div class="hero__mesh" />
-    <!-- ambient glows -->
-    <div class="vl-glow vl-glow--violet" style="width: 520px; height: 520px; top: -100px; left: 8%;" />
-    <div class="vl-glow vl-glow--indigo" style="width: 400px; height: 400px; bottom: -80px; right: 5%;" />
-    <div class="vl-glow vl-glow--violet" style="width: 300px; height: 300px; top: 40%; left: 45%; opacity: 0.12;" />
-
-    <!-- floating particles -->
-    <div class="hero__particles">
-      <span v-for="i in 12" :key="i" class="hero__particle" :style="{ '--i': i, '--x': `${(i * 37) % 100}%`, '--d': `${i * 0.3}s` }" />
-    </div>
+    <div class="hero__grid-lines" aria-hidden="true" />
+    <div class="hero__orb hero__orb--one" aria-hidden="true" />
+    <div class="hero__orb hero__orb--two" aria-hidden="true" />
 
     <div class="hero__inner">
-      <!-- animated SVG: one record fanning into named vector spaces -->
-      <div class="hero__viz">
-        <svg viewBox="0 0 520 360" class="hero__svg" aria-hidden="true">
-          <defs>
-            <linearGradient id="hero-line" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#6366f1" />
-              <stop offset="0.5" stop-color="#7c3aed" />
-              <stop offset="1" stop-color="#a855f7" />
-            </linearGradient>
-            <radialGradient id="hero-node" cx="50%" cy="50%" r="50%">
-              <stop offset="0" stop-color="#c4b5fd" />
-              <stop offset="1" stop-color="#7c3aed" />
-            </radialGradient>
-            <radialGradient id="hero-glow" cx="50%" cy="50%" r="50%">
-              <stop offset="0" stop-color="#a855f7" stop-opacity="0.3" />
-              <stop offset="1" stop-color="#a855f7" stop-opacity="0" />
-            </radialGradient>
-          </defs>
-
-          <!-- ambient glow behind origin -->
-          <circle cx="260" cy="230" r="120" fill="url(#hero-glow)" class="hero__ambient" />
-
-          <!-- connection lines (drawn on load) -->
-          <g class="hero__lines" stroke="url(#hero-line)" stroke-width="2.5" stroke-linecap="round" fill="none">
-            <line x1="260" y1="230" x2="100" y2="80" class="hero__line" style="--d:0s" />
-            <line x1="260" y1="230" x2="430" y2="100" class="hero__line" style="--d:0.2s" />
-            <line x1="260" y1="230" x2="390" y2="300" class="hero__line" style="--d:0.4s" />
-            <line x1="260" y1="230" x2="130" y2="310" class="hero__line" style="--d:0.6s" />
-          </g>
-
-          <!-- space nodes -->
-          <g class="hero__nodes">
-            <circle cx="100" cy="80" r="14" fill="url(#hero-node)" class="hero__node" style="--d:0.3s" />
-            <circle cx="430" cy="100" r="12" fill="url(#hero-node)" class="hero__node" style="--d:0.5s" />
-            <circle cx="390" cy="300" r="12" fill="url(#hero-node)" class="hero__node" style="--d:0.7s" />
-            <circle cx="130" cy="310" r="11" fill="url(#hero-node)" class="hero__node" style="--d:0.9s" />
-          </g>
-
-          <!-- space labels -->
-          <g class="hero__labels" font-size="12" font-weight="600" fill="#c4b5fd" font-family="system-ui">
-            <text x="100" y="58" text-anchor="middle" opacity="0" class="hero__label" style="--d:1s">text</text>
-            <text x="430" y="78" text-anchor="middle" opacity="0" class="hero__label" style="--d:1.1s">image</text>
-            <text x="390" y="326" text-anchor="middle" opacity="0" class="hero__label" style="--d:1.2s">audio</text>
-            <text x="130" y="338" text-anchor="middle" opacity="0" class="hero__label" style="--d:1.3s">default</text>
-          </g>
-
-          <!-- origin record -->
-          <circle cx="260" cy="230" r="22" fill="#fff" class="hero__origin" />
-          <circle cx="260" cy="230" r="10" fill="#7c3aed" />
-        </svg>
-      </div>
-
-      <!-- headline + CTA -->
       <div class="hero__content">
-        <span class="vl-tag hero__badge">
-          <span class="hero__badge-dot" /> Open Source · v0.24.0 · MIT
-        </span>
+        <a class="hero__release" href="https://github.com/abdul-hamid-achik/veclite/releases/tag/v0.24.0">
+          <span class="hero__release-mark" aria-hidden="true" />
+          Open source · v0.24.0 · MIT
+          <ProductIcon name="arrow" :size="14" />
+        </a>
+
         <h1 class="hero__title">
-          The embeddable vector database
-          <span class="vl-gradient-text">built in Go</span>
+          Vector search that lives
+          <span>inside your app.</span>
         </h1>
         <p class="hero__tagline">
-          Built in Go. Drive from any language through CLI, HTTP, and MCP. Store
-          vectors, text, and metadata in a single file with HNSW, BM25, hybrid
-          ranking, and multimodal named vector spaces — no database server required.
+          Keep vectors, text, metadata, and indexes beside your Go code. VecLite
+          gives you HNSW, BM25, hybrid ranking, and an optional crash-safe WAL in
+          one embeddable database—without another service to deploy.
         </p>
 
-        <!-- install bar -->
-        <div class="hero__install" @click="copyInstall">
-          <span class="hero__install-prompt">$</span>
-          <code class="hero__install-cmd">{{ installCmd }}</code>
-          <span class="hero__install-copy" :class="{ 'hero__install-copy--done': copied }">
-            {{ copied ? "✓ copied!" : "copy" }}
-          </span>
-        </div>
-
-        <!-- CTA buttons -->
-        <div class="hero__cta">
+        <div class="hero__actions">
           <a href="/guide/getting-started" class="vl-btn vl-btn--primary">
-            Get Started
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path d="M5 12h14M13 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
+            Build your first index
+            <ProductIcon name="arrow" :size="17" />
           </a>
-          <a href="/guide/named-vector-spaces" class="vl-btn vl-btn--ghost">Named Vector Spaces</a>
-          <a href="https://github.com/abdul-hamid-achik/veclite" class="vl-btn vl-btn--ghost">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.21 11.4.6.1.82-.26.82-.58v-2.03c-3.34.73-4.04-1.6-4.04-1.6-.55-1.4-1.34-1.77-1.34-1.77-1.09-.74.08-.73.08-.73 1.2.08 1.84 1.24 1.84 1.24 1.07 1.84 2.8 1.3 3.49 1 .1-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.3.47-2.37 1.24-3.2-.13-.3-.54-1.52.1-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.3-1.55 3.3-1.23 3.3-1.23.65 1.66.24 2.88.12 3.18.77.83 1.23 1.9 1.23 3.2 0 4.6-2.8 5.62-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.21.69.83.58A12 12 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
-            </svg>
-            GitHub
-          </a>
+          <a href="/guide/interfaces" class="vl-btn vl-btn--ghost">Choose an interface</a>
         </div>
-      </div>
-    </div>
 
-    <!-- tech marquee -->
-    <div class="hero__marquee vl-marquee">
-      <div class="vl-marquee__track">
-        <span v-for="(badge, i) in marqueeBadges" :key="i" class="vl-marquee__badge">{{ badge }}</span>
+        <button class="hero__install" type="button" @click="copyInstall">
+          <span class="hero__install-prompt" aria-hidden="true">$</span>
+          <code>{{ installCmd }}</code>
+          <span class="hero__install-action" aria-live="polite">
+            <ProductIcon :name="copied ? 'check' : 'copy'" :size="16" />
+            {{ copied ? "Copied" : "Copy" }}
+          </span>
+        </button>
+
+        <ul class="hero__proof" aria-label="VecLite at a glance">
+          <li><span /> Portable snapshot file</li>
+          <li><span /> Standard-library storage and search core</li>
+          <li><span /> Go, CLI, HTTP, and MCP</li>
+        </ul>
+      </div>
+
+      <div class="hero__demo" :class="{ 'is-paused': paused }">
+        <div class="hero__demo-topbar">
+          <div class="hero__demo-context">
+            <span class="hero__demo-status" aria-hidden="true" />
+            <span>vectors.veclite</span>
+            <span class="hero__demo-slash">/</span>
+            <strong>docs</strong>
+          </div>
+          <span class="hero__demo-local">local process</span>
+        </div>
+
+        <div class="hero__demo-body">
+          <div class="hero__tabs" role="tablist" aria-label="Search mode">
+            <button
+              v-for="mode in modes"
+              :id="`search-tab-${mode.id}`"
+              :key="mode.id"
+              type="button"
+              role="tab"
+              :aria-selected="activeMode === mode.id"
+              :aria-controls="`search-panel-${mode.id}`"
+              :class="{ 'is-active': activeMode === mode.id }"
+              @click="activeMode = mode.id"
+            >
+              {{ mode.label }}
+            </button>
+          </div>
+
+          <div class="hero__query">
+            <ProductIcon name="search" :size="18" />
+            <span>{{ currentMode.query }}</span>
+            <kbd>⌘ K</kbd>
+          </div>
+
+          <div class="hero__routes" aria-label="Active ranking pipeline">
+            <div class="hero__route" :class="{ 'is-active': activeMode !== 'text' }">
+              <ProductIcon name="branch" :size="16" />
+              <span>HNSW</span>
+              <small>vector</small>
+            </div>
+            <div class="hero__route" :class="{ 'is-active': activeMode !== 'vector' }">
+              <ProductIcon name="file" :size="16" />
+              <span>BM25</span>
+              <small>text</small>
+            </div>
+            <div class="hero__route hero__route--final" :class="{ 'is-active': activeMode === 'hybrid' }">
+              <ProductIcon name="layers" :size="16" />
+              <span>{{ activeMode === "hybrid" ? "RRF" : "Rank" }}</span>
+              <small>merge</small>
+            </div>
+            <span class="hero__route-pulse" aria-hidden="true" />
+          </div>
+
+          <div
+            :id="`search-panel-${activeMode}`"
+            class="hero__results"
+            role="tabpanel"
+            :aria-labelledby="`search-tab-${activeMode}`"
+          >
+            <div class="hero__results-head">
+              <span>Ranked results</span>
+              <small>{{ currentMode.resultLabel }}</small>
+            </div>
+            <ol>
+              <li v-for="(result, index) in currentMode.results" :key="result.path">
+                <span class="hero__result-rank">0{{ index + 1 }}</span>
+                <span class="hero__result-copy">
+                  <strong>{{ result.path }}</strong>
+                  <small>{{ result.detail }}</small>
+                </span>
+                <span class="hero__result-meter" aria-hidden="true">
+                  <span :style="{ transform: `scaleX(${Number.parseInt(result.strength) / 100})` }" />
+                </span>
+                <code>{{ result.score }}</code>
+              </li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="hero__demo-footer">
+          <span><ProductIcon name="shield" :size="15" /> No network hop</span>
+          <button type="button" :aria-pressed="paused" @click="paused = !paused">
+            <ProductIcon :name="paused ? 'play' : 'pause'" :size="14" />
+            {{ paused ? "Resume motion" : "Pause motion" }}
+          </button>
+        </div>
       </div>
     </div>
   </section>
@@ -146,277 +205,654 @@ const marqueeBadges = [...techBadges, ...techBadges];
 
 <style scoped>
 .hero {
+  min-height: calc(100dvh - 64px);
+  padding: 104px 24px 72px;
   position: relative;
-  padding: 120px 24px 0;
+  display: grid;
+  align-items: center;
   overflow: hidden;
   background: var(--vl-bg);
 }
 
-/* Gradient mesh background */
-.hero__mesh {
+.hero__grid-lines {
   position: absolute;
   inset: 0;
-  background:
-    radial-gradient(ellipse 60% 40% at 20% 10%, rgba(99, 102, 241, 0.12), transparent 60%),
-    radial-gradient(ellipse 50% 50% at 80% 20%, rgba(168, 85, 247, 0.1), transparent 60%),
-    radial-gradient(ellipse 40% 30% at 50% 80%, rgba(124, 58, 237, 0.08), transparent 60%);
+  background-image:
+    linear-gradient(rgba(238, 230, 210, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(238, 230, 210, 0.035) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: linear-gradient(to bottom, black, transparent 86%);
   pointer-events: none;
-  z-index: 0;
 }
 
-/* Floating particles */
-.hero__particles {
+.hero__orb {
   position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-}
-
-.hero__particle {
-  position: absolute;
-  bottom: 0;
-  left: var(--x);
-  width: 4px;
-  height: 4px;
+  border: 1px solid rgba(217, 119, 87, 0.13);
   border-radius: 50%;
-  background: rgba(168, 85, 247, 0.4);
-  animation: floatUp 8s ease-in infinite;
-  animation-delay: var(--d);
+  pointer-events: none;
 }
 
-@keyframes floatUp {
-  0% { transform: translateY(0) scale(0); opacity: 0; }
-  10% { opacity: 1; transform: translateY(-20px) scale(1); }
-  90% { opacity: 0.6; }
-  100% { transform: translateY(-600px) scale(0); opacity: 0; }
+.hero__orb--one {
+  width: 680px;
+  height: 680px;
+  right: -240px;
+  top: -300px;
+}
+
+.hero__orb--two {
+  width: 420px;
+  height: 420px;
+  right: -110px;
+  top: -170px;
 }
 
 .hero__inner {
+  width: 100%;
   max-width: var(--vl-max-w);
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 1.1fr 0.9fr;
-  gap: 48px;
+  grid-template-columns: minmax(0, 0.9fr) minmax(520px, 1.1fr);
+  gap: clamp(48px, 7vw, 96px);
   align-items: center;
   position: relative;
-  z-index: 2;
-  min-height: 480px;
+  z-index: 1;
 }
 
-/* ---- animation canvas ---- */
-.hero__viz {
-  display: flex;
-  justify-content: center;
-}
-
-.hero__svg {
-  width: 100%;
-  max-width: 520px;
-  height: auto;
-  filter: drop-shadow(0 0 40px rgba(124, 58, 237, 0.15));
-}
-
-/* ambient pulse */
-.hero__ambient {
-  animation: ambientPulse 3s ease-in-out infinite;
-  transform-origin: 260px 230px;
-}
-
-@keyframes ambientPulse {
-  0%, 100% { opacity: 0.6; transform: scale(1); }
-  50% { opacity: 1; transform: scale(1.15); }
-}
-
-/* line draw-in */
-.hero__line {
-  stroke-dasharray: 260;
-  stroke-dashoffset: 260;
-  animation: drawLine 0.8s ease forwards;
-  animation-delay: var(--d);
-}
-
-@keyframes drawLine {
-  to { stroke-dashoffset: 0; }
-}
-
-/* node pop-in */
-.hero__node {
-  opacity: 0;
-  transform-origin: center;
-  transform: scale(0);
-  animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
-  animation-delay: var(--d);
-}
-
-@keyframes popIn {
-  to { opacity: 1; transform: scale(1); }
-}
-
-/* label fade */
-.hero__label {
-  animation: fadeIn 0.4s ease forwards;
-  animation-delay: var(--d);
-}
-
-@keyframes fadeIn {
-  to { opacity: 1; }
-}
-
-/* origin pulse */
-.hero__origin {
-  animation: originPulse 2.4s ease-in-out infinite;
-  transform-origin: 260px 230px;
-}
-
-@keyframes originPulse {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.1); opacity: 0.85; }
-}
-
-/* ---- content ---- */
 .hero__content {
-  text-align: left;
+  min-width: 0;
 }
 
-.hero__badge {
+.hero__release {
+  width: fit-content;
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  color: var(--vl-text-2);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-decoration: none !important;
 }
 
-.hero__badge-dot {
-  width: 8px;
-  height: 8px;
+.hero__release:hover {
+  color: var(--vl-text);
+}
+
+.hero__release-mark {
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
-  background: #4ade80;
-  box-shadow: 0 0 8px #4ade80;
-  animation: dotPulse 2s ease-in-out infinite;
-}
-
-@keyframes dotPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  background: var(--vl-signal);
+  box-shadow: 0 0 0 4px rgba(143, 164, 108, 0.12);
 }
 
 .hero__title {
-  font-size: clamp(34px, 5vw, 56px);
-  font-weight: 800;
-  line-height: 1.1;
-  letter-spacing: -0.03em;
+  margin: 22px 0 0;
+  max-width: 720px;
   color: var(--vl-text);
-  margin: 16px 0 0;
+  font-size: clamp(44px, 5.2vw, 72px);
+  font-weight: 720;
+  line-height: 0.98;
+  letter-spacing: -0.055em;
+}
+
+.hero__title span {
+  color: var(--vl-accent-soft);
+  display: block;
+  position: relative;
+}
+
+.hero__title span::after {
+  content: "";
+  width: 96px;
+  height: 4px;
+  position: absolute;
+  left: 2px;
+  bottom: -13px;
+  border-radius: 999px;
+  background: var(--vl-accent);
 }
 
 .hero__tagline {
-  font-size: 19px;
-  line-height: 1.6;
+  margin: 34px 0 0;
+  max-width: 620px;
   color: var(--vl-text-2);
-  margin: 20px 0 0;
-  max-width: 520px;
+  font-size: 18px;
+  line-height: 1.7;
 }
 
-/* ---- install bar (glassmorphism) ---- */
-.hero__install {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 32px 0 28px;
-  padding: 14px 18px;
-  background: rgba(22, 18, 42, 0.5);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border: 1px solid var(--vl-border);
-  border-radius: var(--vl-radius-sm);
-  cursor: pointer;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-  width: fit-content;
-  max-width: 100%;
-}
-
-.hero__install:hover {
-  border-color: var(--vl-primary);
-  box-shadow: 0 0 24px -4px rgba(124, 58, 237, 0.3);
-}
-
-.hero__install-prompt {
-  color: var(--vl-primary-light);
-  font-family: var(--vt-font-family-mono);
-  font-size: 14px;
-  user-select: none;
-}
-
-.hero__install-cmd {
-  font-family: var(--vt-font-family-mono);
-  font-size: 14px;
-  color: var(--vl-text);
-  white-space: nowrap;
-  overflow-x: auto;
-}
-
-.hero__install-copy {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--vl-text-muted);
-  padding: 4px 10px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.06);
-  white-space: nowrap;
-  flex-shrink: 0;
-  transition: color 0.2s ease, background 0.2s ease;
-}
-
-.hero__install-copy--done {
-  color: #4ade80;
-  background: rgba(74, 222, 128, 0.1);
-}
-
-/* ---- CTA ---- */
-.hero__cta {
+.hero__actions {
+  margin-top: 30px;
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
 }
 
-/* ---- marquee ---- */
-.hero__marquee {
-  margin-top: 64px;
-  padding: 20px 0;
-  position: relative;
-  z-index: 2;
+.hero__install {
+  width: min(100%, 560px);
+  margin-top: 22px;
+  padding: 11px 11px 11px 16px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  color: var(--vl-text);
+  background: rgba(29, 29, 25, 0.88);
+  border: 1px solid var(--vl-border);
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 180ms ease, transform 180ms ease, background 180ms ease;
 }
 
-@media (max-width: 860px) {
-  .hero {
-    padding: 80px 20px 0;
+.hero__install:hover {
+  border-color: var(--vl-border-strong);
+  background: var(--vl-surface);
+}
+
+.hero__install:active {
+  transform: scale(0.985);
+}
+
+.hero__install-prompt {
+  color: var(--vl-accent);
+  font-family: var(--vl-font-mono);
+}
+
+.hero__install code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--vl-text-2);
+  font-family: var(--vl-font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hero__install-action {
+  padding: 6px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--vl-text-2);
+  background: rgba(246, 240, 225, 0.05);
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.hero__proof {
+  margin: 25px 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  list-style: none;
+}
+
+.hero__proof li {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--vl-text-muted);
+  font-size: 12px;
+}
+
+.hero__proof li span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--vl-accent);
+}
+
+.hero__demo {
+  min-width: 0;
+  color: var(--vl-text);
+  background: rgba(23, 23, 20, 0.94);
+  border: 1px solid var(--vl-border-strong);
+  border-radius: 18px;
+  box-shadow: 0 32px 90px rgba(5, 5, 4, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+  overflow: hidden;
+  transform: rotate(0.6deg);
+}
+
+.hero__demo-topbar,
+.hero__demo-footer {
+  min-height: 48px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-color: var(--vl-border);
+}
+
+.hero__demo-topbar {
+  border-bottom: 1px solid var(--vl-border);
+}
+
+.hero__demo-context,
+.hero__demo-footer span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--vl-text-muted);
+  font-family: var(--vl-font-mono);
+  font-size: 11px;
+}
+
+.hero__demo-context strong {
+  color: var(--vl-text-2);
+  font-weight: 600;
+}
+
+.hero__demo-status {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--vl-signal);
+  animation: statusPulse 2.4s ease-in-out infinite;
+}
+
+.hero__demo-slash {
+  color: var(--vl-border-strong);
+}
+
+.hero__demo-local {
+  padding: 4px 8px;
+  color: var(--vl-signal);
+  background: rgba(143, 164, 108, 0.09);
+  border: 1px solid rgba(143, 164, 108, 0.16);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.hero__demo-body {
+  padding: 18px;
+}
+
+.hero__tabs {
+  width: fit-content;
+  padding: 3px;
+  display: flex;
+  gap: 2px;
+  background: rgba(246, 240, 225, 0.035);
+  border: 1px solid var(--vl-border);
+  border-radius: 8px;
+}
+
+.hero__tabs button {
+  padding: 6px 11px;
+  color: var(--vl-text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  transition: color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.hero__tabs button:hover {
+  color: var(--vl-text);
+}
+
+.hero__tabs button:active {
+  transform: scale(0.97);
+}
+
+.hero__tabs button.is-active {
+  color: var(--vl-text);
+  background: var(--vl-surface-2);
+}
+
+.hero__query {
+  margin-top: 14px;
+  padding: 13px 14px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  color: var(--vl-text-2);
+  background: #11110f;
+  border: 1px solid var(--vl-border-strong);
+  border-radius: 9px;
+  font-size: 13px;
+}
+
+.hero__query svg {
+  color: var(--vl-accent);
+}
+
+.hero__query kbd {
+  padding: 3px 6px;
+  color: var(--vl-text-muted);
+  background: var(--vl-surface-2);
+  border: 1px solid var(--vl-border);
+  border-radius: 4px;
+  box-shadow: none;
+  font-family: var(--vl-font-mono);
+  font-size: 9px;
+}
+
+.hero__routes {
+  margin: 16px 0;
+  padding: 0 8px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  position: relative;
+}
+
+.hero__routes::before {
+  content: "";
+  height: 1px;
+  position: absolute;
+  left: 16%;
+  right: 16%;
+  top: 50%;
+  background: var(--vl-border-strong);
+}
+
+.hero__route {
+  min-width: 0;
+  padding: 9px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0 7px;
+  position: relative;
+  z-index: 1;
+  color: var(--vl-text-muted);
+  background: var(--vl-surface);
+  border: 1px solid var(--vl-border);
+  border-radius: 8px;
+  opacity: 0.45;
+  transition: opacity 180ms ease, border-color 180ms ease, transform 180ms ease;
+}
+
+.hero__route.is-active {
+  border-color: rgba(217, 119, 87, 0.38);
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.hero__route svg {
+  grid-row: span 2;
+  align-self: center;
+  color: var(--vl-accent);
+}
+
+.hero__route span {
+  overflow: hidden;
+  color: var(--vl-text-2);
+  font-family: var(--vl-font-mono);
+  font-size: 10px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+}
+
+.hero__route small {
+  color: var(--vl-text-muted);
+  font-size: 9px;
+}
+
+.hero__route-pulse {
+  width: 18px;
+  height: 3px;
+  position: absolute;
+  left: 15%;
+  top: calc(50% - 1px);
+  z-index: 2;
+  border-radius: 99px;
+  background: var(--vl-accent);
+  animation: routePulse 2.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+.hero__results {
+  background: #11110f;
+  border: 1px solid var(--vl-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.hero__results-head {
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--vl-border);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.hero__results-head small {
+  color: var(--vl-text-muted);
+  font-family: var(--vl-font-mono);
+  font-size: 9px;
+  font-weight: 400;
+}
+
+.hero__results ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hero__results li {
+  min-height: 54px;
+  padding: 9px 12px;
+  display: grid;
+  grid-template-columns: auto minmax(130px, 1fr) 72px auto;
+  align-items: center;
+  gap: 11px;
+  border-bottom: 1px solid rgba(52, 53, 45, 0.62);
+}
+
+.hero__results li:last-child {
+  border-bottom: 0;
+}
+
+.hero__result-rank {
+  color: var(--vl-text-muted);
+  font-family: var(--vl-font-mono);
+  font-size: 9px;
+}
+
+.hero__result-copy {
+  min-width: 0;
+  display: grid;
+}
+
+.hero__result-copy strong {
+  overflow: hidden;
+  color: var(--vl-text-2);
+  font-family: var(--vl-font-mono);
+  font-size: 10px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hero__result-copy small {
+  color: var(--vl-text-muted);
+  font-size: 9px;
+}
+
+.hero__result-meter {
+  height: 3px;
+  display: block;
+  background: var(--vl-surface-2);
+  border-radius: 99px;
+  overflow: hidden;
+}
+
+.hero__result-meter span {
+  width: 100%;
+  height: 100%;
+  display: block;
+  background: var(--vl-accent);
+  border-radius: inherit;
+  transform-origin: left;
+}
+
+.hero__results li > code {
+  color: var(--vl-accent-soft);
+  font-family: var(--vl-font-mono);
+  font-size: 9px;
+}
+
+.hero__demo-footer {
+  min-height: 44px;
+  border-top: 1px solid var(--vl-border);
+}
+
+.hero__demo-footer span svg {
+  color: var(--vl-signal);
+}
+
+.hero__demo-footer button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--vl-text-muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+}
+
+.hero__demo-footer button:hover {
+  color: var(--vl-text);
+}
+
+.hero__demo.is-paused *,
+.hero__demo.is-paused *::before,
+.hero__demo.is-paused *::after {
+  animation-play-state: paused !important;
+}
+
+@keyframes routePulse {
+  0% { opacity: 0; transform: translateX(0) scaleX(0.5); }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { opacity: 0; transform: translateX(345px) scaleX(1); }
+}
+
+@keyframes statusPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.78); }
+}
+
+@media (max-width: 1100px) {
+  .hero__inner {
+    grid-template-columns: minmax(0, 1fr) minmax(450px, 1fr);
+    gap: 44px;
   }
+
+  .hero__result-meter {
+    display: none;
+  }
+
+  .hero__results li {
+    grid-template-columns: auto minmax(130px, 1fr) auto;
+  }
+}
+
+@media (max-width: 900px) {
+  .hero {
+    padding-top: 88px;
+  }
+
   .hero__inner {
     grid-template-columns: 1fr;
-    gap: 32px;
-    min-height: auto;
   }
-  .hero__viz {
-    order: -1;
+
+  .hero__content {
+    max-width: 720px;
   }
-  .hero__svg {
-    max-width: 360px;
+
+  .hero__demo {
+    max-width: 680px;
+    transform: none;
   }
-  .hero__marquee {
-    margin-top: 40px;
+}
+
+@media (max-width: 560px) {
+  .hero {
+    padding: 72px 18px 52px;
+  }
+
+  .hero__title {
+    font-size: clamp(40px, 13vw, 54px);
+  }
+
+  .hero__tagline {
+    font-size: 16px;
+  }
+
+  .hero__actions .vl-btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .hero__proof {
+    display: grid;
+  }
+
+  .hero__demo-body {
+    padding: 12px;
+  }
+
+  .hero__demo-local,
+  .hero__query kbd,
+  .hero__results-head small,
+  .hero__result-meter {
+    display: none;
+  }
+
+  .hero__routes {
+    gap: 6px;
+    padding: 0;
+  }
+
+  .hero__route {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+  }
+
+  .hero__route svg {
+    grid-row: auto;
+  }
+
+  .hero__route small {
+    display: none;
+  }
+
+  .hero__route-pulse {
+    display: none;
+  }
+
+  .hero__results li {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .hero__demo-footer span {
+    font-size: 9px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hero__line,
-  .hero__node,
-  .hero__label,
-  .hero__origin,
-  .hero__ambient,
-  .hero__particle,
-  .hero__badge-dot {
+  .hero__route-pulse,
+  .hero__demo-status {
     animation: none;
-    opacity: 1;
-    transform: none;
-    stroke-dashoffset: 0;
   }
 }
 </style>

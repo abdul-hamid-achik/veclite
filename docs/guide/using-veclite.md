@@ -1,75 +1,160 @@
 ---
-description: "Learn how to use VecLite collections — records, vectors, text content, metadata, HNSW indexes, distance metrics, and BM25 text indexing."
+title: Core Concepts
+description: "Understand VecLite databases, collections, records, vector spaces, embedding profiles, indexes, and persistence before designing your application."
 ---
 
-# Using VecLite
+# Core Concepts
 
-VecLite stores records in collections. Each record can hold a vector, text content, and payload metadata. Collections define the vector dimension, distance metric, optional HNSW index, optional embedder, and optional BM25 text index fields.
+VecLite keeps the storage model small: a database contains collections, and a collection contains records. A record can carry text, payload data, and one or more vectors. Search returns the complete record, so your application does not need a second store to resolve vector IDs.
 
-## Choose Collection Boundaries
+## Mental Model
 
-Use one collection when records share one embedding profile: provider, model, dimension, modality, distance metric, and preprocessing strategy.
+```text
+database file
+└── collection: docs
+    ├── configuration
+    │   ├── default vector space (dimension, distance, optional HNSW)
+    │   ├── optional named vector spaces
+    │   └── optional BM25 payload fields
+    └── records
+        ├── ID
+        ├── Content
+        ├── Payload
+        ├── Vector (default space)
+        └── Vectors[space] (named spaces)
+```
+
+### Database
+
+`veclite.Open` opens either a persistent snapshot or an in-memory database:
 
 ```go
-code, err := db.CreateCollection("code_chunks",
+fileDB, err := veclite.Open("search.veclite")
+testDB, err := veclite.Open(":memory:")
+```
+
+A persistent database writes an atomic snapshot on `Sync()` or `Close()`. Enable the optional WAL when completed writes must survive a process or machine crash. See [Durability and the WAL](./durability).
+
+### Collection
+
+A collection groups records that share search configuration. Declare dimensions and indexes explicitly when you know them:
+
+```go
+docs, err := db.CreateCollection("docs",
     veclite.WithDimension(768),
     veclite.WithDistanceType(veclite.DistanceCosine),
     veclite.WithHNSW(16, 200),
-    veclite.WithTextIndex("path", "language", "symbol"),
+    veclite.WithTextIndex("title", "path"),
 )
 ```
 
-Use separate collections when embedding profiles differ today. For example, a code search app can keep code text embeddings separate from docs text embeddings, and a video search app can keep transcript text separate from future image vectors.
+`db.Collection("docs")` gets an existing collection or creates one with defaults. With the default configuration, VecLite detects the vector dimension on the first insert and uses brute-force search.
 
-## Store Embedding Profiles
+### Record
 
-Dimension checks are useful, but they do not prove that two vectors came from the same model or preprocessing pipeline. Store profile metadata with each collection:
+A record can contain any combination of:
 
-```go
-err := code.SetMetadataValue("embedding_profile", map[string]any{
-    "profile_id":   "ollama:nomic-embed-text:768:cosine:code-v1",
-    "provider":     "ollama",
-    "model":        "nomic-embed-text",
-    "dimensions":   768,
-    "distance":     "cosine",
-    "modality":     "text",
-    "preprocessor": "code-v1",
-})
-```
+| Field | Purpose |
+|---|---|
+| `ID` | Stable numeric identifier assigned by VecLite or supplied by the caller |
+| `Content` | Source text indexed by BM25 when text indexing is enabled |
+| `Payload` | Arbitrary JSON-like metadata used for filtering and BM25 payload fields |
+| `Vector` | Embedding in the implicit `default` vector space |
+| `Vectors` | Embeddings in declared named spaces |
 
-Applications should compare this metadata before inserting or searching. If the profile changes, rebuild the collection or create a new one.
+Use `Insert` for a vector and payload, `InsertDocument` for a default-space vector plus text, and `InsertRecord` when one logical item carries vectors in several spaces.
 
-## Use Text-only Records
-
-If an application starts with keyword search before semantic embeddings are ready, insert content without vectors:
+Text-only records are valid:
 
 ```go
-id, err := coll.InsertTextDocument("00:12 OCR and transcript evidence", map[string]any{
-    "frame": "frames/frame_0012.png",
-    "kind":  "evidence",
-})
-```
-
-Text-only records appear in BM25 search, filters, iteration, and direct lookup. Vector search skips them until you add vectors through a later indexing workflow.
-
-## Combine Vector and Text Search
-
-Hybrid search uses Reciprocal Rank Fusion to merge vector and BM25 results:
-
-```go
-matches, err := coll.HybridSearch(
-    queryVector,
-    "connection pool",
-    veclite.TopK(10),
-    veclite.WithVectorWeight(1.0),
-    veclite.WithTextWeight(0.5),
+id, err := docs.InsertTextDocument(
+    "WAL replay restores completed mutations after a crash.",
+    map[string]any{"path": "guide/durability.md", "kind": "guide"},
 )
 ```
 
-Use hybrid search when users type natural-language queries that may include exact symbols, paths, timestamps, or other keywords.
+They participate in BM25 search, filters, iteration, and direct lookup. Vector search skips them until your application adds a vector.
 
-## Keep Embedding Pipelines in the App
+## Choose Collection and Space Boundaries
 
-VecLite can call an `Embedder`, but applications should still own domain-specific extraction and preprocessing. Keep file chunking, OCR, transcript parsing, frame extraction, batching, retries, and credential handling near the app that understands those workflows.
+| Data relationship | Recommended model |
+|---|---|
+| Records share one compatible embedding profile | One collection using the default space |
+| The same logical items have text, image, audio, or other embeddings | One collection with named vector spaces |
+| Records are unrelated or have different lifecycle and access policies | Separate collections |
+| You are migrating between incompatible profiles | A new collection or space, followed by an explicit rebuild |
 
-VecLite should own durable search primitives: storage, indexes, filters, metadata, text search, and result fusion.
+Do not put vectors from incompatible models into the same space, even if their dimensions match. A 768-dimensional vector from one model does not share a coordinate system with a 768-dimensional vector from another.
+
+## Persist Embedding Meaning
+
+`EmbeddingProfile` records what a vector means, not only how long it is:
+
+```go
+docs, err := db.CreateCollection("docs",
+    veclite.WithEmbeddingProfile(veclite.EmbeddingProfile{
+        Provider:  "ollama",
+        Model:     "nomic-embed-text",
+        Dimension: 768,
+        Distance:  veclite.DistanceCosine,
+        Normalize: true,
+        Version:   "chunker-v2",
+    }),
+)
+```
+
+Before reusing an existing index with a new embedding pipeline, compare profiles:
+
+```go
+if err := current.Compatible(incoming); err != nil {
+    // Rebuild the collection or write to a new space.
+}
+```
+
+The check catches provider, model, dimension, distance, normalization, and version changes that can invalidate retrieval. Profiles persist in the database. See [Embedding Strategy](/embeddings) for provider and preprocessing guidance.
+
+## Choose an Index
+
+VecLite uses brute-force vector search unless you enable HNSW.
+
+| Index | Use when | Tradeoff |
+|---|---|---|
+| Brute force | The collection is small, exact ranking matters, or you are testing | Compares the query with every vector |
+| HNSW | The collection is large enough that approximate search saves meaningful time | Uses more memory and requires tuning recall versus latency |
+
+Each vector space has its own dimension, distance metric, and optional HNSW index. BM25 is a separate text index over `Record.Content` and selected payload fields.
+
+VecLite supports cosine, dot product, Euclidean, and squared Euclidean distance. Cosine and dot scores are better when higher; Euclidean distances are better when lower. This distinction matters when setting thresholds. See [Search and Ranking](./search).
+
+## Keep Embedding Work in the Application
+
+VecLite owns durable retrieval primitives:
+
+- record, content, payload, vector, and profile persistence
+- vector dimensions, distance metrics, HNSW, and brute-force search
+- BM25 indexes, metadata filters, pagination, and result fusion
+- snapshots, WAL recovery, and storage migrations
+
+Your application should own domain and provider decisions:
+
+- file walking, chunking, OCR, transcripts, and media extraction
+- provider credentials, batching, retries, and model rollout
+- which text becomes `Content` and which values belong in `Payload`
+- when a changed profile or preprocessor requires a rebuild
+
+VecLite includes optional embedder integrations, but keeping extraction and rebuild policy near the application prevents the database layer from guessing at domain semantics.
+
+## Choose a Process Topology
+
+- **One process reading and writing:** embed the Go library.
+- **Several read-only processes:** use `WithReadOnly(true)` and `WithSharedRead(true)`. Each reader sees a point-in-time snapshot and calls `Reload()` to observe later writes.
+- **Several clients that write:** run `veclite serve` as the single file owner and use HTTP or the Go HTTP client.
+
+The HTTP server is intended for trusted local or private-network use. It does not provide built-in authentication or TLS. See [Choose an Interface](./interfaces) before exposing it to another process.
+
+## Next Steps
+
+- [Run the quickstart](./getting-started) to create and query a working collection.
+- [Choose a search mode](./search) for semantic, keyword, hybrid, or multimodal retrieval.
+- [Add named vector spaces](./named-vector-spaces) when one record needs several embeddings.
+- [Select a durability mode](./durability) before handling important writes.

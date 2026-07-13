@@ -1,179 +1,191 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { computed, ref } from "vue";
+import ProductIcon from "./ProductIcon.vue";
 
-type Tab = "go" | "cli" | "http";
+type Surface = "go" | "cli" | "http";
 
-const activeTab = ref<Tab>("go");
+const active = ref<Surface>("go");
+const copied = ref(false);
 
-const tabs: { id: Tab; label: string; filename: string }[] = [
-  { id: "go", label: "Go Library", filename: "main.go" },
-  { id: "cli", label: "CLI", filename: "terminal" },
-  { id: "http", label: "HTTP API", filename: "curl" },
-];
-
-const codeGo = `package main
+const examples: Array<{
+  id: Surface;
+  label: string;
+  filename: string;
+  note: string;
+  code: string;
+}> = [
+  {
+    id: "go",
+    label: "Embedded Go",
+    filename: "main.go",
+    note: "Runs in-process with no server",
+    code: `package main
 
 import (
     "fmt"
+    "log"
+
     "github.com/abdul-hamid-achik/veclite"
 )
 
 func main() {
-    db, _ := veclite.Open("vectors.veclite")
+    db, err := veclite.Open(":memory:") // or "search.veclite"
+    if err != nil {
+        log.Fatal(err)
+    }
     defer db.Close()
 
-    coll, _ := db.CreateCollection("docs",
-        veclite.WithDimension(384),
-        veclite.WithHNSW(16, 200),
-        veclite.WithTextIndex("title", "path"),
+    docs := db.Collection("docs")
+    _, err = docs.Insert(
+        []float32{0.1, 0.2, 0.3, 0.4},
+        map[string]any{"file": "README.md"},
     )
+    if err != nil {
+        log.Fatal(err)
+    }
 
-    // Store a vector + text + metadata in one record
-    vec := make([]float32, 384)
-    coll.InsertDocument(vec, "Go is a typed language",
-        map[string]any{"title": "Go", "path": "README.md"})
-
-    // Vector search, BM25 text search, or hybrid
-    results, _ := coll.HybridSearch(
-        queryVec, "typed language",
-        veclite.TopK(10),
-        veclite.WithVectorWeight(1.0),
-        veclite.WithTextWeight(0.5),
+    results, err := docs.Search(
+        []float32{0.15, 0.25, 0.35, 0.45},
+        veclite.TopK(1),
     )
+    if err != nil {
+        log.Fatal(err)
+    }
 
-    for _, r := range results {
-        fmt.Printf("Score: %.4f\\n", r.Score)
-    }`;
+    fmt.Println(results[0].Record.Payload["file"])
+}`,
+  },
+  {
+    id: "cli",
+    label: "CLI + JSON",
+    filename: "terminal",
+    note: "Script the same database from any language",
+    code: `# Create a four-dimensional HNSW collection
+veclite create-collection demo.veclite docs \\
+  --dimension=4 --hnsw --json
 
-const codeCli = `# Create a collection with HNSW + text index
-veclite create-collection docs \\
-  --dimension 384 --hnsw-m 16 --hnsw-ef 200 \\
-  --text-index title,path
+# Insert one vector and its payload
+veclite insert demo.veclite docs \\
+  --vector='[0.1,0.2,0.3,0.4]' \\
+  --payload='{"file":"README.md"}' --json
 
-# Insert a document with vector and metadata
-veclite insert docs \\
-  --content "Go is a typed language" \\
-  --metadata '{"title":"Go","path":"README.md"}'
+# Search and receive machine-readable JSON
+veclite search demo.veclite docs \\
+  --query='[0.15,0.25,0.35,0.45]' \\
+  --top-k=1 --json`,
+  },
+  {
+    id: "http",
+    label: "HTTP API",
+    filename: "curl",
+    note: "Use one writer process for multi-client access",
+    code: `# Start the local JSON server
+veclite serve demo.veclite --port=8080
 
-# Hybrid search (vector + BM25)
-veclite hybrid-search docs \\
-  --query "typed language" \\
-  --vector 0.1,0.2,0.3,...  \\
-  --top-k 10 --json
+# Create a collection
+curl -X POST localhost:8080/collections \\
+  -H 'Content-Type: application/json' \\
+  -d '{"name":"docs","dimension":4,"hnsw":true}'
 
-# Serve over HTTP
-veclite serve vectors.veclite --port 8080 --cors`;
+# Insert a vector
+curl -X POST localhost:8080/collections/docs/vectors \\
+  -H 'Content-Type: application/json' \\
+  -d '{"vector":[0.1,0.2,0.3,0.4],
+       "payload":{"file":"README.md"}}'
 
-const codeHttp = `# Create collection
-curl -X POST http://localhost:8080/collections \\
-  -H "Content-Type: application/json" \\
-  -d '{"name":"docs","dimension":384,
-       "hnsw":{"m":16,"efConstruction":200}}'
-
-# Insert a document
-curl -X POST http://localhost:8080/collections/docs/records \\
-  -H "Content-Type: application/json" \\
-  -d '{"vector":[0.1,0.2,0.3],
-       "content":"Go is a typed language",
-       "metadata":{"title":"Go"}}'
-
-# Hybrid search
-curl -X POST http://localhost:8080/collections/docs/hybrid-search \\
-  -H "Content-Type: application/json" \\
-  -d '{"query":"typed language","topK":10}'`;
-
-const currentCode = computed(() => {
-  switch (activeTab.value) {
-    case "go": return codeGo;
-    case "cli": return codeCli;
-    case "http": return codeHttp;
-  }
-});
-
-const currentFilename = computed(() => {
-  return tabs.find((t) => t.id === activeTab.value)?.filename || "";
-});
-
-function highlightCode(src: string, lang: Tab): string {
-  let html = src
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-
-  if (lang === "go") {
-    html = html.replace(/(\/\/.*)/g, '<span style="color:#6b7280">$1</span>');
-    html = html.replace(/(&quot;[^&]*?&quot;|`[^`]*?`)/g, '<span style="color:#a5f3a7">$1</span>');
-    html = html.replace(/\b(package|import|func|main|defer|for|range|return|if|else|var|const|type|struct|map|make|nil|true|false)\b/g, '<span style="color:#c4b5fd">$1</span>');
-    html = html.replace(/\b(string|int|int32|float32|float64|bool|byte|any)\b/g, '<span style="color:#7dd3fc">$1</span>');
-    html = html.replace(/\b(\d+(?:\.\d+)?)\b/g, '<span style="color:#fbbf24">$1</span>');
-    html = html.replace(/\.([A-Z][a-zA-Z0-9_]*)\b/g, '.<span style="color:#f0abfc">$1</span>');
-  } else if (lang === "cli") {
-    html = html.replace(/(#[^\n]*)/g, '<span style="color:#6b7280">$1</span>');
-    html = html.replace(/(veclite[\w-]*)/g, '<span style="color:#c4b5fd">$1</span>');
-    html = html.replace(/(--[\w-]+)/g, '<span style="color:#7dd3fc">$1</span>');
-    html = html.replace(/(&quot;[^&]*?&quot;|'[^']*?')/g, '<span style="color:#a5f3a7">$1</span>');
-    html = html.replace(/\b(curl|POST|GET|DELETE|PUT)\b/g, '<span style="color:#f0abfc">$1</span>');
-  } else {
-    html = html.replace(/(#[^\n]*)/g, '<span style="color:#6b7280">$1</span>');
-    html = html.replace(/\b(curl|POST|GET|DELETE|PUT)\b/g, '<span style="color:#f0abfc">$1</span>');
-    html = html.replace(/(-[XH]\s+\w+)/g, '<span style="color:#7dd3fc">$1</span>');
-    html = html.replace(/(&quot;[^&]*?&quot;|'[^']*?')/g, '<span style="color:#a5f3a7">$1</span>');
-  }
-
-  return html;
-}
-
-const highlighted = computed(() => highlightCode(currentCode.value, activeTab.value));
-
-const checklist = [
-  "Vector, text, and hybrid search in one API",
-  "In-memory mode (:memory:) for tests",
-  "Thread-safe — concurrent reads + serialized writes",
-  "Pluggable embedder: OpenAI, Ollama, local ONNX",
+# Search it
+curl -X POST localhost:8080/collections/docs/search \\
+  -H 'Content-Type: application/json' \\
+  -d '{"query":[0.15,0.25,0.35,0.45],"top_k":1}'`,
+  },
 ];
+
+const current = computed(() => examples.find((example) => example.id === active.value) ?? examples[0]);
+
+async function copyCode() {
+  try {
+    await navigator.clipboard.writeText(current.value.code);
+    copied.value = true;
+    window.setTimeout(() => (copied.value = false), 1800);
+  } catch {
+    copied.value = false;
+  }
+}
 </script>
 
 <template>
-  <section class="code-section vl-section">
-    <div class="vl-glow vl-glow--violet" style="width: 400px; height: 400px; top: 20%; right: -5%;" />
-    <div class="vl-inner">
-      <div class="code-section__grid">
-        <div class="code-section__text">
-          <span class="vl-eyebrow">Developer Experience</span>
-          <h2 class="vl-h2">Three lines to a<br />working vector database</h2>
-          <p class="vl-sub">
-            No server to configure. No external dependencies for core storage and search.
-            Open a file, create a collection, insert. That's it.
-          </p>
-          <ul class="code-section__list">
-            <li v-for="item in checklist" :key="item">
-              <span class="code-section__check">✓</span>
-              <span v-html="item.replace(/:memory:/g, '<code>:memory:</code>')"></span>
-            </li>
-          </ul>
-        </div>
+  <section class="quickstart vl-section">
+    <div class="vl-inner quickstart__grid">
+      <div v-reveal class="quickstart__copy">
+        <span class="vl-eyebrow">A working result, first</span>
+        <h2 class="vl-h2">From import to nearest match in one file.</h2>
+        <p class="vl-sub">
+          Start in memory, point the same code at a file when you want persistence,
+          and add HNSW, BM25, filters, or a WAL only when the workload calls for them.
+        </p>
 
-        <div class="vl-code code-section__code">
-          <!-- tab bar -->
-          <div class="code-section__tabs">
-            <button
-              v-for="tab in tabs"
-              :key="tab.id"
-              class="code-section__tab"
-              :class="{ 'code-section__tab--active': activeTab === tab.id }"
-              @click="activeTab = tab.id"
-            >
-              {{ tab.label }}
-            </button>
+        <ol class="quickstart__steps">
+          <li>
+            <span>01</span>
+            <div><strong>Open</strong><small>Use <code>:memory:</code> or a database path.</small></div>
+          </li>
+          <li>
+            <span>02</span>
+            <div><strong>Insert</strong><small>Keep vectors and payload data together.</small></div>
+          </li>
+          <li>
+            <span>03</span>
+            <div><strong>Search</strong><small>Return records, not detached vector IDs.</small></div>
+          </li>
+        </ol>
+
+        <div class="quickstart__links">
+          <a class="vl-btn vl-btn--primary" href="/guide/getting-started">
+            Follow the quickstart
+            <ProductIcon name="arrow" :size="16" />
+          </a>
+          <a class="vl-btn vl-btn--ghost" href="https://github.com/abdul-hamid-achik/veclite/tree/main/examples">
+            Browse examples
+          </a>
+        </div>
+      </div>
+
+      <div v-reveal class="quickstart__code vl-code">
+        <div class="quickstart__tabs" role="tablist" aria-label="VecLite interface examples">
+          <button
+            v-for="example in examples"
+            :id="`surface-tab-${example.id}`"
+            :key="example.id"
+            type="button"
+            role="tab"
+            :aria-selected="active === example.id"
+            :aria-controls="`surface-panel-${example.id}`"
+            :class="{ 'is-active': active === example.id }"
+            @click="active = example.id"
+          >
+            {{ example.label }}
+          </button>
+        </div>
+        <div class="vl-code__bar">
+          <span class="vl-code__dot" />
+          <span class="vl-code__dot" />
+          <span class="vl-code__dot" />
+          <span class="vl-code__filename">{{ current.filename }}</span>
+          <button type="button" @click="copyCode">
+            <ProductIcon :name="copied ? 'check' : 'copy'" :size="14" />
+            <span aria-live="polite">{{ copied ? "Copied" : "Copy" }}</span>
+          </button>
+        </div>
+        <div
+          :id="`surface-panel-${active}`"
+          role="tabpanel"
+          :aria-labelledby="`surface-tab-${active}`"
+        >
+          <pre><code>{{ current.code }}</code></pre>
+          <div class="quickstart__code-note">
+            <span class="quickstart__code-status" />
+            {{ current.note }}
           </div>
-          <!-- code bar with filename -->
-          <div class="vl-code__bar">
-            <span class="vl-code__dot vl-code__dot--red"></span>
-            <span class="vl-code__dot vl-code__dot--yellow"></span>
-            <span class="vl-code__dot vl-code__dot--green"></span>
-            <span class="vl-code__filename">{{ currentFilename }}</span>
-          </div>
-          <pre><code v-html="highlighted"></code></pre>
         </div>
       </div>
     </div>
@@ -181,89 +193,176 @@ const checklist = [
 </template>
 
 <style scoped>
-.code-section__grid {
+.quickstart {
+  background: var(--vl-bg);
+  border-bottom: 1px solid var(--vl-border);
+}
+
+.quickstart__grid {
   display: grid;
-  grid-template-columns: 0.9fr 1.1fr;
-  gap: 48px;
+  grid-template-columns: minmax(0, 0.76fr) minmax(520px, 1.24fr);
+  gap: clamp(48px, 7vw, 88px);
   align-items: center;
-  position: relative;
-  z-index: 1;
 }
 
-.code-section__list {
-  list-style: none;
+.quickstart__steps {
+  margin: 38px 0 0;
   padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+  display: grid;
+  list-style: none;
+  border-top: 1px solid var(--vl-border);
 }
 
-.code-section__list li {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  font-size: 15px;
-  color: var(--vl-text-2);
+.quickstart__steps li {
+  padding: 16px 0;
+  display: grid;
+  grid-template-columns: 38px 1fr;
+  gap: 12px;
+  border-bottom: 1px solid var(--vl-border);
+}
+
+.quickstart__steps li > span {
+  color: var(--vl-accent);
+  font-family: var(--vl-font-mono);
+  font-size: 10px;
+}
+
+.quickstart__steps div {
+  display: grid;
+  gap: 3px;
+}
+
+.quickstart__steps strong {
+  color: var(--vl-text);
+  font-size: 13px;
+  font-weight: 680;
+}
+
+.quickstart__steps small {
+  color: var(--vl-text-muted);
+  font-size: 11px;
   line-height: 1.5;
 }
 
-.code-section__list :deep(code) {
-  font-family: var(--vt-font-family-mono);
-  font-size: 13px;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: rgba(168, 85, 247, 0.1);
-  color: var(--vl-primary-light);
+.quickstart__steps code {
+  color: var(--vl-accent-soft);
+  font-family: var(--vl-font-mono);
 }
 
-.code-section__check {
-  color: #4ade80;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
-/* tabs */
-.code-section__tabs {
+.quickstart__links {
+  margin-top: 28px;
   display: flex;
-  gap: 4px;
-  padding: 6px 8px 0;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.quickstart__code {
+  min-width: 0;
+  box-shadow: 0 26px 70px rgba(5, 5, 4, 0.28);
+}
+
+.quickstart__tabs {
+  padding: 8px 8px 0;
+  display: flex;
+  gap: 3px;
+  background: var(--vl-surface);
   border-bottom: 1px solid var(--vl-border);
-  background: rgba(255, 255, 255, 0.02);
 }
 
-.code-section__tab {
-  padding: 8px 16px;
-  border: none;
-  background: transparent;
+.quickstart__tabs button {
+  padding: 9px 12px;
   color: var(--vl-text-muted);
-  font-size: 13px;
-  font-weight: 600;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
   cursor: pointer;
-  border-radius: 8px 8px 0 0;
-  transition: color 0.2s ease, background 0.2s ease;
   font-family: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  transition: color 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
 
-.code-section__tab:hover {
-  color: var(--vl-text-2);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-.code-section__tab--active {
+.quickstart__tabs button:hover {
   color: var(--vl-text);
-  background: rgba(124, 58, 237, 0.1);
-  border-bottom: 2px solid var(--vl-primary);
 }
 
-.code-section__code pre {
-  max-height: 520px;
+.quickstart__tabs button:active {
+  transform: scale(0.97);
 }
 
-@media (max-width: 860px) {
-  .code-section__grid {
+.quickstart__tabs button.is-active {
+  color: var(--vl-text);
+  border-bottom-color: var(--vl-accent);
+}
+
+.quickstart__code .vl-code__bar button {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--vl-text-muted);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+}
+
+.quickstart__code .vl-code__bar button:hover {
+  color: var(--vl-text);
+}
+
+.quickstart__code pre {
+  height: 492px;
+  max-height: 58dvh;
+}
+
+.quickstart__code-note {
+  min-height: 40px;
+  padding: 0 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--vl-text-muted);
+  background: var(--vl-surface);
+  border-top: 1px solid var(--vl-border);
+  font-size: 10px;
+}
+
+.quickstart__code-status {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--vl-signal);
+}
+
+@media (max-width: 960px) {
+  .quickstart__grid {
     grid-template-columns: 1fr;
-    gap: 32px;
+  }
+
+  .quickstart__copy {
+    max-width: 720px;
+  }
+}
+
+@media (max-width: 560px) {
+  .quickstart__links .vl-btn {
+    width: 100%;
+  }
+
+  .quickstart__tabs {
+    overflow-x: auto;
+  }
+
+  .quickstart__tabs button {
+    white-space: nowrap;
+  }
+
+  .quickstart__code pre {
+    height: 430px;
+    max-height: none;
+    font-size: 10px;
   }
 }
 </style>

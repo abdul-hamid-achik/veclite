@@ -1,110 +1,227 @@
 <script setup lang="ts">
-const links = [
-  { label: "Get Started", href: "/guide/getting-started", primary: true },
-  { label: "Named Vector Spaces", href: "/guide/named-vector-spaces" },
-  { label: "Embedding Strategy", href: "/embeddings" },
-  { label: "Durability & WAL", href: "/guide/durability" },
-  { label: "GitHub", href: "https://github.com/abdul-hamid-achik/veclite" },
-];
+import { ref } from "vue";
+import ProductIcon from "./ProductIcon.vue";
+
+const installCmd = "go get github.com/abdul-hamid-achik/veclite";
+const copied = ref(false);
+
+async function copyInstall() {
+  try {
+    await navigator.clipboard.writeText(installCmd);
+    copied.value = true;
+    window.setTimeout(() => (copied.value = false), 1800);
+  } catch {
+    copied.value = false;
+  }
+}
 </script>
 
 <template>
   <section class="cta vl-section">
-    <!-- gradient mesh -->
-    <div class="cta__mesh" />
-    <div class="vl-glow vl-glow--violet" style="width: 600px; height: 300px; top: 50%; left: 50%; transform: translate(-50%, -50%); opacity: 0.15;" />
-    <div class="vl-inner vl-center cta__inner">
-      <span class="vl-eyebrow cta__eyebrow">Ready to build?</span>
-      <h2 class="vl-h2">Start building with<br /><span class="vl-gradient-text">VecLite</span> today</h2>
-      <p class="vl-sub cta__sub">
-        One file. No server. HNSW, BM25, hybrid search, named vector spaces,
-        and agent memory — all in a Go import.
+    <div class="cta__ring cta__ring--one" aria-hidden="true" />
+    <div class="cta__ring cta__ring--two" aria-hidden="true" />
+    <div v-reveal class="vl-inner cta__inner">
+      <span class="vl-eyebrow">Keep search close</span>
+      <h2>Put the index beside the code that understands it.</h2>
+      <p>
+        Start with a four-dimensional demo today. Grow into HNSW, hybrid ranking,
+        named spaces, durable writes, and agent memory without changing databases.
       </p>
-      <div class="cta__links">
-        <a
-          v-for="l in links"
-          :key="l.label"
-          :href="l.href"
-          class="vl-btn"
-          :class="l.primary ? 'vl-btn--primary' : 'vl-btn--ghost'"
-        >
-          {{ l.label }}
+
+      <div class="cta__actions">
+        <a href="/guide/getting-started" class="vl-btn vl-btn--primary">
+          Build with VecLite
+          <ProductIcon name="arrow" :size="16" />
+        </a>
+        <a href="https://github.com/abdul-hamid-achik/veclite" class="vl-btn vl-btn--ghost">
+          View on GitHub
         </a>
       </div>
-      <div class="cta__install vl-glass">
-        <span class="cta__install-prompt">$</span>
-        <code>go get github.com/abdul-hamid-achik/veclite</code>
-      </div>
-      <p class="cta__footer">MIT Licensed · Go 1.25+ · Single-file · No server required</p>
+
+      <button class="cta__install" type="button" @click="copyInstall">
+        <span aria-hidden="true">$</span>
+        <code>{{ installCmd }}</code>
+        <span aria-live="polite">
+          <ProductIcon :name="copied ? 'check' : 'copy'" :size="15" />
+          {{ copied ? "Copied" : "Copy" }}
+        </span>
+      </button>
+
+      <footer class="cta__footer">
+        <span>VecLite v0.24.0</span>
+        <span>Go 1.25+</span>
+        <span>MIT licensed</span>
+        <a href="/project-status">Compatibility</a>
+        <a href="https://github.com/abdul-hamid-achik/veclite/releases">Releases</a>
+      </footer>
     </div>
   </section>
 </template>
 
 <style scoped>
 .cta {
-  text-align: center;
+  min-height: 720px;
+  display: grid;
+  place-items: center;
   overflow: hidden;
+  text-align: center;
+  background: #11110e;
 }
 
-.cta__mesh {
+.cta::before {
+  content: "";
   position: absolute;
   inset: 0;
-  background:
-    radial-gradient(ellipse 60% 50% at 50% 50%, rgba(124, 58, 237, 0.08), transparent 60%);
+  background-image:
+    linear-gradient(rgba(246, 240, 225, 0.027) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(246, 240, 225, 0.027) 1px, transparent 1px);
+  background-size: 54px 54px;
+  mask-image: radial-gradient(circle at center, black, transparent 72%);
   pointer-events: none;
-  z-index: 0;
+}
+
+.cta__ring {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border: 1px solid rgba(217, 119, 87, 0.12);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.cta__ring--one {
+  width: 680px;
+  height: 680px;
+}
+
+.cta__ring--two {
+  width: 920px;
+  height: 920px;
+  border-color: rgba(217, 119, 87, 0.065);
 }
 
 .cta__inner {
-  position: relative;
-  z-index: 1;
+  display: grid;
+  justify-items: center;
 }
 
-.cta__eyebrow {
-  justify-content: center;
-}
-
-.cta__eyebrow::before {
+.cta .vl-eyebrow::before {
   display: none;
 }
 
-.cta__sub {
-  margin-left: auto;
-  margin-right: auto;
+.cta h2 {
+  max-width: 860px;
+  margin: 0;
+  color: var(--vl-text);
+  font-size: clamp(44px, 6.2vw, 78px);
+  font-weight: 720;
+  line-height: 0.98;
+  letter-spacing: -0.055em;
 }
 
-.cta__links {
+.cta > .cta__inner > p {
+  max-width: 620px;
+  margin: 24px 0 0;
+  color: var(--vl-text-2);
+  font-size: 16px;
+  line-height: 1.7;
+}
+
+.cta__actions {
+  margin-top: 30px;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 12px;
-  margin-bottom: 28px;
+  gap: 10px;
 }
 
 .cta__install {
-  display: inline-flex;
+  width: min(100%, 560px);
+  margin-top: 22px;
+  padding: 11px 11px 11px 16px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  padding: 12px 20px;
-  border-radius: var(--vl-radius-sm);
+  color: var(--vl-text);
+  background: rgba(29, 29, 25, 0.82);
+  border: 1px solid var(--vl-border-strong);
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 180ms ease, transform 180ms ease, background 180ms ease;
 }
 
-.cta__install-prompt {
-  color: var(--vl-primary-light);
-  font-family: var(--vt-font-family-mono);
-  font-size: 14px;
+.cta__install:hover {
+  background: var(--vl-surface);
+  border-color: #5b5b4e;
+}
+
+.cta__install:active {
+  transform: scale(0.985);
+}
+
+.cta__install > span:first-child {
+  color: var(--vl-accent);
+  font-family: var(--vl-font-mono);
 }
 
 .cta__install code {
-  font-family: var(--vt-font-family-mono);
-  font-size: 14px;
-  color: var(--vl-text);
+  min-width: 0;
+  overflow: hidden;
+  color: var(--vl-text-2);
+  font-family: var(--vl-font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cta__install > span:last-child {
+  padding: 6px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--vl-text-muted);
+  background: rgba(246, 240, 225, 0.045);
+  border-radius: 6px;
+  font-size: 10px;
 }
 
 .cta__footer {
-  margin-top: 24px;
-  font-size: 13px;
+  margin-top: 48px;
+  padding-top: 22px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 9px 18px;
+  border-top: 1px solid var(--vl-border);
   color: var(--vl-text-muted);
-  letter-spacing: 0.02em;
+  font-family: var(--vl-font-mono);
+  font-size: 9px;
+}
+
+.cta__footer a {
+  color: var(--vl-text-2);
+  text-decoration: none !important;
+}
+
+.cta__footer a:hover {
+  color: var(--vl-accent-soft);
+}
+
+@media (max-width: 620px) {
+  .cta {
+    min-height: 650px;
+  }
+
+  .cta__actions,
+  .cta__actions .vl-btn {
+    width: 100%;
+  }
+
+  .cta__footer {
+    display: grid;
+  }
 }
 </style>

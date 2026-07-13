@@ -6,6 +6,7 @@ import FeatureGrid from "./components/FeatureGrid.vue";
 import CodeShowcase from "./components/CodeShowcase.vue";
 import AgentMemory from "./components/AgentMemory.vue";
 import CrossPlatform from "./components/CrossPlatform.vue";
+import DocsGateway from "./components/DocsGateway.vue";
 import CTASection from "./components/CTASection.vue";
 import Layout from "./Layout.vue";
 
@@ -21,6 +22,7 @@ export default {
     app.component("CodeShowcase", CodeShowcase);
     app.component("AgentMemory", AgentMemory);
     app.component("CrossPlatform", CrossPlatform);
+    app.component("DocsGateway", DocsGateway);
     app.component("CTASection", CTASection);
 
     // Scroll-reveal directive

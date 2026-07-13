@@ -1,4 +1,5 @@
 ---
+title: Named Vector Spaces
 description: "Named vector spaces in VecLite let one record carry multiple embeddings — text, image, audio — each with its own dimension, distance metric, and HNSW index."
 ---
 
@@ -83,6 +84,38 @@ byText, _  := coll.SearchSpace(veclite.DefaultVectorSpace, textQuery, veclite.To
 
 All standard search options apply: `TopK`, `WithFilter`, `Threshold`, `WithOffset`, `WithEfSearch`.
 
+### Upsert by payload key
+
+Use `UpsertRecordByKey` for idempotent ingestion when the source system has a stable key. VecLite preserves the record ID when replacing a match and updates every space atomically:
+
+```go
+id, inserted, err := coll.UpsertRecordByKey("source_id", "image-1042", veclite.RecordInput{
+    Content: "a red apple on a table",
+    Payload: map[string]any{"source_id": "image-1042", "label": "apple"},
+    Vectors: map[string][]float32{
+        veclite.DefaultVectorSpace: textVector,
+        "image":                    imageVector,
+    },
+})
+```
+
+`inserted` is `true` for a new record and `false` when VecLite replaced the existing match.
+
+### Fuse a space with BM25
+
+`HybridSearchSpace` searches one vector space and the collection's BM25 index, then fuses the two rankings with RRF. The collection must have text indexing enabled:
+
+```go
+matches, err := coll.HybridSearchSpace(
+    "image",
+    imageQuery,
+    "red apple",
+    veclite.TopK(10),
+    veclite.WithVectorWeight(0.8),
+    veclite.WithTextWeight(1.0),
+)
+```
+
 ### Fuse multiple spaces
 
 `MultiSpaceSearch` runs one query per space and fuses the result sets with Reciprocal Rank Fusion,
@@ -148,7 +181,7 @@ still works.
 
 ## CLI
 
-The CLI is a language-agnostic surface over the same operations (every command supports `--json`):
+The CLI is a language-agnostic surface over the same operations. The record and search commands below support `--json` for machine-readable output:
 
 ```bash
 # Declare a named space
@@ -170,6 +203,16 @@ veclite search-space items.veclite items image --query='[...]' --top-k=5 --json
 
 # Fuse several spaces with RRF
 veclite fuse-search items.veclite items --queries='{"default":[...],"image":[...]}' --top-k=10 --json
+
+# Idempotently insert or replace by a stable payload key
+veclite record-upsert-by-key items.veclite items \
+  --key-field=source_id --key-value=image-1042 \
+  --vectors='{"default":[...],"image":[...]}' \
+  --content='a red apple' --payload='{"label":"apple"}' --json
+
+# Fuse one named space with the collection's BM25 index
+veclite hybrid-search-space items.veclite items image \
+  --query='[...]' --text='red apple' --top-k=10 --json
 ```
 
 ## HTTP
@@ -181,21 +224,38 @@ veclite fuse-search items.veclite items --queries='{"default":[...],"image":[...
 | `GET`  | `/collections/{name}/spaces` | — |
 | `POST` | `/collections/{name}/spaces` | `{"name":"image","dimension":512,"modality":"image","hnsw":true}` |
 | `POST` | `/collections/{name}/records` | `{"content":"...","payload":{...},"vectors":{"default":[...],"image":[...]}}` |
+| `POST` | `/collections/{name}/records-upsert-by-key` | `{"key_field":"source_id","key_value":"image-1042","content":"...","payload":{...},"vectors":{"image":[...]}}` |
 | `POST` | `/collections/{name}/search-space` | `{"space":"image","query":[...],"top_k":5}` |
+| `POST` | `/collections/{name}/hybrid-search-space` | `{"space":"image","query":[...],"text":"red apple","top_k":5}` |
 | `POST` | `/collections/{name}/fuse-search` | `{"queries":{"default":[...],"image":[...]},"top_k":10}` |
 
 ```bash
-veclite serve --port=8080 items.veclite
+# Small, runnable two-dimensional example
+veclite create-collection items.veclite items --dimension=2
+veclite space-add items.veclite items --name=image_demo --dim=2
+veclite record-insert items.veclite items \
+  --vectors='{"image_demo":[0.1,0.2]}' --content='red apple'
+veclite serve items.veclite --port=8080
+
 curl -X POST localhost:8080/collections/items/search-space \
-  -d '{"space":"image","query":[0.3,0.4],"top_k":5}'
+  -H 'Content-Type: application/json' \
+  -d '{"space":"image_demo","query":[0.1,0.2],"top_k":5}'
 ```
 
 > The CLI and HTTP JSON shapes are a stable, cross-language contract. Language drivers (Python,
 > TypeScript, …) are planned and will build on exactly these shapes; the `specs/glyphrun/` behavior
 > specs pin them down.
 
+See the [CLI reference](/reference/cli) and [HTTP API reference](/reference/http-api) for complete request and response shapes.
+
 ## Storage and migration
 
 Named vector spaces use on-disk format **v4**. Older databases (v1–v3) migrate automatically and
 losslessly on open: their single vector becomes the implicit `default` space, with no record
 rewrite. You never need to run a migration command — opening the file is enough.
+
+## Next steps
+
+- Read [Search and Ranking](./search) to choose between one-space, hybrid, and multi-space fusion.
+- Read [Embedding Strategy](/embeddings) before assigning profiles to each space.
+- Add [WAL durability](./durability) before running an important ingestion pipeline.

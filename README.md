@@ -1,8 +1,8 @@
 # VecLite
 
-Embeddable vector database for Go.
+Local vector, keyword, and multimodal search without operating a separate database service.
 
-Store vectors with metadata in a single file. Search with cosine similarity, dot product, or Euclidean distance. Add HNSW for fast approximate nearest neighbors. Use BM25 for full-text search. Combine both with hybrid search.
+Embed VecLite in a Go application, or use its JSON CLI, HTTP, and MCP surfaces. Store vectors, text, and metadata locally; search with brute force or HNSW, BM25, hybrid RRF, metadata filters, and named vector spaces.
 
 ## Table of Contents
 
@@ -62,7 +62,7 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
 ## Features
 
 - **Embeddable Go library** -- Core vector storage and search are small and local-first; optional integrations add provider-specific modules
-- **Single-file storage** -- Database persists to one `.veclite` file
+- **Portable snapshots** -- Database state persists to one `.veclite` snapshot file; writers may also use a lock artifact and optional WAL sidecar
 - **Private by default** -- New database, lock, and storage-directory artifacts are owner-only on POSIX systems
 - **HNSW indexing** -- Fast approximate nearest neighbor search
 - **BM25 text search** -- Full-text search over record content and payload fields
@@ -83,15 +83,15 @@ Store vectors with metadata in a single file. Search with cosine similarity, dot
 
 ### Agent Memory Features
 
-- **TTL and expiration** -- Records can expire automatically after a duration
-- **Background TTL cleanup** -- Automatic periodic cleanup of expired records
+- **TTL and expiration** -- Records carry expiration timestamps with explicit and caller-started cleanup APIs
+- **Background TTL cleanup** -- Caller-started periodic cleanup of expired records
 - **Importance scoring** -- Assign importance (0.0-1.0) to records for prioritized retrieval
 - **Temporal decay** -- Search scores decay based on record age (exponential, linear, gaussian)
 - **Access tracking** -- Track when records are accessed and how often
 - **Memory pressure handling** -- Automatic eviction with FIFO, LRU, or importance policies
 - **Conversation memory** -- Session-based conversation turns with threading support
 - **Real-time subscriptions** -- Get notified when new records match a query
-- **Memory consolidation** -- Cluster and consolidate similar memories
+- **Memory consolidation** -- Caller-driven clustering and consolidation of similar memories
 - **Episodic memory** -- Group related memories into coherent episodes
 - **Knowledge graph** -- Entity-relationship graph with traversal and vector search
 
@@ -102,26 +102,40 @@ package main
 
 import (
     "fmt"
+    "log"
+
     "github.com/abdul-hamid-achik/veclite"
 )
 
 func main() {
-    db, _ := veclite.Open("vectors.veclite")
+    db, err := veclite.Open(":memory:") // or "search.veclite"
+    if err != nil {
+        log.Fatal(err)
+    }
     defer db.Close()
 
-    coll, _ := db.CreateCollection("embeddings",
-        veclite.WithDimension(384),
-        veclite.WithHNSW(16, 200),
+    docs := db.Collection("docs")
+    _, err = docs.Insert(
+        []float32{0.1, 0.2, 0.3, 0.4},
+        map[string]any{"file": "README.md"},
     )
-
-    coll.Insert([]float32{0.1, 0.2 /* ... */}, map[string]any{"file": "main.go"})
-
-    results, _ := coll.Search(queryVector, veclite.TopK(10))
-    for _, r := range results {
-        fmt.Printf("ID: %d, Score: %.4f\n", r.Record.ID, r.Score)
+    if err != nil {
+        log.Fatal(err)
     }
+
+    results, err := docs.Search(
+        []float32{0.15, 0.25, 0.35, 0.45},
+        veclite.TopK(1),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    fmt.Println(results[0].Record.Payload["file"])
 }
 ```
+
+Continue with the [documentation quickstart](https://veclite.dev/guide/getting-started) for HNSW, BM25, hybrid retrieval, the CLI, and expected output.
 
 ## Installation
 
@@ -176,7 +190,8 @@ guide and [ADR-0001](docs/adr/0001-embedding-boundary-and-named-vector-spaces.md
 
 ## Project Status
 
-See [docs/project-status.md](docs/project-status.md) for the current implementation boundary, related-project usage notes, and missing work.
+See [docs/project-status.md](docs/project-status.md) for version compatibility, supported interfaces,
+operational boundaries, and the current support matrix.
 
 ## Library API
 
@@ -1203,7 +1218,7 @@ VecLite includes features designed for AI agent memory systems, enabling intelli
 
 ### TTL and Expiration
 
-Records can have a time-to-live (TTL) and expire automatically:
+Records can carry a time-to-live (TTL). Expiration is metadata until you call `CleanupExpired` or start the background cleaner:
 
 ```go
 // Insert with TTL
@@ -1669,7 +1684,7 @@ veclite <command> [arguments]
 | `validate <file>` | Validate database integrity |
 | `benchmark <file>` | Run search performance benchmark |
 
-All commands support `--json` for JSON output.
+Most data and maintenance commands support `--json` for machine-readable output. Long-running commands such as `serve` and `mcp`, and the human-oriented `version` command, do not.
 
 ### CLI Examples
 
@@ -2087,14 +2102,16 @@ All examples use `:memory:` for zero-setup running (except `http-client`, which 
 
 ## Performance
 
-Benchmark results on 10,000 384-dimensional vectors:
+HNSW trades exact ranking and additional memory for lower query cost on larger collections. The result depends on dataset size and structure, vector dimension, hardware, and the `M`, `efConstruction`, and `efSearch` settings, so VecLite does not publish one context-free speedup or recall number.
 
-| Method | Time | Speedup |
-|--------|------|---------|
-| Brute Force | ~2.5ms | 1x |
-| HNSW | ~0.4ms | 6x |
+Run the checked-in benchmarks on your target workload and hardware:
 
-HNSW provides >95% recall at 6-7x speedup over brute force.
+```bash
+go test -run '^$' -bench 'Benchmark(Search|BruteForce)$' -benchmem ./internal/hnsw
+go test -run '^TestRecall$' -v ./internal/hnsw
+```
+
+When comparing configurations, record the VecLite version, hardware, dataset size, dimension, query count, HNSW parameters, latency distribution, and recall against brute force.
 
 ## Thread Safety
 

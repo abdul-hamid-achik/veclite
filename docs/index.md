@@ -1,5 +1,5 @@
 ---
-layout: doc
+layout: page
 title: VecLite
 ---
 
@@ -9,13 +9,15 @@ title: VecLite
 
 <StatsBar />
 
-<FeatureGrid />
-
 <CodeShowcase />
+
+<FeatureGrid />
 
 <AgentMemory />
 
 <CrossPlatform />
+
+<DocsGateway />
 
 <CTASection />
 
