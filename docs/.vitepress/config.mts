@@ -8,9 +8,9 @@ import { defineConfig } from "vitepress";
 const SITE_URL = "https://veclite.dev";
 const OG_IMAGE = "/og-image.png";
 
-const ogTitle = "VecLite — Embeddable Vector Database for Go";
+const ogTitle = "VecLite — Embeddable Vector Database Built in Go";
 const ogDescription =
-  "Store vectors, text, and metadata in a single file. Search with HNSW, BM25, hybrid ranking, and multimodal named vector spaces. No database server required.";
+  "Embeddable vector database built in Go. Store vectors, text, and metadata in a single file. Search with HNSW, BM25, hybrid ranking, and multimodal named vector spaces. Usable from any language via CLI, HTTP, and MCP.";
 
 const jsonLd = JSON.stringify({
   "@context": "https://schema.org",
@@ -34,7 +34,7 @@ const jsonLd = JSON.stringify({
 
 export default defineConfig({
   title: "VecLite",
-  titleTemplate: "Embeddable Vector Database for Go",
+  titleTemplate: "Embeddable Vector Database",
   description: ogDescription,
   cleanUrls: true,
   lastUpdated: true,

@@ -58,8 +58,8 @@ const features = [
         <span class="vl-eyebrow">Capabilities</span>
         <h2 class="vl-h2">Everything you need for<br />local-first vector search</h2>
         <p class="vl-sub">
-          Import as a Go library or run as a standalone engine. VecLite owns storage,
-          indexing, filtering, and ranking — you own your data.
+          Import as a Go library, or drive from any language via CLI, HTTP, and MCP.
+          VecLite owns storage, indexing, filtering, and ranking — you own your data.
         </p>
       </div>
 

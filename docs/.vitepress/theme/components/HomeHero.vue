@@ -99,11 +99,12 @@ const marqueeBadges = [...techBadges, ...techBadges];
         </span>
         <h1 class="hero__title">
           The embeddable vector database
-          <span class="vl-gradient-text">for Go</span>
+          <span class="vl-gradient-text">built in Go</span>
         </h1>
         <p class="hero__tagline">
-          Store vectors, text, and metadata in a single file. Search with HNSW, BM25,
-          hybrid ranking, and multimodal named vector spaces — no database server required.
+          Built in Go. Drive from any language through CLI, HTTP, and MCP. Store
+          vectors, text, and metadata in a single file with HNSW, BM25, hybrid
+          ranking, and multimodal named vector spaces — no database server required.
         </p>
 
         <!-- install bar -->

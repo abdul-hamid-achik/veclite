@@ -1,10 +1,10 @@
 ---
-description: "Get started with VecLite — an embeddable vector database for Go. Install, create collections, insert vectors, and search with HNSW and BM25."
+description: "Get started with VecLite — an embeddable vector database built in Go. Install, create collections, insert vectors, and search with HNSW and BM25."
 ---
 
 # Getting Started
 
-VecLite is an embeddable vector database for Go. Use it when your application needs local vector storage, metadata filters, BM25 text search, or hybrid search without running a separate database server.
+VecLite is an embeddable vector database built in Go. Use it when your application needs local vector storage, metadata filters, BM25 text search, or hybrid search without running a separate database server. Drive it from Go directly, or from any language via the CLI and HTTP server.
 
 ## Install
 
