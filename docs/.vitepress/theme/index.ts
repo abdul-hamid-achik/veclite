@@ -7,11 +7,13 @@ import CodeShowcase from "./components/CodeShowcase.vue";
 import AgentMemory from "./components/AgentMemory.vue";
 import CrossPlatform from "./components/CrossPlatform.vue";
 import CTASection from "./components/CTASection.vue";
+import Layout from "./Layout.vue";
 
 import "./style.css";
 
 export default {
   extends: DefaultTheme,
+  Layout,
   enhanceApp({ app }) {
     app.component("HomeHero", HomeHero);
     app.component("StatsBar", StatsBar);
