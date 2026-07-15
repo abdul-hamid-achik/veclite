@@ -1,5 +1,6 @@
 import DefaultTheme from "vitepress/theme";
 import type { Theme } from "vitepress";
+import { inject } from "@vercel/analytics";
 import HomeHero from "./components/HomeHero.vue";
 import StatsBar from "./components/StatsBar.vue";
 import FeatureGrid from "./components/FeatureGrid.vue";
@@ -16,6 +17,8 @@ export default {
   extends: DefaultTheme,
   Layout,
   enhanceApp({ app }) {
+    // Vercel Web Analytics — browser-only; auto-skips in preview deploys.
+    inject();
     app.component("HomeHero", HomeHero);
     app.component("StatsBar", StatsBar);
     app.component("FeatureGrid", FeatureGrid);
