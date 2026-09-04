@@ -143,3 +143,16 @@ Non-2xx HTTP responses become descriptive Go errors that include the server's ma
 - Read [Choose an Interface](./interfaces) to compare this client with shared reads and raw HTTP.
 - Use the [HTTP API reference](/reference/http-api) for operations the client does not wrap.
 - Add [WAL durability](./durability) to the server before handling important writes.
+
+## Reuse local read sessions
+
+`session.New(session.Config{Path: path, ReloadInterval: 5 * time.Second})`
+provides a lazy cached reader. Call `ReloadIfStale(nil)` before a query and
+retrieve the collection from the returned DB after reloading. Once the interval
+expires, unchanged snapshot and WAL file metadata avoids rebuilding the indexes.
+`ReloadIfStale(func() bool { return true })` forces a reload. Check its error:
+an unreadable WAL must not be interpreted as a successfully refreshed snapshot.
+
+Write handles are also cached. Call `ReleaseReadWrite()` after the write and
+`Close()` on shutdown; do not close a borrowed DB directly. Raw `DB.Reload()`
+remains unconditional. These changes do not alter the storage format.

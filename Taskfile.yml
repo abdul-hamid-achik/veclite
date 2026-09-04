@@ -1,5 +1,9 @@
 version: '3'
 
+vars:
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+
 tasks:
   default:
     desc: Show available tasks
@@ -77,4 +81,4 @@ tasks:
   install:
     desc: Install veclite CLI
     cmds:
-      - go install ./cmd/veclite
+      - go install -ldflags "-X main.version={{.VERSION}}" ./cmd/veclite

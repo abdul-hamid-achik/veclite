@@ -1,26 +1,11 @@
 // Package session provides a lazy dual-handle database session that resolves
 // the multi-process lock contention problem with veclite's file-based storage.
 //
-// Read paths use a shared flock (LOCK_SH via WithReadOnly + WithSharedRead),
-// allowing multiple reader processes to coexist. Write paths use an exclusive
-// flock (LOCK_EX) — only one writer at a time. Because LOCK_SH and LOCK_EX are
-// mutually exclusive, the session automatically closes any cached read-only
-// handle before opening a read-write one, so a long-lived process (e.g. an MCP
-// server) can transition from reading to writing without deadlocking.
-//
-// Handles are lazy: New() does not open anything. The first ReadOnly() or
-// ReadWrite() call opens the database. This means an idle process that never
-// queries (e.g. an MCP server waiting for tool calls) never holds a lock.
-//
-// Read-only handles are cached for fast repeated searches. Read-write handles
-// are returned uncached — the caller must Close() the *veclite.DB after use so
-// the exclusive lock is released, allowing other processes to open the
-// database again.
-//
-// ReloadIfStale re-reads the database from disk so a cached read-only handle
-// can pick up writes performed by another process (e.g. the daemon or CLI
-// index). It is a no-op if no read-only handle is open or if the reload
-// interval has not elapsed.
+// Reads cache lock-free, point-in-time snapshots. Writes cache an exclusive
+// handle until ReleaseReadWrite or Close. Never close a returned DB directly.
+// Handles open lazily. ReloadIfStale checks the snapshot and WAL file identity,
+// size and modification time after the configured interval; unchanged files
+// keep the existing in-memory indexes. A true signal forces a reload.
 //
 // # Quick start
 //
@@ -30,16 +15,16 @@
 //	    ReloadInterval: 5 * time.Second,
 //	})
 //
-//	// Read-only (shared lock, cached):
+//	// Read-only (lock-free snapshot, cached):
 //	db, err := sess.ReadOnly()
 //	// ... search ...
 //
 //	// Pick up external writes:
 //	_ = sess.ReloadIfStale(nil)
 //
-//	// Read-write (closes RO first, returns uncached handle for caller to close):
+//	// Read-write (closes RO first, cached until released):
 //	db, err := sess.ReadWrite()
-//	defer db.Close()
+//	defer sess.ReleaseReadWrite()
 //	// ... insert/update/delete ...
 //
 //	// Clean shutdown:
@@ -103,10 +88,11 @@ type Session struct {
 	cfg Config
 
 	mu sync.Mutex
-	ro *veclite.DB // cached read-only handle (shared lock), nil when not open
+	ro *veclite.DB // cached read-only snapshot, nil when not open
 	rw *veclite.DB // cached read-write handle (exclusive lock), nil when not open
 
 	lastReload time.Time
+	disk       [2]os.FileInfo
 }
 
 // New creates a new session. No database is opened until ReadOnly() or
@@ -116,7 +102,7 @@ func New(cfg Config) *Session {
 }
 
 // ReadOnly returns a *veclite.DB opened with WithReadOnly + WithSharedRead
-// (shared flock). The handle is cached: the first call opens the database,
+// (lock-free snapshot). The handle is cached: the first call opens the database,
 // subsequent calls return the same handle.
 //
 // If a read-write handle is already cached, it is returned directly (it can
@@ -134,6 +120,10 @@ func (s *Session) ReadOnly() (*veclite.DB, error) {
 		return s.ro, nil
 	}
 
+	disk, err := s.diskState()
+	if err != nil {
+		return nil, err
+	}
 	db, err := veclite.Open(s.cfg.Path,
 		veclite.WithReadOnly(true),
 		veclite.WithSharedRead(true),
@@ -142,6 +132,7 @@ func (s *Session) ReadOnly() (*veclite.DB, error) {
 		return nil, err
 	}
 	s.ro = db
+	s.disk = disk
 	s.lastReload = time.Now()
 	return db, nil
 }
@@ -153,8 +144,8 @@ func (s *Session) ReadOnly() (*veclite.DB, error) {
 // can access the database again. Do not call db.Close() directly on the
 // returned handle; use ReleaseReadWrite so the session's cache stays coherent.
 //
-// If a read-only handle is cached, it is closed first (releasing the shared
-// lock) so the exclusive lock can be acquired. If a read-write handle is
+// If a read-only handle is cached, it is closed first to discard the old snapshot.
+// If a read-write handle is
 // already cached (e.g. from a previous call that didn't release), it is
 // returned directly.
 //
@@ -168,8 +159,7 @@ func (s *Session) ReadWrite() (*veclite.DB, error) {
 		return s.rw, nil
 	}
 
-	// Close cached RO so LOCK_EX can be acquired (LOCK_SH and LOCK_EX are
-	// mutually exclusive).
+	// Discard the cached snapshot before opening the writer.
 	if s.ro != nil {
 		_ = s.ro.Close()
 		s.ro = nil
@@ -190,9 +180,8 @@ func (s *Session) ReadWrite() (*veclite.DB, error) {
 	return db, nil
 }
 
-// ReloadIfStale reloads the cached read-only handle from disk if the reload
-// interval has elapsed since the last reload, or if the signal callback
-// returns true.
+// ReloadIfStale checks for changed snapshot/WAL files after the reload interval.
+// Unchanged file metadata retains the existing indexes; a true signal forces reload.
 //
 // The optional signal callback lets callers provide a cheaper check (e.g.
 // stat a daemon.json mtime) — if it returns true, the reload happens
@@ -215,25 +204,31 @@ func (s *Session) ReloadIfStale(signal func() bool) error {
 	}
 
 	stale := s.cfg.ReloadInterval > 0 && time.Since(s.lastReload) > s.cfg.ReloadInterval
-	if signal != nil && signal() {
-		stale = true
-	}
+	forced := signal != nil && signal()
+	stale = stale || forced
 	if !stale {
 		return nil
 	}
 
+	// Observe before loading: a concurrent write must remain detectable on the
+	// next check, rather than being recorded as already loaded.
+	disk, err := s.diskState()
+	if err != nil {
+		return err
+	}
+	if !forced && sameDiskState(s.disk, disk) {
+		s.lastReload = time.Now()
+		return nil
+	}
 	if err := s.ro.Reload(); err != nil {
 		return err
 	}
+	s.disk = disk
 	s.lastReload = time.Now()
 	return nil
 }
 
-// ReleaseReadOnly closes the cached read-only handle if one is open, releasing
-// the shared lock. This is useful before an external operation that needs the
-// exclusive lock (e.g. a CLI sub-process that opens its own writer).
-//
-// The next ReadOnly() call will re-open the handle.
+// ReleaseReadOnly discards the cached snapshot. The next ReadOnly opens a fresh one.
 func (s *Session) ReleaseReadOnly() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -358,4 +353,36 @@ func parseInt64(s string) (int64, error) {
 		n = n*10 + int64(c-'0')
 	}
 	return n, nil
+}
+
+func (s *Session) diskState() ([2]os.FileInfo, error) {
+	var state [2]os.FileInfo
+	if s.cfg.Path == ":memory:" {
+		return state, nil
+	}
+	for i, path := range []string{s.cfg.Path, storage.WALPath(s.cfg.Path)} {
+		info, err := os.Stat(path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return state, err
+		}
+		state[i] = info
+	}
+	return state, nil
+}
+
+// ponytail: metadata detects normal atomic saves and WAL appends; force reload
+// with the signal callback for external writers that preserve all metadata.
+func sameDiskState(a, b [2]os.FileInfo) bool {
+	for i := range a {
+		if a[i] == nil || b[i] == nil {
+			if a[i] != nil || b[i] != nil {
+				return false
+			}
+			continue
+		}
+		if !os.SameFile(a[i], b[i]) || a[i].Size() != b[i].Size() || !a[i].ModTime().Equal(b[i].ModTime()) {
+			return false
+		}
+	}
+	return true
 }

@@ -27,7 +27,7 @@ import (
 )
 
 // Version is the library version.
-const Version = "0.24.0"
+const Version = "0.24.1"
 
 // DB represents a VecLite database.
 type DB struct {
@@ -647,6 +647,11 @@ func (db *DB) Reload() error {
 		newEpisodes[name] = es
 	}
 
+	entries, err := storage.ReadWALEntries(storage.WALPath(db.path))
+	if err != nil {
+		return fmt.Errorf("reload WAL: %w", err)
+	}
+
 	// Atomic swap: replace all in-memory state at once.
 	db.metadata = newMetadata
 	db.collections = newCollections
@@ -665,11 +670,7 @@ func (db *DB) Reload() error {
 	// shared reader this picks up a writer's not-yet-snapshotted mutations
 	// (a torn in-flight append is skipped); for a WAL-enabled writer it
 	// restores its own since-last-save mutations that Load cannot see.
-	if entries, err := storage.ReadWALEntries(storage.WALPath(db.path)); err == nil {
-		db.applyWALEntries(entries)
-	} else {
-		db.logger.Error("veclite: reload skipped unreadable WAL", "error", err)
-	}
+	db.applyWALEntries(entries)
 
 	return nil
 }

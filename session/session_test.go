@@ -459,3 +459,126 @@ func TestCloseClosesBothHandles(t *testing.T) {
 	}
 	_ = sess.Close()
 }
+
+func TestReloadKeepsUnchangedIndexesAndSeesWALWrites(t *testing.T) {
+	sess, path := newTestSession(t, time.Nanosecond)
+	defer func() { _ = sess.Close() }()
+	writer, err := veclite.Open(path, veclite.WithWAL(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = writer.Close() }()
+	collection, err := writer.CreateCollection("test", veclite.WithDimension(4))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := sess.ReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := reader.GetCollection("test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sess.ReloadIfStale(nil); err != nil {
+		t.Fatal(err)
+	}
+	same, _ := reader.GetCollection("test")
+	if same != before {
+		t.Fatal("unchanged files rebuilt indexes")
+	}
+	if _, err := collection.Insert([]float32{1, 0, 0, 0}, map[string]any{"v": 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sess.ReloadIfStale(nil); err != nil {
+		t.Fatal(err)
+	}
+	updated, _ := reader.GetCollection("test")
+	if updated.Stats().Count != 1 {
+		t.Fatal("WAL-only write was missed")
+	}
+	if err := sess.ReloadIfStale(func() bool { return true }); err != nil {
+		t.Fatal(err)
+	}
+	forced, _ := reader.GetCollection("test")
+	if forced == updated {
+		t.Fatal("signal did not force reload")
+	}
+}
+
+func TestFailedReloadPreservesSnapshotAndRetries(t *testing.T) {
+	sess, path := newTestSession(t, time.Nanosecond)
+	defer func() { _ = sess.Close() }()
+	writer, err := veclite.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer.Collection("test")
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := sess.ReadOnly()
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := reader.GetCollection("test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A directory at the WAL path is unreadable as a log on all platforms.
+	if err := os.Mkdir(path+".wal", 0700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := sess.ReloadIfStale(nil); err == nil {
+			t.Fatal("unreadable WAL reported success")
+		}
+		after, _ := reader.GetCollection("test")
+		if after != before {
+			t.Fatal("failed reload replaced the cached snapshot")
+		}
+	}
+}
+
+func BenchmarkUnchangedReadRefresh(b *testing.B) {
+	path := filepath.Join(b.TempDir(), "bench.veclite")
+	writer, err := veclite.Open(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	coll := writer.Collection("test")
+	for i := 0; i < 100; i++ {
+		if _, err := coll.Insert([]float32{1, 2, 3, 4}, map[string]any{"content": "unchanged code"}); err != nil {
+			b.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		b.Fatal(err)
+	}
+	for _, mode := range []string{"reload", "session"} {
+		b.Run(mode, func(b *testing.B) {
+			sess := New(Config{Path: path, ReloadInterval: time.Nanosecond})
+			defer func() { _ = sess.Close() }()
+			reader, err := sess.ReadOnly()
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if mode == "reload" {
+					err = reader.Reload()
+				} else {
+					err = sess.ReloadIfStale(nil)
+				}
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
