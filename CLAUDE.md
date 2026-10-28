@@ -16,7 +16,7 @@ VecLite is usable as a Go library **and** as a standalone engine other languages
 the CLI and HTTP server. Language drivers (Python, TypeScript, …) are **planned, not built yet**.
 Until they exist, the rule is: the CLI and HTTP **JSON shapes are a public cross-language
 contract**. Keep them additive and stable, and back every CLI behavior with a
-`specs/glyphrun/` spec so a future driver can be validated against the same expectations.
+`flows/` spec so a future driver can be validated against the same expectations.
 
 ## The named-vector-space model (the load-bearing idea)
 
@@ -44,12 +44,13 @@ contract**. Keep them additive and stable, and back every CLI behavior with a
 - **Locks:** DB → Collection → Index, outermost to innermost (see AGENTS.md). Named-space
   searches take the Collection `RLock`; never call a method that re-locks while holding it.
 - **Docs are already hosted — don't add a deploy target, and don't put notes there.** The `docs/`
-  folder is the **VitePress public website only** (deployed to **Vercel** via `vercel.json` + the
-  linked `.vercel` project, auto-deploys on push, served at root). There is no GitHub Pages and
-  there should not be — a redundant Pages workflow was added once and removed. Build locally with
-  `task site`; new assets go in `docs/.vitepress/public/` (root paths). **Do not** drop working
-  notes, handoffs, journals, or scratch `.md` files into `docs/` or anywhere else in the repo —
-  that mixes internal state with published docs and can ship private notes to the public site.
+  folder is the **VitePress public website only** (deployed to **Vercel** via `vercel.json`). Git
+  auto-builds **`main` only**; feature branches do not deploy; `ignoreCommand` skips non-docs
+  commits. Do not `vercel promote`; CLI binaries ship from tags. Served at domain root. There is
+  no GitHub Pages. Build locally with `task site`; new assets go in `docs/.vitepress/public/`
+  (root paths). **Do not** drop working notes, handoffs, journals, or scratch `.md` files into
+  `docs/` or anywhere else in the repo — that mixes internal state with published docs and can
+  ship private notes to the public site.
 - **Notes go in the Obsidian vault, not the repo.** Working notes live in `~/notes` and
   per-project notes in `~/notes/projects/<project>/` (the vault already has `veclite/` and sibling
   `vecgrep/` folders). Use the **`obsidian-cli` skill** (load via the skill tool) to create/append/
@@ -67,8 +68,8 @@ contract**. Keep them additive and stable, and back every CLI behavior with a
 ```bash
 task lint && task test          # or: go vet ./... && go test -race ./...
 go test -race ./...             # named-space + migration tests live in vectorspace_test.go
-glyph run specs/glyphrun/cli_named_spaces.yml   # CLI behavior contract
-glyph run specs/glyphrun/cli_fuse_search.yml
+glyph run flows/cli/named_spaces.yml   # CLI behavior contract
+glyph run flows/cli/fuse_search.yml
 ```
 
 Keep `README.md`, the `docs/` site, and `AGENTS.md` in sync with any API or CLI change.

@@ -1,12 +1,13 @@
 version: 1
 
-# Glyphrun drives the compiled `veclite` CLI inside a real PTY and checks its
-# user-visible behaviour against the specs under specs/glyphrun/. These specs
-# are the language-agnostic contract for the CLI surface other languages will
-# build drivers against, so they assert on JSON output rather than internals.
+# Glyphrun drives the compiled `veclite` CLI inside a real PTY and checks
+# its user-visible behaviour against the specs under flows/. These specs are
+# the language-agnostic contract for the CLI and HTTP surfaces other
+# languages will build drivers against, so they assert on JSON output rather
+# than internals.
 #
-# Run a spec:   glyph run specs/glyphrun/cli_named_spaces.yml --format md
-# List specs:   glyph list specs/glyphrun
+# Run a spec:   glyph run flows/cli/named_spaces.yml --format md
+# List specs:   glyph list flows
 
 defaultEnvironment: local
 

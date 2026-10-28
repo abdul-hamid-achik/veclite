@@ -1,0 +1,130 @@
+version: 1
+name: http_crud
+
+metadata:
+  feature: http-api
+  owner: core
+  priority: high
+  tags:
+    - http
+    - crud
+    - cross-language-contract
+
+intent: |
+  Verify the HTTP API can create a collection, insert a vector, retrieve it
+  by ID, update its payload, and delete it — the basic CRUD contract that
+  every language driver must implement.
+
+target:
+  cmd:
+    - "/bin/sh"
+    - "-c"
+    - "curl -s http://localhost:19999/collections/docs"
+  cwd: "."
+  timeoutMs: 15000
+
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: forbid
+
+preconditions:
+  commands:
+    - run: "go build -o ./bin/veclite ./cmd/veclite"
+      timeoutMs: 120000
+    - run: "rm -rf .glyphrun/tmp/http && mkdir -p .glyphrun/tmp/http"
+      timeoutMs: 5000
+    - run: "./bin/veclite serve .glyphrun/tmp/http/crud.veclite --port=19999 &"
+      timeoutMs: 10000
+    - run: "sleep 1"
+      timeoutMs: 5000
+    - run: |
+        curl -s -X POST http://localhost:19999/collections \
+          -H 'Content-Type: application/json' \
+          -d '{"name":"docs","dimension":2,"distance":"cosine"}'
+      timeoutMs: 10000
+    - run: |
+        curl -s -X POST http://localhost:19999/collections/docs/vectors \
+          -H 'Content-Type: application/json' \
+          -d '{"vector":[1.0,0.0],"payload":{"label":"a"}}'
+      timeoutMs: 10000
+    - run: |
+        curl -s -X POST http://localhost:19999/collections/docs/vectors \
+          -H 'Content-Type: application/json' \
+          -d '{"vector":[0.0,1.0],"payload":{"label":"b"}}'
+      timeoutMs: 10000
+
+steps:
+  - wait:
+      process:
+        exitCode: 0
+      timeoutMs: 15000
+  - snapshot: result
+
+outcomes:
+  - id: collection_info
+    description: GET /collections/docs returns collection details
+    verify:
+      command:
+        run: |
+          curl -s http://localhost:19999/collections/docs | jq -e '.name == "docs" and .count == 2 and .dimension == 2' >/dev/null
+
+  - id: get_vector
+    description: GET /collections/docs/vectors/1 returns the first record
+    verify:
+      command:
+        run: |
+          curl -s http://localhost:19999/collections/docs/vectors/1 | jq -e '.payload.label == "a"' >/dev/null
+
+  - id: update_payload
+    description: PUT updates a record's payload
+    verify:
+      command:
+        run: |
+          curl -s -X PUT http://localhost:19999/collections/docs/vectors/1 \
+            -H 'Content-Type: application/json' \
+            -d '{"payload":{"label":"updated"}}' | jq -e '.status == "updated"' >/dev/null && \
+          curl -s http://localhost:19999/collections/docs/vectors/1 | jq -e '.payload.label == "updated"' >/dev/null
+
+  - id: delete_vector
+    description: DELETE removes a record
+    verify:
+      command:
+        run: |
+          curl -s -X DELETE http://localhost:19999/collections/docs/vectors/2 | jq -e '.status == "deleted"' >/dev/null && \
+          curl -s http://localhost:19999/collections/docs/vectors/2 | jq -e '.error != null' >/dev/null
+
+  - id: list_collections
+    description: GET /collections lists all collections
+    verify:
+      command:
+        run: |
+          curl -s http://localhost:19999/collections | jq -e '.[0].name == "docs"' >/dev/null
+
+  - id: health_check
+    description: GET /health returns ok
+    verify:
+      command:
+        run: |
+          curl -s http://localhost:19999/health | jq -e '.status == "ok"' >/dev/null
+
+  - id: info_endpoint
+    description: GET /info returns database info
+    verify:
+      command:
+        run: |
+          curl -s http://localhost:19999/info | jq -e '.collections >= 1' >/dev/null
+
+  - id: drop_collection
+    description: DELETE /collections/docs drops the collection
+    verify:
+      command:
+        run: |
+          curl -s -X DELETE http://localhost:19999/collections/docs | jq -e '.status == "dropped"' >/dev/null && \
+          curl -s http://localhost:19999/collections/docs | jq -e '.error != null' >/dev/null
+
+cleanup:
+  commands:
+    - run: "kill $(lsof -ti:19999) 2>/dev/null; true"
+      timeoutMs: 5000

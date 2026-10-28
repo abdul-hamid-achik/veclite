@@ -176,7 +176,7 @@ Applications can bring their own embedding pipeline and use VecLite for durable 
 VecLite is usable as a Go library **and** as a standalone engine driven from any language through
 its CLI and HTTP server, both of which speak JSON. Language drivers (Python, TypeScript, …) are
 **planned, not yet written** — but the CLI and HTTP JSON shapes are treated as a stable
-cross-language contract and are pinned by the behavior specs under `specs/glyphrun/`. If you are
+cross-language contract and are pinned by the behavior specs under `flows/`. If you are
 integrating from another language today, drive `veclite serve` over HTTP or shell out to the
 `veclite` CLI with `--json`.
 

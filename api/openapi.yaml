@@ -1,0 +1,1236 @@
+openapi: "3.1.0"
+
+info:
+  title: VecLite
+  version: "0.24.0"
+  description: |
+    HTTP API for the VecLite embeddable vector database.
+
+    VecLite stores vectors with metadata in named collections. Each collection
+    has one implicit `default` vector space and zero or more named spaces
+    (e.g. `text` + `image` for multimodal records). Search supports HNSW
+    approximate nearest neighbour, BM25 full-text, and hybrid fusion via
+    Reciprocal Rank Fusion.
+
+    ## Content types
+    - `application/json` — standard request/response format.
+    - `application/x-ndjson` — streaming search results (set `Accept` on
+      search endpoints; each result is one JSON line, flushed immediately).
+
+    ## Versioning
+    The API is versioned by path prefix. The current version is `v1`.
+    Unprefixed routes are deprecated and emit a `Deprecation: true` header.
+
+    ## Client libraries
+    - Go: `import "github.com/abdul-hamid-achik/veclite/client"`
+    - Python / TypeScript / …: planned; drive `veclite serve` over HTTP today.
+
+  contact:
+    url: https://github.com/abdul-hamid-achik/veclite
+
+servers:
+  - url: http://localhost:8080/v1
+    description: Default local server
+
+tags:
+  - name: Info
+    description: Health, version, and metrics
+  - name: Collections
+    description: Create, list, inspect, and drop collections
+  - name: Vectors
+    description: Insert, get, update, and delete vectors
+  - name: Search
+    description: Vector, text, hybrid, and multi-space search
+  - name: Named Spaces
+    description: Declare and query named vector spaces
+  - name: Maintenance
+    description: Compact, validate, sync, and reload
+
+paths:
+  # ── Info ────────────────────────────────────────────────────────────────
+
+  /health:
+    get:
+      tags: [Info]
+      summary: Health check
+      operationId: health
+      responses:
+        "200":
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /info:
+    get:
+      tags: [Info]
+      summary: Database information
+      operationId: info
+      responses:
+        "200":
+          description: Database info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InfoResponse"
+
+  /metrics:
+    get:
+      tags: [Info]
+      summary: Performance metrics
+      operationId: metrics
+      responses:
+        "200":
+          description: Current metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MetricsResponse"
+
+  # ── Collections ─────────────────────────────────────────────────────────
+
+  /collections:
+    get:
+      tags: [Collections]
+      summary: List all collections
+      operationId: listCollections
+      responses:
+        "200":
+          description: Collection list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CollectionInfo"
+    post:
+      tags: [Collections]
+      summary: Create a collection
+      operationId: createCollection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCollectionRequest"
+      responses:
+        "201":
+          description: Collection created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateCollectionResponse"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /collections/{name}:
+    parameters:
+      - $ref: "#/components/parameters/CollectionName"
+    get:
+      tags: [Collections]
+      summary: Get collection info
+      operationId: getCollection
+      responses:
+        "200":
+          description: Collection details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollectionInfo"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Collections]
+      summary: Drop a collection
+      operationId: dropCollection
+      responses:
+        "200":
+          description: Collection dropped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Vectors ─────────────────────────────────────────────────────────────
+
+  /collections/{name}/vectors:
+    parameters:
+      - $ref: "#/components/parameters/CollectionName"
+    get:
+      tags: [Vectors]
+      summary: List vectors (paginated)
+      operationId: listVectors
+      parameters:
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+      responses:
+        "200":
+          description: Paginated vector list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VectorListResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Vectors]
+      summary: Insert one or more vectors
+      operationId: insertVectors
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: "#/components/schemas/InsertVectorRequest"
+                - $ref: "#/components/schemas/InsertBatchRequest"
+      responses:
+        "201":
+          description: Vector(s) inserted
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/InsertVectorResponse"
+                  - $ref: "#/components/schemas/InsertBatchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    delete:
+      tags: [Vectors]
+      summary: Delete vectors matching filters
+      operationId: deleteWhere
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeleteWhereRequest"
+      responses:
+        "200":
+          description: Vectors deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteWhereResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /collections/{name}/vectors/{id}:
+    parameters:
+      - $ref: "#/components/parameters/CollectionName"
+      - $ref: "#/components/parameters/RecordId"
+    get:
+      tags: [Vectors]
+      summary: Get a vector by ID
+      operationId: getVector
+      responses:
+        "200":
+          description: Record found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Vectors]
+      summary: Update vector and/or payload
+      operationId: updateVector
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateVectorRequest"
+      responses:
+        "200":
+          description: Record updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Vectors]
+      summary: Delete a vector by ID
+      operationId: deleteVector
+      responses:
+        "200":
+          description: Vector deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Search ──────────────────────────────────────────────────────────────
+
+  /collections/{name}/search:
+    parameters:
+      - $ref: "#/components/parameters/CollectionName"
+    post:
+      tags: [Search]
+      summary: Vector similarity search
+      description: |
+        Search for the nearest neighbours to a query vector. Supports
+        threshold filtering, metadata filters, and NDJSON streaming
+        (`Accept: application/x-ndjson`).
+      operationId: search
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+            application/x-ndjson:
+              schema:
+                $ref: "#/components/schemas/SearchResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /collections/{name}/find:
+    parameters:
+      - $ref: "#/components/parameters/CollectionName"
+    post:
+      tags: [Search]
+      summary: Find records by filter (no vector)
+      operationId: find
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FindRequest"
+      responses:
+        "200":
+          description: Matching records
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FindResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /collections/{name}/upsert:
+    parameters:
+      - $ref: "#/components/parameters/CollectionName"
+    post:
+      tags: [Vectors]
+      summary: Upsert a vector (insert or update)
+      operationId: upsert
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertRequest"
+      responses:
+        "200":
+          description: Record upserted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpsertResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  # ── Named Spaces ────────────────────────────────────────────────────────
+
+  /collections/{name}/spaces:
+    parameters:
+      - $ref: "#/components/parameters/CollectionName"
+    get:
+      tags: [Named Spaces]
+      summary: List vector spaces
+      operationId: listSpaces
+      responses:
+        "200":
+          description: Vector spaces
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpaceListResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [Named Spaces]
+      summary: Add a named vector space
+      operationId: addSpace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddSpaceRequest"
+      responses:
+        "201":
+          description: Space created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddSpaceResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+
+  /collections/{name}/records:
+    parameters:
+      - $ref: "#/components/parameters/CollectionName"
+    post:
+      tags: [Named Spaces]
+      summary: Insert a multi-space record
+      description: |
+        Insert one logical record carrying vectors in several named spaces
+        simultaneously, plus optional text content and payload.
+      operationId: insertRecord
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InsertRecordRequest"
+      responses:
+        "201":
+          description: Record inserted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsertRecordResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /collections/{name}/records-upsert-by-key:
+    parameters:
+      - $ref: "#/components/parameters/CollectionName"
+    post:
+      tags: [Named Spaces]
+      summary: Upsert a multi-space record by payload key
+      operationId: upsertRecordByKey
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertRecordByKeyRequest"
+      responses:
+        "200":
+          description: Record upserted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpsertRecordByKeyResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /collections/{name}/search-space:
+    parameters:
+      - $ref: "#/components/parameters/CollectionName"
+    post:
+      tags: [Named Spaces]
+      summary: Search one named vector space
+      operationId: searchSpace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchSpaceRequest"
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /collections/{name}/fuse-search:
+    parameters:
+      - $ref: "#/components/parameters/CollectionName"
+    post:
+      tags: [Named Spaces]
+      summary: Search several spaces and fuse with RRF
+      operationId: fuseSearch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FuseSearchRequest"
+      responses:
+        "200":
+          description: Fused search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /collections/{name}/hybrid-search-space:
+    parameters:
+      - $ref: "#/components/parameters/CollectionName"
+    post:
+      tags: [Named Spaces]
+      summary: Search a named space + BM25 text, fuse with RRF
+      operationId: hybridSearchSpace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HybridSearchSpaceRequest"
+      responses:
+        "200":
+          description: Hybrid search results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ── Maintenance ─────────────────────────────────────────────────────────
+
+  /collections/{name}/compact:
+    parameters:
+      - $ref: "#/components/parameters/CollectionName"
+    post:
+      tags: [Maintenance]
+      summary: Compact a collection
+      operationId: compact
+      responses:
+        "200":
+          description: Collection compacted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /collections/{name}/validate:
+    parameters:
+      - $ref: "#/components/parameters/CollectionName"
+    post:
+      tags: [Maintenance]
+      summary: Validate collection integrity
+      operationId: validate
+      responses:
+        "200":
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ValidateResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /sync:
+    post:
+      tags: [Maintenance]
+      summary: Force sync to disk
+      operationId: sync
+      responses:
+        "200":
+          description: Database synced
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+
+  /reload:
+    post:
+      tags: [Maintenance]
+      summary: Reload database from disk
+      description: |
+        Re-reads the database file, picking up changes written by another
+        process. Useful for read-only servers or shared-read setups.
+      operationId: reload
+      responses:
+        "200":
+          description: Database reloaded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+
+# ── Components ────────────────────────────────────────────────────────────
+
+components:
+  parameters:
+    CollectionName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Collection name
+    RecordId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: uint64
+      description: Record ID
+
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    # ── Primitives ──────────────────────────────────────────────────────
+
+    Vector:
+      type: array
+      items:
+        type: number
+        format: float
+      description: A float32 embedding vector. JSON numbers are float64 on the wire.
+
+    Payload:
+      type: object
+      additionalProperties: true
+      description: Arbitrary metadata attached to a record.
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+        code:
+          type: string
+          description: Machine-readable error code (e.g. NOT_FOUND, INVALID_JSON)
+        details:
+          type: string
+          description: Optional additional context
+
+    StatusResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: "ok"
+
+    # ── Filter ──────────────────────────────────────────────────────────
+
+    Filter:
+      type: object
+      required: [key, op]
+      properties:
+        key:
+          type: string
+          description: Payload field name
+        op:
+          type: string
+          enum:
+            - eq
+            - neq
+            - gt
+            - gte
+            - lt
+            - lte
+            - glob
+            - prefix
+            - suffix
+            - contains
+            - exists
+            - in
+            - nin
+          description: Filter operator
+        value:
+          description: Comparison value (type depends on operator)
+      example:
+        key: "type"
+        op: "eq"
+        value: "code"
+
+    # ── Info ────────────────────────────────────────────────────────────
+
+    HealthResponse:
+      type: object
+      required: [status, version]
+      properties:
+        status:
+          type: string
+          example: "ok"
+        version:
+          type: string
+          example: "0.24.0"
+
+    InfoResponse:
+      type: object
+      required: [path, collections, total_records, version]
+      properties:
+        path:
+          type: string
+        collections:
+          type: integer
+        total_records:
+          type: integer
+        version:
+          type: string
+
+    MetricsResponse:
+      type: object
+      required: [search_count, insert_count, delete_count, avg_search_time_ns]
+      properties:
+        search_count:
+          type: integer
+          format: uint64
+        insert_count:
+          type: integer
+          format: uint64
+        delete_count:
+          type: integer
+          format: uint64
+        avg_search_time_ns:
+          type: integer
+          format: int64
+
+    # ── Collections ──────────────────────────────────────────────────────
+
+    CollectionInfo:
+      type: object
+      required: [name, count, dimension, distance, index_type]
+      properties:
+        name:
+          type: string
+        count:
+          type: integer
+        dimension:
+          type: integer
+        distance:
+          type: string
+          enum: [cosine, dot, euclidean, euclidean_squared]
+        index_type:
+          type: string
+          enum: [none, hnsw]
+
+    CreateCollectionRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Collection name
+        dimension:
+          type: integer
+          description: Vector dimension (0 = auto-detect on first insert)
+        distance:
+          type: string
+          enum: [cosine, dot, euclidean]
+          default: cosine
+        hnsw:
+          type: boolean
+          description: Enable HNSW indexing
+        hnsw_m:
+          type: integer
+          default: 16
+          description: HNSW M parameter (max connections per node)
+        hnsw_ef:
+          type: integer
+          default: 200
+          description: HNSW efConstruction parameter
+
+    CreateCollectionResponse:
+      type: object
+      required: [status, collection]
+      properties:
+        status:
+          type: string
+          example: "created"
+        collection:
+          type: string
+
+    # ── Vectors ─────────────────────────────────────────────────────────
+
+    InsertVectorRequest:
+      type: object
+      required: [vector]
+      properties:
+        vector:
+          $ref: "#/components/schemas/Vector"
+        payload:
+          $ref: "#/components/schemas/Payload"
+
+    InsertBatchRequest:
+      type: object
+      required: [vectors]
+      properties:
+        vectors:
+          type: array
+          items:
+            $ref: "#/components/schemas/Vector"
+        payloads:
+          type: array
+          items:
+            $ref: "#/components/schemas/Payload"
+
+    InsertVectorResponse:
+      type: object
+      required: [status, id]
+      properties:
+        status:
+          type: string
+          example: "inserted"
+        id:
+          type: integer
+          format: uint64
+
+    InsertBatchResponse:
+      type: object
+      required: [status, count, ids]
+      properties:
+        status:
+          type: string
+          example: "inserted"
+        count:
+          type: integer
+        ids:
+          type: array
+          items:
+            type: integer
+            format: uint64
+
+    UpdateVectorRequest:
+      type: object
+      properties:
+        vector:
+          $ref: "#/components/schemas/Vector"
+        payload:
+          $ref: "#/components/schemas/Payload"
+      minProperties: 1
+
+    RecordResponse:
+      type: object
+      required: [id, vector, created_at, updated_at]
+      properties:
+        id:
+          type: integer
+          format: uint64
+        vector:
+          $ref: "#/components/schemas/Vector"
+        payload:
+          $ref: "#/components/schemas/Payload"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    VectorListResponse:
+      type: object
+      required: [records, count, offset, limit]
+      properties:
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordResponse"
+        count:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+
+    DeleteWhereRequest:
+      type: object
+      required: [filters]
+      properties:
+        filters:
+          type: array
+          items:
+            $ref: "#/components/schemas/Filter"
+          minItems: 1
+
+    DeleteWhereResponse:
+      type: object
+      required: [status, deleted]
+      properties:
+        status:
+          type: string
+          example: "deleted"
+        deleted:
+          type: integer
+
+    # ── Search ──────────────────────────────────────────────────────────
+
+    SearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query:
+          $ref: "#/components/schemas/Vector"
+        top_k:
+          type: integer
+          default: 10
+        threshold:
+          type: number
+          format: float
+          description: |
+            Minimum similarity threshold. For cosine/dot: results with
+            score >= threshold. For euclidean: results with score <= threshold.
+        filters:
+          type: array
+          items:
+            $ref: "#/components/schemas/Filter"
+
+    SearchResult:
+      type: object
+      required: [id, score]
+      properties:
+        id:
+          type: integer
+          format: uint64
+        score:
+          type: number
+          format: float
+        payload:
+          $ref: "#/components/schemas/Payload"
+
+    SearchResponse:
+      type: object
+      required: [results, count]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+        count:
+          type: integer
+
+    FindRequest:
+      type: object
+      properties:
+        filters:
+          type: array
+          items:
+            $ref: "#/components/schemas/Filter"
+        limit:
+          type: integer
+          description: Maximum results (0 = all)
+
+    FindResponse:
+      type: object
+      required: [results, count]
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            required: [id]
+            properties:
+              id:
+                type: integer
+                format: uint64
+              payload:
+                $ref: "#/components/schemas/Payload"
+              content:
+                type: string
+        count:
+          type: integer
+
+    UpsertRequest:
+      type: object
+      required: [vector]
+      properties:
+        id:
+          type: integer
+          format: uint64
+          description: Record ID (0 = auto-assign)
+        vector:
+          $ref: "#/components/schemas/Vector"
+        payload:
+          $ref: "#/components/schemas/Payload"
+        key_field:
+          type: string
+          description: Payload field for UpsertByKey
+        key_value:
+          description: Value to match for UpsertByKey
+
+    UpsertResponse:
+      type: object
+      required: [status, id]
+      properties:
+        status:
+          type: string
+          enum: [upserted, inserted, updated]
+        id:
+          type: integer
+          format: uint64
+        inserted:
+          type: boolean
+          description: Present when using key_field; true = new record
+
+    # ── Named Spaces ─────────────────────────────────────────────────────
+
+    SpaceInfo:
+      type: object
+      required: [name, dimension, distance, index_type, vector_count]
+      properties:
+        name:
+          type: string
+        dimension:
+          type: integer
+        distance:
+          type: string
+        modality:
+          type: string
+        provider:
+          type: string
+        model:
+          type: string
+        index_type:
+          type: string
+          enum: [none, hnsw]
+        vector_count:
+          type: integer
+
+    SpaceListResponse:
+      type: object
+      required: [spaces, count]
+      properties:
+        spaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/SpaceInfo"
+        count:
+          type: integer
+
+    AddSpaceRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          description: Space name (must not be "default")
+        dimension:
+          type: integer
+          description: Vector dimension (0 = auto-detect)
+        distance:
+          type: string
+          enum: [cosine, dot, euclidean, euclidean_squared]
+          default: cosine
+        modality:
+          type: string
+          description: Free-form hint (e.g. "text", "image", "audio")
+        provider:
+          type: string
+        model:
+          type: string
+        hnsw:
+          type: boolean
+          description: Enable HNSW indexing for this space
+        hnsw_m:
+          type: integer
+          default: 16
+        hnsw_ef:
+          type: integer
+          default: 200
+
+    AddSpaceResponse:
+      type: object
+      required: [status, collection, space]
+      properties:
+        status:
+          type: string
+          example: "created"
+        collection:
+          type: string
+        space:
+          type: string
+
+    InsertRecordRequest:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: uint64
+          description: Record ID (0 = auto-assign)
+        content:
+          type: string
+          description: Text content (indexed by BM25 when text indexing is enabled)
+        payload:
+          $ref: "#/components/schemas/Payload"
+        vectors:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/Vector"
+          description: |
+            Map of space name → embedding vector. The key "default" targets
+            the implicit default space. Other keys must match declared spaces.
+      minProperties: 1
+
+    InsertRecordResponse:
+      type: object
+      required: [status, id]
+      properties:
+        status:
+          type: string
+          example: "inserted"
+        id:
+          type: integer
+          format: uint64
+
+    UpsertRecordByKeyRequest:
+      type: object
+      required: [key_field, key_value]
+      properties:
+        key_field:
+          type: string
+          description: Payload field to match on
+        key_value:
+          description: Value to match
+        content:
+          type: string
+        payload:
+          $ref: "#/components/schemas/Payload"
+        vectors:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/Vector"
+
+    UpsertRecordByKeyResponse:
+      type: object
+      required: [status, id, inserted, collection]
+      properties:
+        status:
+          type: string
+          enum: [inserted, replaced]
+        id:
+          type: integer
+          format: uint64
+        inserted:
+          type: boolean
+        collection:
+          type: string
+
+    SearchSpaceRequest:
+      type: object
+      required: [query]
+      properties:
+        space:
+          type: string
+          default: "default"
+          description: Vector space name (defaults to "default")
+        query:
+          $ref: "#/components/schemas/Vector"
+        top_k:
+          type: integer
+          default: 10
+        threshold:
+          type: number
+          format: float
+        filters:
+          type: array
+          items:
+            $ref: "#/components/schemas/Filter"
+
+    FuseSearchRequest:
+      type: object
+      required: [queries]
+      properties:
+        queries:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/Vector"
+          description: Map of space name → query vector
+        top_k:
+          type: integer
+          default: 10
+        filters:
+          type: array
+          items:
+            $ref: "#/components/schemas/Filter"
+
+    HybridSearchSpaceRequest:
+      type: object
+      required: [query, text]
+      properties:
+        space:
+          type: string
+          default: "default"
+        query:
+          $ref: "#/components/schemas/Vector"
+        text:
+          type: string
+          description: BM25 text query
+        top_k:
+          type: integer
+          default: 10
+        threshold:
+          type: number
+          format: float
+        filters:
+          type: array
+          items:
+            $ref: "#/components/schemas/Filter"
+
+    # ── Maintenance ─────────────────────────────────────────────────────
+
+    ValidateResponse:
+      type: object
+      required: [collection, valid, issues, count]
+      properties:
+        collection:
+          type: string
+        valid:
+          type: boolean
+        issues:
+          type: array
+          items:
+            type: string
+        count:
+          type: integer

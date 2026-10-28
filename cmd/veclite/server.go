@@ -51,6 +51,7 @@ func cmdServe(args []string) error {
 	host := fs.String("host", "127.0.0.1", "Host to bind to")
 	cors := fs.Bool("cors", false, "Enable CORS headers for cross-origin requests")
 	wal := fs.Bool("wal", false, "Enable the write-ahead log: writes survive a crash between syncs")
+	apiVersion := fs.String("api-version", "", "API version prefix (e.g. v1). When set, routes are mounted under /v1/ and the OpenAPI spec is served at /v1/openapi.json")
 	fs.Usage = func() {
 		fmt.Println("Usage: veclite serve [options] <file>")
 		fmt.Println("\nStart an HTTP server for multi-client access to the database.")
@@ -86,6 +87,7 @@ func cmdServe(args []string) error {
 		fmt.Println("  veclite serve data.veclite --port=8080")
 		fmt.Println("  veclite serve data.veclite --host=0.0.0.0 --port=3000 --cors")
 		fmt.Println("  veclite serve data.veclite --wal")
+		fmt.Println("  veclite serve data.veclite --api-version=v1")
 	}
 	_ = fs.Parse(args)
 
@@ -114,19 +116,30 @@ func cmdServe(args []string) error {
 	}
 
 	// Setup routes
-	mux := http.NewServeMux()
-	mux.HandleFunc("/health", server.handleHealth)
-	mux.HandleFunc("/info", server.handleInfo)
-	mux.HandleFunc("/metrics", server.handleMetrics)
-	mux.HandleFunc("/collections", server.handleCollections)
-	mux.HandleFunc("/collections/", server.handleCollection)
-	mux.HandleFunc("/sync", server.handleSync)
-	mux.HandleFunc("/reload", server.handleReload)
+	rootMux := http.NewServeMux()
+
+	// When --api-version is set, mount versioned routes and serve the
+	// OpenAPI spec. Legacy unprefixed routes are also mounted with a
+	// Deprecation header so existing clients keep working.
+	if *apiVersion != "" {
+		prefix := "/" + strings.Trim(*apiVersion, "/")
+		versioned := http.NewServeMux()
+		server.mountRoutes(versioned)
+		versioned.HandleFunc("GET /openapi.json", server.handleOpenAPI)
+		rootMux.Handle(prefix+"/", http.StripPrefix(prefix, versioned))
+
+		// Legacy unprefixed routes with deprecation notice
+		legacy := http.NewServeMux()
+		server.mountRoutes(legacy)
+		rootMux.Handle("/", server.deprecationMiddleware(legacy))
+	} else {
+		server.mountRoutes(rootMux)
+	}
 
 	// Wrap with CORS middleware if enabled
-	var handler http.Handler = mux
+	var handler http.Handler = rootMux
 	if *cors {
-		handler = server.corsMiddleware(mux)
+		handler = server.corsMiddleware(rootMux)
 	}
 
 	addr := fmt.Sprintf("%s:%d", *host, *port)
@@ -162,6 +175,9 @@ func cmdServe(args []string) error {
 	if *cors {
 		fmt.Println("CORS: enabled")
 	}
+	if *apiVersion != "" {
+		fmt.Printf("API version: %s\n", *apiVersion)
+	}
 	fmt.Println("Press Ctrl+C to stop")
 	fmt.Println()
 
@@ -172,6 +188,34 @@ func cmdServe(args []string) error {
 	<-done
 	fmt.Println("Server stopped")
 	return nil
+}
+
+// mountRoutes registers all API routes on the given mux.
+func (s *Server) mountRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/health", s.handleHealth)
+	mux.HandleFunc("/info", s.handleInfo)
+	mux.HandleFunc("/metrics", s.handleMetrics)
+	mux.HandleFunc("/collections", s.handleCollections)
+	mux.HandleFunc("/collections/", s.handleCollection)
+	mux.HandleFunc("/sync", s.handleSync)
+	mux.HandleFunc("/reload", s.handleReload)
+}
+
+// deprecationMiddleware adds a Deprecation header to responses for legacy
+// unprefixed routes, signalling that clients should migrate to /v1/.
+func (s *Server) deprecationMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Deprecation", "true")
+		w.Header().Set("Sunset", "Sat, 01 Jan 2028 00:00:00 GMT")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// handleOpenAPI serves the bundled OpenAPI spec at GET /openapi.json.
+func (s *Server) handleOpenAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(openAPISpec)
 }
 
 // corsMiddleware adds CORS headers.

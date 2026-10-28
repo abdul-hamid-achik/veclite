@@ -243,7 +243,7 @@ curl -X POST localhost:8080/collections/items/search-space \
 ```
 
 > The CLI and HTTP JSON shapes are a stable, cross-language contract. Language drivers (Python,
-> TypeScript, …) are planned and will build on exactly these shapes; the `specs/glyphrun/` behavior
+> TypeScript, …) are planned and will build on exactly these shapes; the `flows/` behavior
 > specs pin them down.
 
 See the [CLI reference](/reference/cli) and [HTTP API reference](/reference/http-api) for complete request and response shapes.

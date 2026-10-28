@@ -1,0 +1,156 @@
+version: 1
+name: http_search
+
+metadata:
+  feature: http-api
+  owner: core
+  priority: high
+  tags:
+    - http
+    - search
+    - cross-language-contract
+
+intent: |
+  Verify the HTTP search endpoint returns correctly ranked results, supports
+  threshold filtering, and handles dimension mismatches gracefully.
+
+target:
+  cmd:
+    - "/bin/sh"
+    - "-c"
+    - "curl -s -X POST http://localhost:19999/collections/docs/search -H 'Content-Type: application/json' -d '{\"query\":[1.0,0.0],\"top_k\":2}'"
+  cwd: "."
+  timeoutMs: 15000
+
+terminal:
+  cols: 120
+  rows: 40
+  profile: xterm-256color
+  alternateScreen: forbid
+
+preconditions:
+  commands:
+    - run: "go build -o ./bin/veclite ./cmd/veclite"
+      timeoutMs: 120000
+    - run: "rm -rf .glyphrun/tmp/http-search && mkdir -p .glyphrun/tmp/http-search"
+      timeoutMs: 5000
+    - run: "./bin/veclite serve .glyphrun/tmp/http-search/search.veclite --port=19998 &"
+      timeoutMs: 10000
+    - run: "sleep 1"
+      timeoutMs: 5000
+    - run: |
+        curl -s -X POST http://localhost:19998/collections \
+          -H 'Content-Type: application/json' \
+          -d '{"name":"docs","dimension":2,"distance":"cosine"}'
+      timeoutMs: 10000
+    - run: |
+        curl -s -X POST http://localhost:19998/collections/docs/vectors \
+          -H 'Content-Type: application/json' \
+          -d '{"vector":[1.0,0.0],"payload":{"label":"a"}}'
+      timeoutMs: 10000
+    - run: |
+        curl -s -X POST http://localhost:19998/collections/docs/vectors \
+          -H 'Content-Type: application/json' \
+          -d '{"vector":[0.0,1.0],"payload":{"label":"b"}}'
+      timeoutMs: 10000
+    - run: |
+        curl -s -X POST http://localhost:19998/collections/docs/vectors \
+          -H 'Content-Type: application/json' \
+          -d '{"vector":[0.5,0.5],"payload":{"label":"c"}}'
+      timeoutMs: 10000
+
+steps:
+  - wait:
+      process:
+        exitCode: 0
+      timeoutMs: 15000
+  - snapshot: result
+
+outcomes:
+  - id: search_ranks_correctly
+    description: query [1,0] returns record 'a' first (cosine similarity)
+    verify:
+      command:
+        run: |
+          curl -s -X POST http://localhost:19998/collections/docs/search \
+            -H 'Content-Type: application/json' \
+            -d '{"query":[1.0,0.0],"top_k":1}' | jq -e '.results[0].payload.label == "a"' >/dev/null
+
+  - id: search_returns_top_k
+    description: top_k=2 returns exactly 2 results
+    verify:
+      command:
+        run: |
+          curl -s -X POST http://localhost:19998/collections/docs/search \
+            -H 'Content-Type: application/json' \
+            -d '{"query":[1.0,0.0],"top_k":2}' | jq -e '.count == 2' >/dev/null
+
+  - id: search_with_threshold
+    description: threshold filters out low-similarity results
+    verify:
+      command:
+        run: |
+          curl -s -X POST http://localhost:19998/collections/docs/search \
+            -H 'Content-Type: application/json' \
+            -d '{"query":[1.0,0.0],"top_k":10,"threshold":0.9}' | jq -e '.count <= 2' >/dev/null
+
+  - id: dimension_mismatch_rejected
+    description: query with wrong dimension returns error
+    verify:
+      command:
+        run: |
+          curl -s -X POST http://localhost:19998/collections/docs/search \
+            -H 'Content-Type: application/json' \
+            -d '{"query":[1.0,0.0,0.0]}' | jq -e '.error != null' >/dev/null
+
+  - id: search_with_filter
+    description: filter narrows results to matching records
+    verify:
+      command:
+        run: |
+          curl -s -X POST http://localhost:19998/collections/docs/search \
+            -H 'Content-Type: application/json' \
+            -d '{"query":[1.0,0.0],"top_k":10,"filters":[{"key":"label","op":"eq","value":"a"}]}' | jq -e '.count == 1 and .results[0].payload.label == "a"' >/dev/null
+
+  - id: find_without_vector
+    description: POST /find returns records matching filter without a vector
+    verify:
+      command:
+        run: |
+          curl -s -X POST http://localhost:19998/collections/docs/find \
+            -H 'Content-Type: application/json' \
+            -d '{"filters":[{"key":"label","op":"eq","value":"b"}]}' | jq -e '.count == 1 and .results[0].payload.label == "b"' >/dev/null
+
+  - id: upsert_creates_new
+    description: upsert with id=0 creates a new record
+    verify:
+      command:
+        run: |
+          curl -s -X POST http://localhost:19998/collections/docs/upsert \
+            -H 'Content-Type: application/json' \
+            -d '{"id":0,"vector":[0.8,0.2],"payload":{"label":"d"}}' | jq -e '.status == "upserted" and .id > 0' >/dev/null
+
+  - id: upsert_updates_existing
+    description: upsert with existing id updates the record
+    verify:
+      command:
+        run: |
+          curl -s -X POST http://localhost:19998/collections/docs/upsert \
+            -H 'Content-Type: application/json' \
+            -d '{"id":1,"vector":[0.0,1.0],"payload":{"label":"a-updated"}}' | jq -e '.status == "upserted"' >/dev/null && \
+          curl -s http://localhost:19998/collections/docs/vectors/1 | jq -e '.payload.label == "a-updated"' >/dev/null
+
+  - id: delete_where_by_filter
+    description: DELETE /vectors with filter body removes matching records
+    verify:
+      command:
+        run: |
+          curl -s -X DELETE http://localhost:19998/collections/docs/vectors \
+            -H 'Content-Type: application/json' \
+            -d '{"filters":[{"key":"label","op":"eq","value":"c"}]}' | jq -e '.deleted == 1' >/dev/null && \
+          curl -s http://localhost:19998/collections/docs/vectors/3 | jq -e '.error != null' >/dev/null
+
+cleanup:
+  commands:
+    - run: "kill $(lsof -ti:19998) 2>/dev/null; true"
+      timeoutMs: 5000

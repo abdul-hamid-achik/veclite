@@ -22,7 +22,7 @@ VecLite `v0.24.0` is the current release. It requires Go 1.25 or later and is di
 | MCP server | Supported | MCP-compatible agents and coding tools over stdio |
 | Python or TypeScript SDK | Not available | Use the CLI or HTTP JSON contract today |
 
-The CLI and HTTP JSON shapes are treated as a public cross-language contract and covered by behavior specs under `specs/glyphrun/`. Additive fields may appear over time; clients should ignore fields they do not recognize.
+The CLI and HTTP JSON shapes are treated as a public cross-language contract and covered by behavior specs under `flows/`. Additive fields may appear over time; clients should ignore fields they do not recognize.
 
 The Go HTTP client intentionally covers a smaller surface than the embedded library. It currently wraps basic collection, vector, payload, filter, and maintenance operations—not document/BM25, hybrid, named-space, or agent-memory APIs. See [Go HTTP Client](./guide/go-client).
 

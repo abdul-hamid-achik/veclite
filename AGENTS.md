@@ -23,7 +23,7 @@ The CLI (`cmd/veclite`) and HTTP server (`veclite serve`) are stable, JSON-in/JS
 surfaces meant to be the contract that language drivers (Python, TypeScript, etc.) will build
 on. Drivers are **not** being written yet, but when changing the CLI or HTTP API, treat their
 JSON shapes as a public, cross-language contract: keep them additive and stable, and cover
-them with `specs/glyphrun/` behavior specs so any driver can be validated against the same
+them with `flows/` behavior specs so any driver can be validated against the same
 expectations.
 
 ## Project Structure
@@ -294,7 +294,7 @@ Keeping documentation synchronized with code ensures the project remains useful 
 5. Add tests for dimension mismatches, profile compatibility, persistence round-trips, per-space
    search, multi-space fusion, update, delete, and the v3→v4 migration (see `vectorspace_test.go`).
 6. Mirror new behavior on the CLI (`cmd/veclite/spaces.go`) and HTTP server
-   (`cmd/veclite/server_spaces.go`), and add a `specs/glyphrun/` behavior spec — these are the
+   (`cmd/veclite/server_spaces.go`), and add a `flows/` behavior spec — these are the
    cross-language contract.
 
 ### Adding CLI Commands
@@ -309,7 +309,7 @@ Keeping documentation synchronized with code ensures the project remains useful 
    (Go's `flag` otherwise stops at the first non-flag token). Don't hoist again inside the command.
 4. Support `--json` flag for JSON output (use the `encodeJSON()` helper in `spaces.go`)
 5. Update `printUsage()` with the new command
-6. Add documentation to README.md and a `specs/glyphrun/` behavior spec
+6. Add documentation to README.md and a `flows/` behavior spec
 
 ### Extending HTTP API
 1. Add handler method to `Server` struct in `cmd/veclite/server.go`
@@ -337,8 +337,11 @@ handoffs, TODOs, or scratch content.
 
 - **Build/preview locally:** `task site`, `task site-dev`, `task site-preview` (or `bun run site*`).
 - **Hosting — already solved, do not duplicate:** the site is **deployed to Vercel** via
-  `vercel.json` at the repo root; the linked `.vercel` project (gitignored) auto-deploys on every
-  push to `main`. It is served at the **domain root**, so the VitePress `base` is the default `/`.
+  `vercel.json` at the repo root. Git auto-builds **`main` only**. Feature branches do not
+  create Preview deployments. `ignoreCommand` skips the build unless `docs/`, lockfiles, or
+  `vercel.json` changed. Do not `vercel promote`; `main` is the docs release. CLI binaries
+  ship from GoReleaser on tag push. The linked `.vercel` project is gitignored. The site is
+  served at the **domain root**, so the VitePress `base` is the default `/`.
 - **Do NOT add a second deploy path** (no GitHub Pages workflow, no `gh-pages`, no `DOCS_BASE`
   base-path juggling). A previous attempt added a redundant GitHub Pages workflow; it was removed.
   If hosting ever needs to change, change/replace the Vercel config — keep exactly one deploy target.
@@ -393,7 +396,7 @@ sibling project folder) via the obsidian-cli skill instead of dropping a markdow
 | Go module / library | `go get` | git tags (`vX.Y.Z`) |
 | CLI binaries + Homebrew | GoReleaser on tag push | `.goreleaser.yml`, `.github/workflows/release.yml` |
 | Documentation site | Vercel (VitePress) | `vercel.json` + linked `.vercel` project |
-| CLI behavior contract | glyphrun specs | `specs/glyphrun/`, `glyphrun.config.yml` |
+| CLI behavior contract | glyphrun specs | `flows/`, `glyphrun.config.yml` |
 
 ## Versioning
 
